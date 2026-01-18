@@ -1,26 +1,18 @@
 {
-  "name": "com.coplaydev.unity-mcp",
-  "version": "9.0.7",
-  "displayName": "MCP for Unity",
-  "description": "A bridge that connects AI assistants to Unity via the MCP (Model Context Protocol). Allows AI clients like Claude Code, Cursor, and VSCode to directly control your Unity Editor for enhanced development workflows.\n\nFeatures automated setup wizard, cross-platform support, and seamless integration with popular AI development tools.\n\nJoin Our Discord: https://discord.gg/y4p8KfzrN4",
+  "name": "com.besty.unity-skills",
+  "version": "1.0.0",
+  "displayName": "UnitySkills",
+  "description": "REST API for AI to control Unity Editor. AI generates minimal Python scripts to create objects, modify scenes, and automate workflows.",
   "unity": "2021.3",
-  "documentationUrl": "https://github.com/CoplayDev/unity-mcp",
-  "licensesUrl": "https://github.com/CoplayDev/unity-mcp/blob/main/LICENSE",
-  "dependencies": {
-    "com.unity.nuget.newtonsoft-json": "3.0.2"
-  },
+  "documentationUrl": "https://github.com/Besty0728/unity-mcp-skill",
   "keywords": [
     "unity",
     "ai",
-    "llm",
-    "mcp",
-    "model-context-protocol",
-    "mcp-server",
-    "mcp-client"
+    "skills",
+    "rest-api",
+    "automation"
   ],
   "author": {
-    "name": "Coplay",
-    "email": "support@coplay.dev",
-    "url": "https://coplay.dev"
+    "name": "Besty"
   }
 }

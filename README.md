@@ -13,7 +13,7 @@
 ### 1. 安装
 ```
 Window > Package Manager > + > Add package from git URL
-https://github.com/Besty0728/unity-skills.git?path=/MCPForUnity
+https://github.com/Besty0728/unity-mcp-skill.git?path=/MCPForUnity
 ```
 
 ### 2. 启动服务器
