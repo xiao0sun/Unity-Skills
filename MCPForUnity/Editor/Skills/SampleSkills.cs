@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityEditor;
 
-namespace MCPForUnity.Editor.Skills
+namespace UnitySkills
 {
     /// <summary>
     /// Sample skills for testing the REST API.
