@@ -7,30 +7,35 @@ namespace UnitySkills
 {
     /// <summary>
     /// Component management skills - add, remove, get, set properties.
+    /// Now supports finding by name, instanceId, or path.
     /// </summary>
     public static class ComponentSkills
     {
-        [UnitySkill("component_add", "Add a component to a GameObject")]
-        public static object ComponentAdd(string gameObjectName, string componentType)
+        [UnitySkill("component_add", "Add a component to a GameObject (supports name/instanceId/path)")]
+        public static object ComponentAdd(string name = null, int instanceId = 0, string path = null, string componentType = null)
         {
-            var go = GameObject.Find(gameObjectName);
-            if (go == null)
-                return new { error = $"GameObject not found: {gameObjectName}" };
+            if (string.IsNullOrEmpty(componentType))
+                return new { error = "componentType is required" };
+
+            var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (error != null) return error;
 
             var type = FindComponentType(componentType);
             if (type == null)
                 return new { error = $"Component type not found: {componentType}" };
 
             var comp = Undo.AddComponent(go, type);
-            return new { success = true, gameObject = gameObjectName, component = type.Name };
+            return new { success = true, gameObject = go.name, instanceId = go.GetInstanceID(), component = type.Name };
         }
 
-        [UnitySkill("component_remove", "Remove a component from a GameObject")]
-        public static object ComponentRemove(string gameObjectName, string componentType)
+        [UnitySkill("component_remove", "Remove a component from a GameObject (supports name/instanceId/path)")]
+        public static object ComponentRemove(string name = null, int instanceId = 0, string path = null, string componentType = null)
         {
-            var go = GameObject.Find(gameObjectName);
-            if (go == null)
-                return new { error = $"GameObject not found: {gameObjectName}" };
+            if (string.IsNullOrEmpty(componentType))
+                return new { error = "componentType is required" };
+
+            var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (error != null) return error;
 
             var type = FindComponentType(componentType);
             if (type == null)
@@ -38,33 +43,34 @@ namespace UnitySkills
 
             var comp = go.GetComponent(type);
             if (comp == null)
-                return new { error = $"Component not found on {gameObjectName}: {componentType}" };
+                return new { error = $"Component not found on {go.name}: {componentType}" };
 
             Undo.DestroyObjectImmediate(comp);
-            return new { success = true, removed = componentType };
+            return new { success = true, gameObject = go.name, removed = componentType };
         }
 
-        [UnitySkill("component_list", "List all components on a GameObject")]
-        public static object ComponentList(string gameObjectName)
+        [UnitySkill("component_list", "List all components on a GameObject (supports name/instanceId/path)")]
+        public static object ComponentList(string name = null, int instanceId = 0, string path = null)
         {
-            var go = GameObject.Find(gameObjectName);
-            if (go == null)
-                return new { error = $"GameObject not found: {gameObjectName}" };
+            var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (error != null) return error;
 
             var components = go.GetComponents<Component>()
                 .Where(c => c != null)
                 .Select(c => new { type = c.GetType().Name, enabled = (c as Behaviour)?.enabled ?? true })
                 .ToArray();
 
-            return new { gameObject = gameObjectName, components };
+            return new { gameObject = go.name, instanceId = go.GetInstanceID(), path = GameObjectFinder.GetPath(go), components };
         }
 
-        [UnitySkill("component_set_property", "Set a property on a component")]
-        public static object ComponentSetProperty(string gameObjectName, string componentType, string propertyName, string value)
+        [UnitySkill("component_set_property", "Set a property on a component (supports name/instanceId/path)")]
+        public static object ComponentSetProperty(string name = null, int instanceId = 0, string path = null, string componentType = null, string propertyName = null, string value = null)
         {
-            var go = GameObject.Find(gameObjectName);
-            if (go == null)
-                return new { error = $"GameObject not found: {gameObjectName}" };
+            if (string.IsNullOrEmpty(componentType) || string.IsNullOrEmpty(propertyName))
+                return new { error = "componentType and propertyName are required" };
+
+            var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (error != null) return error;
 
             var type = FindComponentType(componentType);
             var comp = go.GetComponent(type);
@@ -91,7 +97,7 @@ namespace UnitySkills
                     var converted = ConvertValue(value, field.FieldType);
                     field.SetValue(comp, converted);
                 }
-                return new { success = true, property = propertyName, value };
+                return new { success = true, gameObject = go.name, property = propertyName, value };
             }
             catch (System.Exception ex)
             {
@@ -99,12 +105,14 @@ namespace UnitySkills
             }
         }
 
-        [UnitySkill("component_get_properties", "Get all properties of a component")]
-        public static object ComponentGetProperties(string gameObjectName, string componentType)
+        [UnitySkill("component_get_properties", "Get all properties of a component (supports name/instanceId/path)")]
+        public static object ComponentGetProperties(string name = null, int instanceId = 0, string path = null, string componentType = null)
         {
-            var go = GameObject.Find(gameObjectName);
-            if (go == null)
-                return new { error = $"GameObject not found: {gameObjectName}" };
+            if (string.IsNullOrEmpty(componentType))
+                return new { error = "componentType is required" };
+
+            var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (error != null) return error;
 
             var type = FindComponentType(componentType);
             var comp = go.GetComponent(type);
@@ -120,7 +128,7 @@ namespace UnitySkills
                 })
                 .ToArray();
 
-            return new { gameObject = gameObjectName, component = componentType, properties = props };
+            return new { gameObject = go.name, component = componentType, properties = props };
         }
 
         private static System.Type FindComponentType(string name)

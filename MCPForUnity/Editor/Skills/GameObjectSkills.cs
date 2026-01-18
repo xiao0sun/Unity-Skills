@@ -7,6 +7,7 @@ namespace UnitySkills
 {
     /// <summary>
     /// GameObject management skills - create, modify, delete, find.
+    /// Now supports finding by name, instanceId, or path.
     /// </summary>
     public static class GameObjectSkills
     {
@@ -40,25 +41,20 @@ namespace UnitySkills
                 success = true,
                 name = go.name,
                 instanceId = go.GetInstanceID(),
+                path = GameObjectFinder.GetPath(go),
                 position = new { x, y, z }
             };
         }
 
-        [UnitySkill("gameobject_delete", "Delete a GameObject by name or instance ID")]
-        public static object GameObjectDelete(string name = null, int instanceId = 0)
+        [UnitySkill("gameobject_delete", "Delete a GameObject (supports name/instanceId/path)")]
+        public static object GameObjectDelete(string name = null, int instanceId = 0, string path = null)
         {
-            GameObject go = null;
+            var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (error != null) return error;
 
-            if (instanceId != 0)
-                go = EditorUtility.InstanceIDToObject(instanceId) as GameObject;
-            else if (!string.IsNullOrEmpty(name))
-                go = GameObject.Find(name);
-
-            if (go == null)
-                return new { error = "GameObject not found" };
-
+            var deletedName = go.name;
             Undo.DestroyObjectImmediate(go);
-            return new { success = true, deleted = name ?? instanceId.ToString() };
+            return new { success = true, deleted = deletedName };
         }
 
         [UnitySkill("gameobject_find", "Find GameObjects by name, tag, or component")]
@@ -87,6 +83,7 @@ namespace UnitySkills
             {
                 name = go.name,
                 instanceId = go.GetInstanceID(),
+                path = GameObjectFinder.GetPath(go),
                 tag = go.tag,
                 position = new { x = go.transform.position.x, y = go.transform.position.y, z = go.transform.position.z }
             }).ToArray();
@@ -94,20 +91,15 @@ namespace UnitySkills
             return new { count = list.Length, objects = list };
         }
 
-        [UnitySkill("gameobject_set_transform", "Set position, rotation, or scale of a GameObject")]
+        [UnitySkill("gameobject_set_transform", "Set position, rotation, or scale (supports name/instanceId/path)")]
         public static object GameObjectSetTransform(
-            string name = null,
-            int instanceId = 0,
+            string name = null, int instanceId = 0, string path = null,
             float? posX = null, float? posY = null, float? posZ = null,
             float? rotX = null, float? rotY = null, float? rotZ = null,
             float? scaleX = null, float? scaleY = null, float? scaleZ = null)
         {
-            GameObject go = instanceId != 0 
-                ? EditorUtility.InstanceIDToObject(instanceId) as GameObject
-                : GameObject.Find(name);
-
-            if (go == null)
-                return new { error = "GameObject not found" };
+            var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (error != null) return error;
 
             Undo.RecordObject(go.transform, "Set Transform");
 
@@ -142,47 +134,101 @@ namespace UnitySkills
             {
                 success = true,
                 name = go.name,
+                instanceId = go.GetInstanceID(),
                 position = new { x = go.transform.position.x, y = go.transform.position.y, z = go.transform.position.z },
                 rotation = new { x = go.transform.eulerAngles.x, y = go.transform.eulerAngles.y, z = go.transform.eulerAngles.z },
                 scale = new { x = go.transform.localScale.x, y = go.transform.localScale.y, z = go.transform.localScale.z }
             };
         }
 
-        [UnitySkill("gameobject_duplicate", "Duplicate a GameObject")]
-        public static object GameObjectDuplicate(string name = null, int instanceId = 0)
+        [UnitySkill("gameobject_duplicate", "Duplicate a GameObject (supports name/instanceId/path)")]
+        public static object GameObjectDuplicate(string name = null, int instanceId = 0, string path = null)
         {
-            GameObject go = instanceId != 0
-                ? EditorUtility.InstanceIDToObject(instanceId) as GameObject
-                : GameObject.Find(name);
-
-            if (go == null)
-                return new { error = "GameObject not found" };
+            var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (error != null) return error;
 
             var copy = Object.Instantiate(go, go.transform.parent);
-            copy.name = go.name + " (Copy)";
+            copy.name = go.name + "_Copy";
             Undo.RegisterCreatedObjectUndo(copy, "Duplicate " + go.name);
 
-            return new { success = true, originalName = go.name, copyName = copy.name, copyInstanceId = copy.GetInstanceID() };
+            return new { 
+                success = true, 
+                originalName = go.name, 
+                copyName = copy.name, 
+                copyInstanceId = copy.GetInstanceID(),
+                copyPath = GameObjectFinder.GetPath(copy)
+            };
         }
 
-        [UnitySkill("gameobject_set_parent", "Set the parent of a GameObject")]
-        public static object GameObjectSetParent(string childName, string parentName = null)
+        [UnitySkill("gameobject_set_parent", "Set the parent of a GameObject (supports name/instanceId/path)")]
+        public static object GameObjectSetParent(string childName = null, int childInstanceId = 0, string childPath = null, 
+            string parentName = null, int parentInstanceId = 0, string parentPath = null)
         {
-            var child = GameObject.Find(childName);
-            if (child == null)
-                return new { error = $"Child not found: {childName}" };
+            var (child, childError) = GameObjectFinder.FindOrError(childName, childInstanceId, childPath);
+            if (childError != null) return childError;
 
             Transform parent = null;
-            if (!string.IsNullOrEmpty(parentName))
+            if (!string.IsNullOrEmpty(parentName) || parentInstanceId != 0 || !string.IsNullOrEmpty(parentPath))
             {
-                var parentGo = GameObject.Find(parentName);
-                if (parentGo == null)
-                    return new { error = $"Parent not found: {parentName}" };
+                var (parentGo, parentError) = GameObjectFinder.FindOrError(parentName, parentInstanceId, parentPath);
+                if (parentError != null) return parentError;
                 parent = parentGo.transform;
             }
 
             Undo.SetTransformParent(child.transform, parent, "Set Parent");
-            return new { success = true, child = childName, parent = parentName ?? "(root)" };
+            return new { 
+                success = true, 
+                child = child.name, 
+                parent = parent?.name ?? "(root)",
+                newPath = GameObjectFinder.GetPath(child)
+            };
+        }
+
+        [UnitySkill("gameobject_get_info", "Get detailed info about a GameObject (supports name/instanceId/path)")]
+        public static object GameObjectGetInfo(string name = null, int instanceId = 0, string path = null)
+        {
+            var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (error != null) return error;
+
+            var components = go.GetComponents<Component>()
+                .Where(c => c != null)
+                .Select(c => c.GetType().Name)
+                .ToArray();
+
+            var children = new List<object>();
+            foreach (Transform child in go.transform)
+            {
+                children.Add(new { name = child.name, instanceId = child.gameObject.GetInstanceID() });
+            }
+
+            return new
+            {
+                name = go.name,
+                instanceId = go.GetInstanceID(),
+                path = GameObjectFinder.GetPath(go),
+                tag = go.tag,
+                layer = LayerMask.LayerToName(go.layer),
+                isActive = go.activeSelf,
+                position = new { x = go.transform.position.x, y = go.transform.position.y, z = go.transform.position.z },
+                rotation = new { x = go.transform.eulerAngles.x, y = go.transform.eulerAngles.y, z = go.transform.eulerAngles.z },
+                scale = new { x = go.transform.localScale.x, y = go.transform.localScale.y, z = go.transform.localScale.z },
+                parent = go.transform.parent?.name,
+                childCount = go.transform.childCount,
+                children,
+                components
+            };
+        }
+
+        [UnitySkill("gameobject_set_active", "Enable or disable a GameObject (supports name/instanceId/path)")]
+        public static object GameObjectSetActive(string name = null, int instanceId = 0, string path = null, bool active = true)
+        {
+            var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (error != null) return error;
+
+            Undo.RecordObject(go, "Set Active");
+            go.SetActive(active);
+
+            return new { success = true, name = go.name, active };
         }
     }
 }

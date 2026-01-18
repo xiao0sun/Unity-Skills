@@ -7,6 +7,7 @@ namespace UnitySkills
 {
     /// <summary>
     /// Material management skills - create, modify, assign.
+    /// Now supports finding by name, instanceId, or path.
     /// </summary>
     public static class MaterialSkills
     {
@@ -32,53 +33,61 @@ namespace UnitySkills
             return new { success = true, name, shader = shaderName, path = savePath };
         }
 
-        [UnitySkill("material_set_color", "Set a color property on a material or renderer")]
-        public static object MaterialSetColor(string gameObjectName, float r, float g, float b, float a = 1, string propertyName = "_Color")
+        [UnitySkill("material_set_color", "Set a color property on a material (supports name/instanceId/path)")]
+        public static object MaterialSetColor(string name = null, int instanceId = 0, string path = null, float r = 1, float g = 1, float b = 1, float a = 1, string propertyName = "_Color")
         {
-            var go = GameObject.Find(gameObjectName);
-            if (go == null)
-                return new { error = $"GameObject not found: {gameObjectName}" };
+            var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (error != null) return error;
 
             var renderer = go.GetComponent<Renderer>();
             if (renderer == null)
                 return new { error = "No Renderer component found" };
+
+            if (renderer.sharedMaterial == null)
+                return new { error = "No material assigned to renderer" };
 
             var color = new Color(r, g, b, a);
             
-            // Use material instance to avoid modifying shared material
-            Undo.RecordObject(renderer, "Set Material Color");
+            Undo.RecordObject(renderer.sharedMaterial, "Set Material Color");
             renderer.sharedMaterial.SetColor(propertyName, color);
 
-            return new { success = true, gameObject = gameObjectName, color = new { r, g, b, a } };
+            return new { success = true, gameObject = go.name, color = new { r, g, b, a } };
         }
 
-        [UnitySkill("material_set_texture", "Set a texture on a material")]
-        public static object MaterialSetTexture(string gameObjectName, string texturePath, string propertyName = "_MainTex")
+        [UnitySkill("material_set_texture", "Set a texture on a material (supports name/instanceId/path)")]
+        public static object MaterialSetTexture(string name = null, int instanceId = 0, string path = null, string texturePath = null, string propertyName = "_MainTex")
         {
-            var go = GameObject.Find(gameObjectName);
-            if (go == null)
-                return new { error = $"GameObject not found: {gameObjectName}" };
+            if (string.IsNullOrEmpty(texturePath))
+                return new { error = "texturePath is required" };
+
+            var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (error != null) return error;
 
             var renderer = go.GetComponent<Renderer>();
             if (renderer == null)
                 return new { error = "No Renderer component found" };
+
+            if (renderer.sharedMaterial == null)
+                return new { error = "No material assigned to renderer" };
 
             var texture = AssetDatabase.LoadAssetAtPath<Texture>(texturePath);
             if (texture == null)
                 return new { error = $"Texture not found: {texturePath}" };
 
-            Undo.RecordObject(renderer, "Set Texture");
+            Undo.RecordObject(renderer.sharedMaterial, "Set Texture");
             renderer.sharedMaterial.SetTexture(propertyName, texture);
 
-            return new { success = true, gameObject = gameObjectName, texture = texturePath };
+            return new { success = true, gameObject = go.name, texture = texturePath };
         }
 
-        [UnitySkill("material_assign", "Assign a material asset to a renderer")]
-        public static object MaterialAssign(string gameObjectName, string materialPath)
+        [UnitySkill("material_assign", "Assign a material asset to a renderer (supports name/instanceId/path)")]
+        public static object MaterialAssign(string name = null, int instanceId = 0, string path = null, string materialPath = null)
         {
-            var go = GameObject.Find(gameObjectName);
-            if (go == null)
-                return new { error = $"GameObject not found: {gameObjectName}" };
+            if (string.IsNullOrEmpty(materialPath))
+                return new { error = "materialPath is required" };
+
+            var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (error != null) return error;
 
             var renderer = go.GetComponent<Renderer>();
             if (renderer == null)
@@ -91,24 +100,29 @@ namespace UnitySkills
             Undo.RecordObject(renderer, "Assign Material");
             renderer.sharedMaterial = material;
 
-            return new { success = true, gameObject = gameObjectName, material = materialPath };
+            return new { success = true, gameObject = go.name, material = materialPath };
         }
 
-        [UnitySkill("material_set_float", "Set a float property on a material")]
-        public static object MaterialSetFloat(string gameObjectName, string propertyName, float value)
+        [UnitySkill("material_set_float", "Set a float property on a material (supports name/instanceId/path)")]
+        public static object MaterialSetFloat(string name = null, int instanceId = 0, string path = null, string propertyName = null, float value = 0)
         {
-            var go = GameObject.Find(gameObjectName);
-            if (go == null)
-                return new { error = $"GameObject not found: {gameObjectName}" };
+            if (string.IsNullOrEmpty(propertyName))
+                return new { error = "propertyName is required" };
+
+            var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (error != null) return error;
 
             var renderer = go.GetComponent<Renderer>();
             if (renderer == null)
                 return new { error = "No Renderer component found" };
 
-            Undo.RecordObject(renderer, "Set Material Float");
+            if (renderer.sharedMaterial == null)
+                return new { error = "No material assigned to renderer" };
+
+            Undo.RecordObject(renderer.sharedMaterial, "Set Material Float");
             renderer.sharedMaterial.SetFloat(propertyName, value);
 
-            return new { success = true, gameObject = gameObjectName, property = propertyName, value };
+            return new { success = true, gameObject = go.name, property = propertyName, value };
         }
     }
 }
