@@ -64,6 +64,10 @@ unity_skills.call_skill("gameobject_delete", name="MyCube")
 | `gameobject_set_active` | Enable/disable GameObject | `name`, `active` |
 | `gameobject_get_info` | Get detailed info | `name`/`instanceId`/`path` |
 
+### Primitive Types
+- `Cube`, `Sphere`, `Capsule`, `Cylinder`, `Plane`, `Quad` - 3D primitives
+- `Empty`, `None`, or omit - Creates an empty GameObject
+
 ### Example: Create a Cube
 ```python
 unity_skills.call_skill("gameobject_create", 
@@ -71,6 +75,14 @@ unity_skills.call_skill("gameobject_create",
     primitiveType="Cube", 
     x=0, y=1, z=0
 )
+```
+
+### Example: Create an Empty GameObject
+```python
+# All three methods work:
+unity_skills.call_skill("gameobject_create", name="Container", primitiveType="Empty")
+unity_skills.call_skill("gameobject_create", name="Container", primitiveType="None")
+unity_skills.call_skill("gameobject_create", name="Container")  # primitiveType omitted
 ```
 
 ---
@@ -85,12 +97,17 @@ unity_skills.call_skill("gameobject_create",
 | `component_set_property` | Set component property | `name`, `componentType`, `propertyName`, `value` |
 | `component_get_properties` | Get all properties | `name`, `componentType` |
 
+### Component Type Formats
+All these formats are supported:
+- Simple name: `"Rigidbody"`, `"MeshRenderer"`, `"Light"`
+- Full namespace: `"UnityEngine.Rigidbody"`, `"UnityEngine.UI.Image"`
+- TMPro components: `"TextMeshProUGUI"`, `"TMPro.TextMeshProUGUI"`
+
 ### Example: Add Rigidbody
 ```python
-unity_skills.call_skill("component_add", 
-    name="Player", 
-    componentType="Rigidbody"
-)
+# All formats work:
+unity_skills.call_skill("component_add", name="Player", componentType="Rigidbody")
+unity_skills.call_skill("component_add", name="Player", componentType="UnityEngine.Rigidbody")
 ```
 
 ---

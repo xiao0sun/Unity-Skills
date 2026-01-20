@@ -133,10 +133,37 @@ namespace UnitySkills
 
         private static System.Type FindComponentType(string name)
         {
-            return System.Type.GetType(name) ??
-                System.AppDomain.CurrentDomain.GetAssemblies()
-                    .SelectMany(a => { try { return a.GetTypes(); } catch { return new System.Type[0]; } })
-                    .FirstOrDefault(t => t.Name == name && typeof(Component).IsAssignableFrom(t));
+            if (string.IsNullOrEmpty(name)) return null;
+            
+            // 1. Try exact type name with full namespace (e.g., "UnityEngine.Rigidbody")
+            var type = System.Type.GetType(name);
+            if (type != null && typeof(Component).IsAssignableFrom(type))
+                return type;
+            
+            // 2. Extract simple name if full namespace provided (e.g., "UnityEngine.Rigidbody" -> "Rigidbody")
+            var simpleName = name.Contains(".") ? name.Substring(name.LastIndexOf('.') + 1) : name;
+            
+            // 3. Try common Unity namespaces first for performance
+            var commonNamespaces = new[] { 
+                "UnityEngine.", 
+                "UnityEngine.UI.", 
+                "UnityEngine.Rendering.",
+                "TMPro."
+            };
+            
+            foreach (var ns in commonNamespaces)
+            {
+                type = System.Type.GetType(ns + simpleName + ", UnityEngine") ??
+                       System.Type.GetType(ns + simpleName + ", UnityEngine.UI") ??
+                       System.Type.GetType(ns + simpleName + ", Unity.TextMeshPro");
+                if (type != null && typeof(Component).IsAssignableFrom(type))
+                    return type;
+            }
+            
+            // 4. Search all assemblies by simple name
+            return System.AppDomain.CurrentDomain.GetAssemblies()
+                .SelectMany(a => { try { return a.GetTypes(); } catch { return new System.Type[0]; } })
+                .FirstOrDefault(t => (t.Name == simpleName || t.FullName == name) && typeof(Component).IsAssignableFrom(t));
         }
 
         private static object ConvertValue(string value, System.Type targetType)

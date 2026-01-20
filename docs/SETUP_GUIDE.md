@@ -9,11 +9,11 @@ REST API 直接控制 Unity Editor，让 AI 生成极简脚本完成场景操作
 ### 方式 A：Git URL（推荐）
 ```
 Unity 菜单 → Window → Package Manager → + → Add package from git URL
-https://github.com/Besty0728/unity-mcp-skill.git?path=/MCPForUnity
+https://github.com/Besty0728/unity-mcp-skill.git?path=/SkillsForUnity
 ```
 
 ### 方式 B：本地安装
-将 `MCPForUnity` 文件夹复制到 Unity 项目的 `Packages/` 目录
+将 `SkillsForUnity` 文件夹复制到 Unity 项目的 `Packages/` 目录
 
 ---
 

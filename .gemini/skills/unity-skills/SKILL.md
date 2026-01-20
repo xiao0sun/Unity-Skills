@@ -1,6 +1,6 @@
 ---
-name: unity
-description: Unity Engine game development via REST API. Use when the user asks for Unity projects, scene manipulation, GameObject creation, material setup, UI building, lighting, animation, or any Unity-specific automation tasks.
+name: unity-editor-control
+description: Control Unity Editor via REST API. Create GameObjects, manage scenes, materials, prefabs, scripts. Use when user asks for Unity projects, scene manipulation, GameObject creation, material setup, UI building, lighting, animation.
 ---
 
 # UnitySkills - Direct Unity Control
@@ -88,7 +88,7 @@ call_skill("material_set_color", name="MyObject", r=1, g=0, b=0)
 | `gameobject_set_active` | Enable/disable GameObject | `name`, `active` |
 | `gameobject_get_info` | Get detailed info | `name`/`instanceId`/`path` |
 
-**Primitive Types:** `Cube`, `Sphere`, `Capsule`, `Cylinder`, `Plane`, `Quad`
+**Primitive Types:** `Cube`, `Sphere`, `Capsule`, `Cylinder`, `Plane`, `Quad`, `Empty`/`None` (or omit for empty object)
 
 ---
 
@@ -101,6 +101,8 @@ call_skill("material_set_color", name="MyObject", r=1, g=0, b=0)
 | `component_list` | List all components | `name` |
 | `component_set_property` | Set component property | `name`, `componentType`, `propertyName`, `value` |
 | `component_get_properties` | Get all properties | `name`, `componentType` |
+
+**Component Type Formats:** Simple name `"Rigidbody"` or full namespace `"UnityEngine.Rigidbody"` both work.
 
 ---
 

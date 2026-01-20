@@ -11,26 +11,26 @@ namespace UnitySkills
     /// </summary>
     public static class GameObjectSkills
     {
-        [UnitySkill("gameobject_create", "Create a new GameObject")]
+        [UnitySkill("gameobject_create", "Create a new GameObject. primitiveType: Cube, Sphere, Capsule, Cylinder, Plane, Quad, or Empty/null for empty object")]
         public static object GameObjectCreate(string name, string primitiveType = null, float x = 0, float y = 0, float z = 0)
         {
             GameObject go;
 
-            if (!string.IsNullOrEmpty(primitiveType))
+            // Support "Empty", "", or null to create an empty GameObject
+            if (string.IsNullOrEmpty(primitiveType) || 
+                primitiveType.Equals("Empty", System.StringComparison.OrdinalIgnoreCase) ||
+                primitiveType.Equals("None", System.StringComparison.OrdinalIgnoreCase))
             {
-                if (System.Enum.TryParse<PrimitiveType>(primitiveType, true, out var pt))
-                {
-                    go = GameObject.CreatePrimitive(pt);
-                    go.name = name;
-                }
-                else
-                {
-                    return new { error = $"Unknown primitive type: {primitiveType}. Use: Cube, Sphere, Capsule, Cylinder, Plane, Quad" };
-                }
+                go = new GameObject(name);
+            }
+            else if (System.Enum.TryParse<PrimitiveType>(primitiveType, true, out var pt))
+            {
+                go = GameObject.CreatePrimitive(pt);
+                go.name = name;
             }
             else
             {
-                go = new GameObject(name);
+                return new { error = $"Unknown primitive type: {primitiveType}. Use: Cube, Sphere, Capsule, Cylinder, Plane, Quad, or Empty/None for empty object" };
             }
 
             go.transform.position = new Vector3(x, y, z);

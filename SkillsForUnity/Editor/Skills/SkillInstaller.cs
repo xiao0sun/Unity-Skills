@@ -143,8 +143,9 @@ namespace UnitySkills
         {
             var sb = new StringBuilder();
             sb.AppendLine("---");
-            sb.AppendLine("name: Unity Editor Control");
-            sb.AppendLine("description: Control Unity Editor via REST API. Create GameObjects, manage scenes, materials, prefabs, scripts.");
+            // Gemini CLI requires: lowercase, alphanumeric, and dashes only
+            sb.AppendLine("name: unity-editor-control");
+            sb.AppendLine("description: Control Unity Editor via REST API. Create GameObjects, manage scenes, materials, prefabs, scripts. Use when user asks for Unity projects, scene manipulation, GameObject creation, material setup, UI building, lighting, animation.");
             sb.AppendLine("---");
             sb.AppendLine();
             sb.AppendLine("# Unity Editor Control Skill");

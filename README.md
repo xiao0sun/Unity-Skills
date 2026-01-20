@@ -4,7 +4,7 @@
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Unity](https://img.shields.io/badge/Unity-2021.3%2B-black)
-![Skills](https://img.shields.io/badge/Skills-45%2B-green)
+![Skills](https://img.shields.io/badge/Skills-100%2B-green)
 
 ---
 
@@ -17,9 +17,10 @@
 - 🚀 **极简调用** - 仅需 3 行 Python 代码即可与 Unity 交互
 - ⚡ **零开销** - 直接 HTTP 通信，无 MCP 中间层损耗
 - 📉 **高效 Token** - 相比传统排查方式节省 80%+ Token
-- 🎯 **45+ Skills** - 覆盖 GameObject、Component、Material、Light、Animator、UI、Project 等 15 大类
+- 🎯 **100+ Skills** - 覆盖 GameObject、Component、Material、Light、Animator、UI、Project 等 15 大类
 - 🎨 **智能渲染管线** - 自动检测 Built-in/URP/HDRP，正确创建材质
 - 🤖 **多 AI 支持** - 支持 Claude Code、Antigravity、Gemini CLI
+- ✨ **HDR 发光支持** - 完整的 Emission 和 Keyword 控制
 
 ## 🎮 支持的 Skill 分类
 
@@ -28,7 +29,7 @@
 | **GameObject** | 创建、删除、查找、变换 | 7 |
 | **Component** | 添加、移除、配置组件 | 5 |
 | **Scene** | 场景管理、截图 | 6 |
-| **Material** | 材质和着色器操作（智能管线检测） | 5 |
+| **Material** | 材质操作、HDR 发光、Keyword 控制 | 17 |
 | **Prefab** | 预制体操作 | 4 |
 | **Asset** | 资源管理 | 8 |
 | **Light** | 灯光创建和配置 | 5 |
@@ -47,7 +48,7 @@
 
 在 Unity Package Manager 中通过 Git URL 添加：
 ```text
-https://github.com/Besty0728/unity-mcp-skill.git?path=/MCPForUnity
+https://github.com/Besty0728/unity-mcp-skill.git?path=/SkillsForUnity
 ```
 
 ### 2. 启动 REST 服务
@@ -187,7 +188,7 @@ UnitySkills 会自动检测项目的渲染管线，并选择正确的着色器�
 ## 📂 目录结构
 
 ```text
-├── MCPForUnity/              # Unity Package 源码
+├── SkillsForUnity/           # Unity Package 源码
 │   └── Editor/Skills/        # 所有 Skill 实现
 │       ├── GameObjectSkills.cs
 │       ├── ComponentSkills.cs

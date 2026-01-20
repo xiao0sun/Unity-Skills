@@ -23,7 +23,7 @@ AI-powered Unity Editor automation through REST API. This skill collection enabl
                       │ HTTP POST to localhost:8080
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
-│              MCPForUnity (Editor Plugin)                     │
+│             SkillsForUnity (Editor Plugin)                   │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
 │  │ HTTP Server │→ │Skill Router │→ │ [UnitySkill] Methods│  │
 │  └─────────────┘  └─────────────┘  └─────────────────────┘  │
@@ -37,7 +37,7 @@ AI-powered Unity Editor automation through REST API. This skill collection enabl
 | [gameobject](./gameobject/SKILL.md) | 7 | Create, modify, find GameObjects |
 | [component](./component/SKILL.md) | 5 | Add, remove, configure components |
 | [scene](./scene/SKILL.md) | 6 | Scene loading, saving, management |
-| [material](./material/SKILL.md) | 5 | Material creation and properties |
+| [material](./material/SKILL.md) | 17 | Material creation, HDR emission, keywords |
 | [light](./light/SKILL.md) | 5 | Lighting setup and configuration |
 | [animator](./animator/SKILL.md) | 8 | Animation controller management |
 | [ui](./ui/SKILL.md) | 10 | UI Canvas and element creation |
@@ -49,7 +49,7 @@ AI-powered Unity Editor automation through REST API. This skill collection enabl
 | [script](./script/SKILL.md) | 4 | C# script creation and search |
 | [shader](./shader/SKILL.md) | 3 | Shader creation and listing |
 
-**Total: 88 Skills**
+**Total: 100 Skills**
 
 ## Quick Start
 
@@ -98,7 +98,7 @@ unity_skills.call_skill("scene_save")
 
 ## Installation
 
-1. Copy `MCPForUnity` folder to your Unity project's `Assets/Editor/`
+1. Copy `SkillsForUnity` folder to your Unity project's `Assets/Editor/`
 2. Place `unity_skills.py` in your Python project
 3. Ensure Unity Editor is running with the plugin active
 4. Start making skill calls!

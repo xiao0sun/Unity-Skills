@@ -241,7 +241,15 @@ namespace UnitySkills
             EditorGUILayout.LabelField(L("install_project") + ":", GUILayout.Width(100));
             if (SkillInstaller.IsClaudeProjectInstalled)
             {
-                EditorGUILayout.LabelField(L("installed"), EditorStyles.miniLabel, GUILayout.Width(80));
+                EditorGUILayout.LabelField(L("installed"), EditorStyles.miniLabel, GUILayout.Width(60));
+                if (GUILayout.Button(L("update"), GUILayout.Width(50)))
+                {
+                    var result = SkillInstaller.InstallClaude(false);
+                    if (result.success)
+                        EditorUtility.DisplayDialog("Success", L("update_success"), "OK");
+                    else
+                        EditorUtility.DisplayDialog("Error", string.Format(L("update_failed"), result.message), "OK");
+                }
                 if (GUILayout.Button(L("uninstall"), GUILayout.Width(60)))
                 {
                     if (EditorUtility.DisplayDialog(L("uninstall"), string.Format(L("uninstall_confirm"), "Claude Code (Project)"), "OK", "Cancel"))
@@ -271,7 +279,15 @@ namespace UnitySkills
             EditorGUILayout.LabelField(L("install_global") + ":", GUILayout.Width(100));
             if (SkillInstaller.IsClaudeGlobalInstalled)
             {
-                EditorGUILayout.LabelField(L("installed"), EditorStyles.miniLabel, GUILayout.Width(80));
+                EditorGUILayout.LabelField(L("installed"), EditorStyles.miniLabel, GUILayout.Width(60));
+                if (GUILayout.Button(L("update"), GUILayout.Width(50)))
+                {
+                    var result = SkillInstaller.InstallClaude(true);
+                    if (result.success)
+                        EditorUtility.DisplayDialog("Success", L("update_success"), "OK");
+                    else
+                        EditorUtility.DisplayDialog("Error", string.Format(L("update_failed"), result.message), "OK");
+                }
                 if (GUILayout.Button(L("uninstall"), GUILayout.Width(60)))
                 {
                     if (EditorUtility.DisplayDialog(L("uninstall"), string.Format(L("uninstall_confirm"), "Claude Code (Global)"), "OK", "Cancel"))
@@ -308,7 +324,15 @@ namespace UnitySkills
             EditorGUILayout.LabelField(L("install_project") + ":", GUILayout.Width(100));
             if (SkillInstaller.IsAntigravityProjectInstalled)
             {
-                EditorGUILayout.LabelField(L("installed"), EditorStyles.miniLabel, GUILayout.Width(80));
+                EditorGUILayout.LabelField(L("installed"), EditorStyles.miniLabel, GUILayout.Width(60));
+                if (GUILayout.Button(L("update"), GUILayout.Width(50)))
+                {
+                    var result = SkillInstaller.InstallAntigravity(false);
+                    if (result.success)
+                        EditorUtility.DisplayDialog("Success", L("update_success"), "OK");
+                    else
+                        EditorUtility.DisplayDialog("Error", string.Format(L("update_failed"), result.message), "OK");
+                }
                 if (GUILayout.Button(L("uninstall"), GUILayout.Width(60)))
                 {
                     if (EditorUtility.DisplayDialog(L("uninstall"), string.Format(L("uninstall_confirm"), "Antigravity (Project)"), "OK", "Cancel"))
@@ -338,7 +362,15 @@ namespace UnitySkills
             EditorGUILayout.LabelField(L("install_global") + ":", GUILayout.Width(100));
             if (SkillInstaller.IsAntigravityGlobalInstalled)
             {
-                EditorGUILayout.LabelField(L("installed"), EditorStyles.miniLabel, GUILayout.Width(80));
+                EditorGUILayout.LabelField(L("installed"), EditorStyles.miniLabel, GUILayout.Width(60));
+                if (GUILayout.Button(L("update"), GUILayout.Width(50)))
+                {
+                    var result = SkillInstaller.InstallAntigravity(true);
+                    if (result.success)
+                        EditorUtility.DisplayDialog("Success", L("update_success"), "OK");
+                    else
+                        EditorUtility.DisplayDialog("Error", string.Format(L("update_failed"), result.message), "OK");
+                }
                 if (GUILayout.Button(L("uninstall"), GUILayout.Width(60)))
                 {
                     if (EditorUtility.DisplayDialog(L("uninstall"), string.Format(L("uninstall_confirm"), "Antigravity (Global)"), "OK", "Cancel"))
@@ -375,7 +407,15 @@ namespace UnitySkills
             EditorGUILayout.LabelField(L("install_project") + ":", GUILayout.Width(100));
             if (SkillInstaller.IsGeminiProjectInstalled)
             {
-                EditorGUILayout.LabelField(L("installed"), EditorStyles.miniLabel, GUILayout.Width(80));
+                EditorGUILayout.LabelField(L("installed"), EditorStyles.miniLabel, GUILayout.Width(60));
+                if (GUILayout.Button(L("update"), GUILayout.Width(50)))
+                {
+                    var result = SkillInstaller.InstallGemini(false);
+                    if (result.success)
+                        EditorUtility.DisplayDialog("Success", L("update_success"), "OK");
+                    else
+                        EditorUtility.DisplayDialog("Error", string.Format(L("update_failed"), result.message), "OK");
+                }
                 if (GUILayout.Button(L("uninstall"), GUILayout.Width(60)))
                 {
                     if (EditorUtility.DisplayDialog(L("uninstall"), string.Format(L("uninstall_confirm"), "Gemini CLI (Project)"), "OK", "Cancel"))
@@ -405,7 +445,15 @@ namespace UnitySkills
             EditorGUILayout.LabelField(L("install_global") + ":", GUILayout.Width(100));
             if (SkillInstaller.IsGeminiGlobalInstalled)
             {
-                EditorGUILayout.LabelField(L("installed"), EditorStyles.miniLabel, GUILayout.Width(80));
+                EditorGUILayout.LabelField(L("installed"), EditorStyles.miniLabel, GUILayout.Width(60));
+                if (GUILayout.Button(L("update"), GUILayout.Width(50)))
+                {
+                    var result = SkillInstaller.InstallGemini(true);
+                    if (result.success)
+                        EditorUtility.DisplayDialog("Success", L("update_success"), "OK");
+                    else
+                        EditorUtility.DisplayDialog("Error", string.Format(L("update_failed"), result.message), "OK");
+                }
                 if (GUILayout.Button(L("uninstall"), GUILayout.Width(60)))
                 {
                     if (EditorUtility.DisplayDialog(L("uninstall"), string.Format(L("uninstall_confirm"), "Gemini CLI (Global)"), "OK", "Cancel"))
