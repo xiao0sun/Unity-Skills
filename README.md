@@ -218,6 +218,64 @@ UnitySkills 会自动检测项目的渲染管线，并选择正确的着色器�
 
 ## ❓ 常见问题
 
+### Q: 如何设置复杂类型的属性？（v1.3.4+）
+
+A: `component_set_property` 现在支持多种复杂类型：
+
+```python
+# Vector2/3/4
+call_skill("component_set_property", targetName="Player", componentType="Rigidbody2D", 
+           propertyName="velocity", value="(5.0, 0)")
+
+# Quaternion（支持 XYZW 或单一 Y 轴角度）
+call_skill("component_set_property", targetName="Player", componentType="Transform", 
+           propertyName="rotation", value="45")  # Y轴旋转45度
+
+# Color（支持 RGB/RGBA、HEX、命名颜色）
+call_skill("component_set_property", targetName="Cube", componentType="MeshRenderer", 
+           propertyName="material.color", value="#FF5500")  # HEX
+call_skill("component_set_property", ..., value="red")     # 命名颜色
+call_skill("component_set_property", ..., value="(1, 0.5, 0, 1)")  # RGBA
+```
+
+### Q: 如何设置对象引用（如 Transform、GameObject）？（v1.3.4+）
+
+A: 使用 `referencePath` 或 `referenceName` 参数：
+
+```python
+# 通过名称设置引用
+call_skill("component_set_property", 
+           targetName="CinemachineCamera", 
+           componentType="CinemachineCamera",
+           propertyName="Follow",
+           referenceName="Player")
+
+# 通过路径设置引用
+call_skill("component_set_property",
+           targetName="Enemy",
+           componentType="EnemyAI",
+           propertyName="target",
+           referencePath="Player/Head")
+```
+
+### Q: Cinemachine 组件找不到？（v1.3.4+）
+
+A: v1.3.4 已支持 Cinemachine。注意新旧版本命名空间不同：
+- Unity 2022.2+：使用 `CinemachineCamera`（新 API）
+- 旧版本：使用 `CinemachineVirtualCamera`
+
+```python
+# 添加 Cinemachine 组件
+call_skill("component_add", targetName="Camera", componentType="CinemachineCamera")
+
+# 设置 Follow 目标
+call_skill("component_set_property",
+           targetName="Camera",
+           componentType="CinemachineCamera",
+           propertyName="Follow",
+           referenceName="Player")
+```
+
 ### Q: 材质创建失败怎么办？
 
 A: UnitySkills 会自动检测渲染管线并选择正确的着色器。如果仍然失败，可以先运行：
@@ -261,6 +319,54 @@ A: 请检查：
 1. 端口 8080 是否被占用
 2. 尝试在 Unity Console 中查看错误信息
 3. 确保 Unity 版本 >= 2021.3
+
+### Q: 创建脚本后请求失败？（Domain Reload）
+
+A: 这是正常现象。当 `script_create` 创建新脚本时，Unity 会重新编译所有脚本，服务器会暂时停止：
+
+1. **自动恢复**：服务器会在 2-3 秒后自动重启
+2. **手动重试**：等待 Unity 编译完成后重新发送请求
+3. **查看状态**：访问 `/health` 端点检查服务器状态
+
+```python
+# 检查服务器是否就绪
+import time
+import requests
+
+def wait_for_server(timeout=10):
+    for _ in range(timeout):
+        try:
+            resp = requests.get("http://localhost:8080/health", timeout=1)
+            if resp.json().get("status") == "ok":
+                return True
+        except:
+            time.sleep(1)
+    return False
+
+# 创建脚本后等待服务器恢复
+call_skill("script_create", name="MyScript", template="MonoBehaviour")
+if wait_for_server():
+    print("服务器已恢复，可以继续操作")
+```
+
+### Q: 如何设置 UI 元素位置和大小？（v1.3.4+）
+
+A: 使用 `gameobject_set_transform` 的 RectTransform 参数：
+
+```python
+# 设置 UI 元素的锚点位置和大小
+call_skill("gameobject_set_transform",
+           name="MyButton",
+           anchoredPosX=100, anchoredPosY=50,
+           width=200, height=60)
+
+# 设置锚点和枢轴
+call_skill("gameobject_set_transform",
+           name="MyPanel",
+           anchorMinX=0, anchorMinY=0,
+           anchorMaxX=1, anchorMaxY=1,
+           pivotX=0.5, pivotY=0.5)
+```
 
 ## 📄 License
 

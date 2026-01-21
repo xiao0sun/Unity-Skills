@@ -119,18 +119,32 @@ namespace UnitySkills
             return new { count = list.Length, objects = list };
         }
 
-        [UnitySkill("gameobject_set_transform", "Set position, rotation, or scale (supports name/instanceId/path)")]
+        [UnitySkill("gameobject_set_transform", "Set transform properties. For UI/RectTransform: use anchorX/Y, pivotX/Y, sizeDeltaX/Y. For 3D: use posX/Y/Z, rotX/Y/Z, scaleX/Y/Z")]
         public static object GameObjectSetTransform(
             string name = null, int instanceId = 0, string path = null,
+            // World transform (3D objects)
             float? posX = null, float? posY = null, float? posZ = null,
             float? rotX = null, float? rotY = null, float? rotZ = null,
-            float? scaleX = null, float? scaleY = null, float? scaleZ = null)
+            float? scaleX = null, float? scaleY = null, float? scaleZ = null,
+            // Local transform (both 3D and UI)
+            float? localPosX = null, float? localPosY = null, float? localPosZ = null,
+            // RectTransform specific (UI)
+            float? anchoredPosX = null, float? anchoredPosY = null,
+            float? anchorMinX = null, float? anchorMinY = null,
+            float? anchorMaxX = null, float? anchorMaxY = null,
+            float? pivotX = null, float? pivotY = null,
+            float? sizeDeltaX = null, float? sizeDeltaY = null,
+            float? width = null, float? height = null)
         {
             var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
             if (error != null) return error;
 
             Undo.RecordObject(go.transform, "Set Transform");
 
+            var rt = go.GetComponent<RectTransform>();
+            bool isUI = rt != null;
+
+            // World position
             if (posX.HasValue || posY.HasValue || posZ.HasValue)
             {
                 var pos = go.transform.position;
@@ -140,6 +154,17 @@ namespace UnitySkills
                     posZ ?? pos.z);
             }
 
+            // Local position
+            if (localPosX.HasValue || localPosY.HasValue || localPosZ.HasValue)
+            {
+                var pos = go.transform.localPosition;
+                go.transform.localPosition = new Vector3(
+                    localPosX ?? pos.x,
+                    localPosY ?? pos.y,
+                    localPosZ ?? pos.z);
+            }
+
+            // Rotation
             if (rotX.HasValue || rotY.HasValue || rotZ.HasValue)
             {
                 var rot = go.transform.eulerAngles;
@@ -149,6 +174,7 @@ namespace UnitySkills
                     rotZ ?? rot.z);
             }
 
+            // Scale
             if (scaleX.HasValue || scaleY.HasValue || scaleZ.HasValue)
             {
                 var scale = go.transform.localScale;
@@ -158,12 +184,87 @@ namespace UnitySkills
                     scaleZ ?? scale.z);
             }
 
+            // RectTransform specific properties
+            if (isUI)
+            {
+                // Anchored position
+                if (anchoredPosX.HasValue || anchoredPosY.HasValue)
+                {
+                    var pos = rt.anchoredPosition;
+                    rt.anchoredPosition = new Vector2(
+                        anchoredPosX ?? pos.x,
+                        anchoredPosY ?? pos.y);
+                }
+
+                // Anchor min
+                if (anchorMinX.HasValue || anchorMinY.HasValue)
+                {
+                    var min = rt.anchorMin;
+                    rt.anchorMin = new Vector2(
+                        anchorMinX ?? min.x,
+                        anchorMinY ?? min.y);
+                }
+
+                // Anchor max
+                if (anchorMaxX.HasValue || anchorMaxY.HasValue)
+                {
+                    var max = rt.anchorMax;
+                    rt.anchorMax = new Vector2(
+                        anchorMaxX ?? max.x,
+                        anchorMaxY ?? max.y);
+                }
+
+                // Pivot
+                if (pivotX.HasValue || pivotY.HasValue)
+                {
+                    var pivot = rt.pivot;
+                    rt.pivot = new Vector2(
+                        pivotX ?? pivot.x,
+                        pivotY ?? pivot.y);
+                }
+
+                // Size delta
+                if (sizeDeltaX.HasValue || sizeDeltaY.HasValue)
+                {
+                    var size = rt.sizeDelta;
+                    rt.sizeDelta = new Vector2(
+                        sizeDeltaX ?? size.x,
+                        sizeDeltaY ?? size.y);
+                }
+
+                // Width/Height shortcuts
+                if (width.HasValue || height.HasValue)
+                {
+                    rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, width ?? rt.rect.width);
+                    rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, height ?? rt.rect.height);
+                }
+
+                EditorUtility.SetDirty(rt);
+
+                return new
+                {
+                    success = true,
+                    name = go.name,
+                    instanceId = go.GetInstanceID(),
+                    isUI = true,
+                    anchoredPosition = new { x = rt.anchoredPosition.x, y = rt.anchoredPosition.y },
+                    anchorMin = new { x = rt.anchorMin.x, y = rt.anchorMin.y },
+                    anchorMax = new { x = rt.anchorMax.x, y = rt.anchorMax.y },
+                    pivot = new { x = rt.pivot.x, y = rt.pivot.y },
+                    sizeDelta = new { x = rt.sizeDelta.x, y = rt.sizeDelta.y },
+                    rect = new { width = rt.rect.width, height = rt.rect.height },
+                    localPosition = new { x = go.transform.localPosition.x, y = go.transform.localPosition.y, z = go.transform.localPosition.z }
+                };
+            }
+
             return new
             {
                 success = true,
                 name = go.name,
                 instanceId = go.GetInstanceID(),
+                isUI = false,
                 position = new { x = go.transform.position.x, y = go.transform.position.y, z = go.transform.position.z },
+                localPosition = new { x = go.transform.localPosition.x, y = go.transform.localPosition.y, z = go.transform.localPosition.z },
                 rotation = new { x = go.transform.eulerAngles.x, y = go.transform.eulerAngles.y, z = go.transform.eulerAngles.z },
                 scale = new { x = go.transform.localScale.x, y = go.transform.localScale.y, z = go.transform.localScale.z }
             };

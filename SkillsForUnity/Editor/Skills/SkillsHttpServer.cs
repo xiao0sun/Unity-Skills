@@ -511,13 +511,14 @@ namespace UnitySkills
                 job.ResponseJson = JsonConvert.SerializeObject(new {
                     status = "ok",
                     service = "UnitySkills",
-                    version = "1.3.0",
+                    version = "1.3.4",
                     serverRunning = _isRunning,
                     queuedRequests = QueuedRequests,
                     totalProcessed = _totalRequestsProcessed,
                     autoRestart = AutoStart,
                     domainReloadRecovery = "enabled",
-                    architecture = "Producer-Consumer (Thread-Safe)"
+                    architecture = "Producer-Consumer (Thread-Safe)",
+                    note = "If you get 'Connection Refused', Unity may be reloading scripts. Wait 2-3 seconds and retry."
                 });
                 return;
             }
@@ -560,7 +561,9 @@ namespace UnitySkills
                     job.ResponseJson = JsonConvert.SerializeObject(new {
                         error = ex.Message,
                         type = ex.GetType().Name,
-                        skill = skillName
+                        skill = skillName,
+                        suggestion = "If this error persists, check Unity console for details. " +
+                                    "For 'Connection Refused' errors, Unity may be reloading scripts - wait 2-3 seconds and retry."
                     });
                     Debug.LogWarning($"[UnitySkills] Skill '{skillName}' error: {ex.Message}");
                 }

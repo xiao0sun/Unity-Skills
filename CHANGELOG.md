@@ -2,6 +2,117 @@
 
 All notable changes to UnitySkills will be documented in this file.
 
+## [1.3.4] - 2025-01-24
+
+### Added - Enhanced Type Conversion System
+
+**Problem Solved**: `component_set_property` previously couldn't handle complex types like Vector2, Vector3, Quaternion, Color, etc. Now supports comprehensive type parsing.
+
+**Supported Types**:
+- `Vector2/3/4` - e.g., `"(1.5, 2.0)"` or `"1.5, 2.0"`
+- `Vector2Int/3Int` - e.g., `"(10, 20)"` or `"10, 20"`
+- `Quaternion` - e.g., `"(0, 0.7, 0, 0.7)"` for XYZW or `"45"` for Y rotation
+- `Color/Color32` - e.g., `"red"`, `"#FF5500"`, `"(1, 0.5, 0, 1)"` for RGBA
+- `Rect` - e.g., `"(0, 0, 100, 50)"` for XYWH
+- `Bounds` - e.g., `"(0, 0, 0, 1, 1, 1)"` for center+size
+- `LayerMask` - e.g., `"Default"` or `"5"`
+- `AnimationCurve` - Linear (0→1) curve
+- `Enum` - e.g., `"Perspective"` for Camera.projection
+
+### Added - Reference Type Property Setting
+
+**Problem Solved**: Couldn't set Transform, GameObject, or Component references via string names.
+
+**New Parameters for `component_set_property`**:
+- `referencePath` - Set reference by hierarchy path (e.g., `"Canvas/Panel/Button"`)
+- `referenceName` - Set reference by object name (e.g., `"MainCamera"`)
+
+**Example Usage**:
+```json
+{
+  "targetName": "CinemachineCamera",
+  "componentType": "CinemachineCamera",
+  "propertyName": "Follow",
+  "referenceName": "Player"
+}
+```
+
+### Added - Extended Component Namespace Support
+
+**Problem Solved**: Third-party components like Cinemachine couldn't be found.
+
+**Supported Namespaces**:
+- Unity Core: `UnityEngine`, `UnityEngine.UI`, `UnityEngine.Events`, `TMPro`
+- Cinemachine: `Cinemachine`, `Unity.Cinemachine` (both old and new namespaces)
+- Input System: `UnityEngine.InputSystem`
+- XR: `UnityEngine.XR.*`
+- Third-party: `DG.Tweening` (DOTween), `Rewired`
+- And 15+ more namespaces
+
+### Added - Intelligent GameObject Finding
+
+**Problem Solved**: AI tools often fail to find objects due to naming assumptions (e.g., "MainCamera" vs "Main Camera").
+
+**New Smart Search Features**:
+- Case-insensitive matching
+- Contains-match fallback (e.g., "camera" finds "Main Camera")
+- Component-based search (e.g., find objects with Camera component)
+- Tag-based search
+- Similar name suggestions on failure
+
+**New `GameObjectFinder` Methods**:
+- `SmartFind(query)` - AI-friendly search with fallbacks
+- `FindByNameContains(partial)` - Partial name matching
+- `FindByComponent<T>()` - Find by component type
+- `FindOrError(query)` - Returns helpful suggestions on failure
+
+### Added - Full RectTransform Support
+
+**Problem Solved**: `gameobject_set_transform` only worked for 3D objects.
+
+**New Parameters for UI Objects**:
+- `localPosX/Y/Z` - Local position (distinct from world position)
+- `anchoredPosX/Y` - UI anchored position
+- `anchorMinX/Y`, `anchorMaxX/Y` - Anchor points
+- `pivotX/Y` - Pivot point
+- `sizeDeltaX/Y` - Size delta
+- `width`, `height` - Direct size shortcuts
+
+### Changed - Component Skills Improvements
+
+**`component_add`**:
+- Returns `fullTypeName` (e.g., `"Unity.Cinemachine.CinemachineCamera"`)
+- Provides similar type suggestions on failure
+
+**`component_remove`**:
+- New `componentIndex` parameter to remove specific instance when multiple exist
+- Checks `RequireComponent` dependencies before removal
+
+**`component_list`**:
+- New `includeProperties` parameter to show properties per component
+
+**`component_get_properties`**:
+- New `includePrivate` parameter to show private fields
+
+### Changed - Error Messages
+
+All error responses now include:
+- Actionable suggestions
+- Retry guidance for Domain Reload scenarios
+- Similar item suggestions when search fails
+
+### Technical Details
+
+**Health Endpoint Updates** (`/health`):
+```json
+{
+  "version": "1.3.4",
+  "note": "If you get 'Connection Refused', Unity may be reloading scripts. Wait 2-3 seconds and retry."
+}
+```
+
+---
+
 ## [1.3.3] - 2025-01-24
 
 ### Added - Domain Reload Auto-Recovery
