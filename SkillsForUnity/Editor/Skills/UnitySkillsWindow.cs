@@ -168,7 +168,7 @@ namespace UnitySkills
             {
                 if (GUILayout.Button(L("stop_server"), GUILayout.Width(100)))
                 {
-                    SkillsHttpServer.Stop();
+                    SkillsHttpServer.StopPermanent();
                     _serverRunning = false;
                 }
             }
@@ -208,6 +208,18 @@ namespace UnitySkills
                 EditorGUILayout.LabelField("Producer-Consumer", EditorStyles.miniLabel);
                 EditorGUILayout.EndHorizontal();
             }
+            
+            // Auto-restart setting
+            EditorGUILayout.Space(5);
+            EditorGUILayout.BeginHorizontal();
+            var newAutoStart = EditorGUILayout.Toggle(L("auto_restart"), SkillsHttpServer.AutoStart);
+            if (newAutoStart != SkillsHttpServer.AutoStart)
+            {
+                SkillsHttpServer.AutoStart = newAutoStart;
+            }
+            EditorGUILayout.EndHorizontal();
+            EditorGUILayout.LabelField(L("auto_restart_hint"), EditorStyles.miniLabel);
+            
             EditorGUILayout.EndVertical();
 
             EditorGUILayout.Space(10);

@@ -4,17 +4,23 @@ using System.Net;
 using System.Text;
 using System.Threading;
 using UnityEditor;
+using UnityEditor.Compilation;
 using UnityEngine;
 using Newtonsoft.Json;
 
 namespace UnitySkills
 {
     /// <summary>
-    /// Robust HTTP server for UnitySkills REST API.
+    /// Production-grade HTTP server for UnitySkills REST API.
     /// 
     /// Architecture: Strict Producer-Consumer Pattern
     /// - HTTP Thread (Producer): ONLY receives requests and enqueues them. NO Unity API calls.
     /// - Main Thread (Consumer): Processes ALL logic including routing, rate limiting, and skill execution.
+    /// 
+    /// Resilience Features:
+    /// - Auto-restart after Domain Reload (script compilation)
+    /// - Persistent state via EditorPrefs
+    /// - Graceful shutdown and recovery
     /// 
     /// This ensures 100% thread safety with Unity's single-threaded architecture.
     /// </summary>
@@ -43,11 +49,28 @@ namespace UnitySkills
         // Statistics
         private static long _totalRequestsProcessed = 0;
         private static long _totalRequestsReceived = 0;
+        
+        // Persistence keys for Domain Reload recovery
+        private const string PREF_SERVER_SHOULD_RUN = "UnitySkills_ServerShouldRun";
+        private const string PREF_AUTO_START = "UnitySkills_AutoStart";
+        
+        // Domain Reload tracking
+        private static bool _domainReloadPending = false;
 
         public static bool IsRunning => _isRunning;
         public static string Url => _prefix;
         public static int QueuedRequests { get { lock (_queueLock) { return _jobQueue.Count; } } }
         public static long TotalProcessed => _totalRequestsProcessed;
+        
+        /// <summary>
+        /// Gets or sets whether the server should auto-start.
+        /// When true, server will automatically restart after Domain Reload.
+        /// </summary>
+        public static bool AutoStart
+        {
+            get => EditorPrefs.GetBool(PREF_AUTO_START, true);
+            set => EditorPrefs.SetBool(PREF_AUTO_START, value);
+        }
 
         /// <summary>
         /// Represents a pending HTTP request job.
@@ -69,10 +92,98 @@ namespace UnitySkills
             public ManualResetEventSlim CompletionSignal;
         }
 
+        /// <summary>
+        /// Static constructor - called after every Domain Reload.
+        /// This is the key to auto-recovery after script compilation.
+        /// </summary>
         static SkillsHttpServer()
         {
-            EditorApplication.quitting += Stop;
+            // Register for editor lifecycle events
+            EditorApplication.quitting += OnEditorQuitting;
+            AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
+            AssemblyReloadEvents.afterAssemblyReload += OnAfterAssemblyReload;
+            CompilationPipeline.compilationStarted += OnCompilationStarted;
+            
             HookUpdateLoop();
+            
+            // Check if we should auto-restart after Domain Reload
+            // Use delayed call to ensure Unity is fully initialized
+            EditorApplication.delayCall += CheckAndRestoreServer;
+        }
+        
+        /// <summary>
+        /// Called before scripts are compiled - save state.
+        /// </summary>
+        private static void OnBeforeAssemblyReload()
+        {
+            _domainReloadPending = true;
+            
+            // Persist the "should run" state before domain is destroyed
+            EditorPrefs.SetBool(PREF_SERVER_SHOULD_RUN, _isRunning);
+            
+            if (_isRunning)
+            {
+                Debug.Log("[UnitySkills] Domain Reload detected - server state saved, will auto-restart");
+                // Don't call Stop() here - domain will be destroyed anyway
+                // Just mark as not running to prevent errors
+                _isRunning = false;
+            }
+        }
+        
+        /// <summary>
+        /// Called after scripts are compiled - restore state.
+        /// </summary>
+        private static void OnAfterAssemblyReload()
+        {
+            _domainReloadPending = false;
+            // CheckAndRestoreServer will be called via delayCall
+        }
+        
+        /// <summary>
+        /// Called when compilation starts.
+        /// </summary>
+        private static void OnCompilationStarted(object context)
+        {
+            if (_isRunning)
+            {
+                Debug.Log("[UnitySkills] Compilation started - preparing for Domain Reload...");
+            }
+        }
+        
+        /// <summary>
+        /// Called when editor is quitting - clean shutdown.
+        /// </summary>
+        private static void OnEditorQuitting()
+        {
+            // Always clear on quit - we don't want auto-start on next Unity session
+            EditorPrefs.SetBool(PREF_SERVER_SHOULD_RUN, false);
+            Stop();
+        }
+        
+        /// <summary>
+        /// Check if server should be restored after Domain Reload.
+        /// Called via EditorApplication.delayCall to ensure Unity is ready.
+        /// 
+        /// Logic:
+        /// - If server was running before reload (shouldRun=true) AND AutoStart is enabled → restart
+        /// - If user manually stopped (shouldRun=false) → respect that decision
+        /// </summary>
+        private static void CheckAndRestoreServer()
+        {
+            bool shouldRun = EditorPrefs.GetBool(PREF_SERVER_SHOULD_RUN, false);
+            bool autoStart = AutoStart;
+            
+            // Only auto-restart if:
+            // 1. Server was running before the reload (shouldRun=true), AND
+            // 2. AutoStart feature is enabled
+            if (shouldRun && autoStart)
+            {
+                if (!_isRunning)
+                {
+                    Debug.Log("[UnitySkills] Auto-restoring server after Domain Reload...");
+                    Start();
+                }
+            }
         }
         
         private static void HookUpdateLoop()
@@ -105,6 +216,9 @@ namespace UnitySkills
                 _listener.Prefixes.Add(_prefix);
                 _listener.Start();
                 _isRunning = true;
+                
+                // Persist state for Domain Reload recovery
+                EditorPrefs.SetBool(PREF_SERVER_SHOULD_RUN, true);
 
                 // Start listener thread (Producer - ONLY enqueues, no Unity API)
                 _listenerThread = new Thread(ListenLoop) { IsBackground = true, Name = "UnitySkills-Listener" };
@@ -118,19 +232,26 @@ namespace UnitySkills
                 var skillCount = SkillRouter.GetManifest().Split('\n').Length;
                 Debug.Log($"[UnitySkills] REST Server started at {_prefix}");
                 Debug.Log($"[UnitySkills] {skillCount} skills available");
-                Debug.Log($"[UnitySkills] Architecture: Strict Producer-Consumer (Thread-Safe)");
+                Debug.Log($"[UnitySkills] Domain Reload Recovery: ENABLED (AutoStart={AutoStart})");
             }
             catch (Exception ex)
             {
                 Debug.LogError($"[UnitySkills] Failed to start: {ex.Message}");
                 _isRunning = false;
+                EditorPrefs.SetBool(PREF_SERVER_SHOULD_RUN, false);
             }
         }
 
-        public static void Stop()
+        public static void Stop(bool permanent = false)
         {
             if (!_isRunning) return;
             _isRunning = false;
+            
+            // If permanent stop, clear the auto-restart flag
+            if (permanent)
+            {
+                EditorPrefs.SetBool(PREF_SERVER_SHOULD_RUN, false);
+            }
             
             try { _listener?.Stop(); } catch { }
             try { _listener?.Close(); } catch { }
@@ -148,7 +269,15 @@ namespace UnitySkills
                 }
             }
             
-            Debug.Log("[UnitySkills] Server stopped");
+            Debug.Log($"[UnitySkills] Server stopped{(permanent ? " (permanent)" : " (will auto-restart after reload)")}");
+        }
+        
+        /// <summary>
+        /// Stop server permanently without auto-restart.
+        /// </summary>
+        public static void StopPermanent()
+        {
+            Stop(permanent: true);
         }
         
         /// <summary>
@@ -386,6 +515,8 @@ namespace UnitySkills
                     serverRunning = _isRunning,
                     queuedRequests = QueuedRequests,
                     totalProcessed = _totalRequestsProcessed,
+                    autoRestart = AutoStart,
+                    domainReloadRecovery = "enabled",
                     architecture = "Producer-Consumer (Thread-Safe)"
                 });
                 return;

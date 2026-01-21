@@ -70,6 +70,8 @@ namespace UnitySkills
             {"queued_requests", "Queued Requests"},
             {"total_processed", "Total Processed"},
             {"architecture", "Architecture"},
+            {"auto_restart", "Auto-restart after compile"},
+            {"auto_restart_hint", "Server will automatically restart after Unity recompiles scripts"},
             
             // Skill descriptions
             {"scene_create", "Create a new empty scene"},
@@ -188,6 +190,8 @@ namespace UnitySkills
             {"queued_requests", "队列中请求"},
             {"total_processed", "已处理总数"},
             {"architecture", "架构"},
+            {"auto_restart", "编译后自动重启"},
+            {"auto_restart_hint", "Unity 重新编译脚本后服务器将自动重启"},
             
             // Skill descriptions
             {"scene_create", "创建新的空场景"},
