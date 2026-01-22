@@ -4,8 +4,8 @@
   "displayName": "UnitySkills",
   "description": "AI automation skills specifically designed for Unity",
   "unity": "2021.3",
-  "documentationUrl": "https://github.com/Besty0728/unity-mcp-skill",
-  "licensesUrl": "https://github.com/Besty0728/unity-mcp-skill/blob/main/LICENSE",
+  "documentationUrl": "https://github.com/Besty0728/Unity-Skills",
+  "licensesUrl": "https://github.com/Besty0728/Unity-Skills/blob/main/LICENSE",
   "dependencies": {
     "com.unity.nuget.newtonsoft-json": "3.0.2"
   },

@@ -9,7 +9,7 @@ REST API 直接控制 Unity Editor，让 AI 生成极简脚本完成场景操作
 ### 方式 A：Git URL（推荐）
 ```
 Unity 菜单 → Window → Package Manager → + → Add package from git URL
-https://github.com/Besty0728/unity-mcp-skill.git?path=/SkillsForUnity
+https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity
 ```
 
 ### 方式 B：本地安装
@@ -56,6 +56,11 @@ Unity 菜单：**Window → UnitySkills**，切换到 **AI Config** 标签页
 2. 选择要安装的 AI 工具
 3. 点击 "安装到项目" 或 "全局安装"
 4. 安装成功后会显示 "✓ 已安装"
+
+> 安装器落盘文件说明（生成于目标目录）：
+> - `SKILL.md`
+> - `scripts/unity_skills.py`
+> - Antigravity 额外生成 `workflows/unity-skills.md`
 
 ### Gemini CLI 特别说明
 Gemini CLI 的 Skills 功能是实验性的，需要手动启用：

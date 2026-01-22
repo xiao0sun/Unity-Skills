@@ -43,7 +43,7 @@
 ### 1. 安装 Unity 插件
 通过 Unity Package Manager 直接添加 Git URL：
 ```
-https://github.com/Besty0728/unity-mcp-skill.git?path=/SkillsForUnity
+https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity
 ```
 
 ### 2. 启动服务
@@ -53,6 +53,37 @@ https://github.com/Besty0728/unity-mcp-skill.git?path=/SkillsForUnity
 1. 打开 `Window > UnitySkills > Skill Installer`。
 2. 选择对应的终端图标（Claude / Antigravity / Gemini）。
 3. 点击 **"Install"** 即可完成环境配置，无需手动拷贝代码。
+
+> 安装器落盘文件说明（生成于目标目录）：
+> - `SKILL.md`
+> - `scripts/unity_skills.py`
+> - Antigravity 额外生成 `workflows/unity-skills.md`
+
+📘 需要更完整的安装与使用说明，请查看：[docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md)
+
+### 4. 手动安装 Skills（可选）
+如果不使用一键安装，可按以下**标准流程**手动部署（适用于所有支持 Skills 的工具）：
+
+#### ✅ 标准安装规范
+1. **定位 Skills 源码目录**：本仓库的 `unity-skills/` 即为可分发的 Skills 模板（根目录包含 `SKILL.md`）。
+2. **找到工具的 Skills 根目录**：不同工具路径不同，优先以该工具文档为准。
+3. **完整复制**：将整个 `unity-skills/` 目录复制到工具的 Skills 根目录下。
+4. **目录结构要求**：复制后需保持结构如下（示例）：
+   - `unity-skills/SKILL.md`
+   - `unity-skills/skills/`
+   - `unity-skills/scripts/`
+5. **重启工具**：让工具重新加载 Skills 列表。
+6. **验证加载**：在工具内触发 Skills 列表/命令（或执行一次简单技能调用），确认可用。
+
+#### 🔎 常见工具目录参考
+以下为已验证的默认目录（若工具配置过自定义路径，请以自定义为准）：
+
+- Claude Code：`~/.claude/skills/`
+- Antigravity：`~/.antigravity/skills/`
+- Gemini CLI：`~/.gemini/skills/`
+
+#### 🧩 其他支持 Skills 的工具
+若你使用的是其他支持 Skills 的工具，请按照该工具文档指定的 Skills 根目录进行安装。只要满足**标准安装规范**（根目录包含 `SKILL.md` 并保持 `skills/` 与 `scripts/` 结构），即可被正确识别。
 
 ---
 
