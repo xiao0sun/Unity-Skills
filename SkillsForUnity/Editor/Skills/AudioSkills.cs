@@ -29,7 +29,6 @@ namespace UnitySkills
                 forceToMono = importer.forceToMono,
                 loadInBackground = importer.loadInBackground,
                 ambisonic = importer.ambisonic,
-                preloadAudioData = importer.preloadAudioData,
                 loadType = defaultSettings.loadType.ToString(),
                 compressionFormat = defaultSettings.compressionFormat.ToString(),
                 quality = defaultSettings.quality,
@@ -43,7 +42,6 @@ namespace UnitySkills
             bool? forceToMono = null,
             bool? loadInBackground = null,
             bool? ambisonic = null,
-            bool? preloadAudioData = null,
             string loadType = null,
             string compressionFormat = null,
             float? quality = null,
@@ -75,12 +73,6 @@ namespace UnitySkills
             {
                 importer.ambisonic = ambisonic.Value;
                 changes.Add($"ambisonic={ambisonic.Value}");
-            }
-
-            if (preloadAudioData.HasValue)
-            {
-                importer.preloadAudioData = preloadAudioData.Value;
-                changes.Add($"preloadAudioData={preloadAudioData.Value}");
             }
 
             // Sample settings
@@ -186,8 +178,6 @@ namespace UnitySkills
                                 importer.forceToMono = item.forceToMono.Value;
                             if (item.loadInBackground.HasValue)
                                 importer.loadInBackground = item.loadInBackground.Value;
-                            if (item.preloadAudioData.HasValue)
-                                importer.preloadAudioData = item.preloadAudioData.Value;
 
                             // Apply sample settings
                             var ss = importer.defaultSampleSettings;
@@ -253,7 +243,6 @@ namespace UnitySkills
             public string assetPath { get; set; }
             public bool? forceToMono { get; set; }
             public bool? loadInBackground { get; set; }
-            public bool? preloadAudioData { get; set; }
             public string loadType { get; set; }
             public string compressionFormat { get; set; }
             public float? quality { get; set; }
