@@ -15,6 +15,12 @@ namespace UnitySkills
     {
         private static Dictionary<string, SkillInfo> _skills;
         private static bool _initialized;
+        
+        // JSON 序列化设置，禁用 Unicode 转义确保中文正确显示
+        private static readonly JsonSerializerSettings _jsonSettings = new JsonSerializerSettings
+        {
+            StringEscapeHandling = StringEscapeHandling.Default
+        };
 
         private class SkillInfo
         {
@@ -75,7 +81,7 @@ namespace UnitySkills
                     })
                 })
             };
-            return JsonSettings.Serialize(manifest, indented: true);
+            return JsonConvert.SerializeObject(manifest, Formatting.Indented, _jsonSettings);
         }
 
         public static string Execute(string name, string json)
@@ -83,12 +89,12 @@ namespace UnitySkills
             Initialize();
             if (!_skills.TryGetValue(name, out var skill))
             {
-                return JsonSettings.Serialize(new
+                return JsonConvert.SerializeObject(new
                 {
                     status = "error",
                     error = $"Skill '{name}' not found",
                     availableSkills = _skills.Keys.Take(20).ToArray()
-                });
+                }, _jsonSettings);
             }
 
             try
@@ -114,11 +120,11 @@ namespace UnitySkills
                     }
                     else
                     {
-                        return JsonSettings.Serialize(new
+                        return JsonConvert.SerializeObject(new
                         {
                             status = "error",
                             error = $"Missing required parameter: {p.Name}"
-                        });
+                        }, _jsonSettings);
                     }
                 }
 
@@ -166,12 +172,12 @@ namespace UnitySkills
                             ["hint"] = "Result is truncated. To see all items, pass 'verbose=true' parameter."
                         };
                         
-                        return JsonSettings.Serialize(new { status = "success", result = wrapper });
+                        return JsonConvert.SerializeObject(new { status = "success", result = wrapper }, _jsonSettings);
                     }
                 }
                 
                 // Full Mode (verbose=true OR small result) - Return original result as is
-                return JsonSettings.Serialize(new { status = "success", result });
+                return JsonConvert.SerializeObject(new { status = "success", result }, _jsonSettings);
             }
             catch (TargetInvocationException ex)
             {
@@ -179,21 +185,21 @@ namespace UnitySkills
                 UnityEditor.Undo.RevertAllInCurrentGroup();
                 
                 var inner = ex.InnerException ?? ex;
-                return JsonSettings.Serialize(new
+                return JsonConvert.SerializeObject(new
                 {
                     status = "error",
                     error = $"[Transactional Revert] {inner.Message}"
-                });
+                }, _jsonSettings);
             }
             catch (Exception ex)
             {
                 // Revert transaction
                 UnityEditor.Undo.RevertAllInCurrentGroup();
                 
-                return JsonSettings.Serialize(new { 
+                return JsonConvert.SerializeObject(new { 
                     status = "error", 
                     error = $"[Transactional Revert] {ex.Message}" 
-                });
+                }, _jsonSettings);
             }
         }
 
