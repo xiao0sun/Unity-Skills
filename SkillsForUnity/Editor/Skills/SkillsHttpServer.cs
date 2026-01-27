@@ -55,6 +55,12 @@ namespace UnitySkills
         private static long _totalRequestsProcessed = 0;
         private static long _totalRequestsReceived = 0;
         
+        // JSON 序列化设置，禁用 Unicode 转义确保中文正确显示
+        private static readonly JsonSerializerSettings _jsonSettings = new JsonSerializerSettings
+        {
+            StringEscapeHandling = StringEscapeHandling.Default
+        };
+        
         // Persistence keys for Domain Reload recovery (Project Scoped)
         private static string PrefKey(string key) => $"UnitySkills_{RegistryService.InstanceId}_{key}";
         
@@ -316,7 +322,7 @@ namespace UnitySkills
                 {
                     var job = _jobQueue.Dequeue();
                     job.StatusCode = 503;
-                    job.ResponseJson = JsonSettings.Serialize(new { error = "Server stopped" });
+                    job.ResponseJson = JsonConvert.SerializeObject(new { error = "Server stopped" }, _jsonSettings);
                     job.IsProcessed = true;
                     job.CompletionSignal?.Set();
                 }
@@ -437,10 +443,10 @@ namespace UnitySkills
                 if (!completed)
                 {
                     job.StatusCode = 504;
-                    job.ResponseJson = JsonSettings.Serialize(new {
+                    job.ResponseJson = JsonConvert.SerializeObject(new {
                         error = "Gateway Timeout: Main thread did not respond within 60 seconds",
                         suggestion = "Unity Editor may be paused or showing a modal dialog"
-                    });
+                    }, _jsonSettings);
                 }
                 
                 // Send HTTP response (thread-safe)
@@ -452,7 +458,7 @@ namespace UnitySkills
                 try
                 {
                     job.StatusCode = 500;
-                    job.ResponseJson = JsonSettings.Serialize(new { error = "Internal server error" });
+                    job.ResponseJson = JsonConvert.SerializeObject(new { error = "Internal server error" }, _jsonSettings);
                     SendResponse(job);
                 }
                 catch { }
@@ -525,10 +531,10 @@ namespace UnitySkills
                 catch (Exception ex)
                 {
                     job.StatusCode = 500;
-                    job.ResponseJson = JsonSettings.Serialize(new {
+                    job.ResponseJson = JsonConvert.SerializeObject(new {
                         error = ex.Message,
                         type = ex.GetType().Name
-                    });
+                    }, _jsonSettings);
                     Debug.LogWarning($"[UnitySkills] Job processing error: {ex.Message}");
                 }
                 finally
@@ -572,7 +578,7 @@ namespace UnitySkills
             if (path == "/" || path == "/health")
             {
                 job.StatusCode = 200;
-                job.ResponseJson = JsonSettings.Serialize(new {
+                job.ResponseJson = JsonConvert.SerializeObject(new {
                     status = "ok",
                     service = "UnitySkills",
                     version = "1.3.4",
@@ -583,7 +589,7 @@ namespace UnitySkills
                     domainReloadRecovery = "enabled",
                     architecture = "Producer-Consumer (Thread-Safe)",
                     note = "If you get 'Connection Refused', Unity may be reloading scripts. Wait 2-3 seconds and retry."
-                });
+                }, _jsonSettings);
                 return;
             }
             
@@ -602,11 +608,11 @@ namespace UnitySkills
                 if (!CheckRateLimit())
                 {
                     job.StatusCode = 429;
-                    job.ResponseJson = JsonSettings.Serialize(new {
+                    job.ResponseJson = JsonConvert.SerializeObject(new {
                         error = "Rate limit exceeded",
                         limit = MaxRequestsPerSecond,
                         suggestion = "Please slow down requests"
-                    });
+                    }, _jsonSettings);
                     return;
                 }
                 
@@ -622,13 +628,13 @@ namespace UnitySkills
                 catch (Exception ex)
                 {
                     job.StatusCode = 500;
-                    job.ResponseJson = JsonSettings.Serialize(new {
+                    job.ResponseJson = JsonConvert.SerializeObject(new {
                         error = ex.Message,
                         type = ex.GetType().Name,
                         skill = skillName,
                         suggestion = "If this error persists, check Unity console for details. " +
                                     "For 'Connection Refused' errors, Unity may be reloading scripts - wait 2-3 seconds and retry."
-                    });
+                    }, _jsonSettings);
                     Debug.LogWarning($"[UnitySkills] Skill '{skillName}' error: {ex.Message}");
                 }
                 return;
@@ -636,10 +642,10 @@ namespace UnitySkills
             
             // Not found
             job.StatusCode = 404;
-            job.ResponseJson = JsonSettings.Serialize(new {
+            job.ResponseJson = JsonConvert.SerializeObject(new {
                 error = "Not found",
                 endpoints = new[] { "GET /skills", "POST /skill/{name}", "GET /health" }
-            });
+            }, _jsonSettings);
         }
 
         /// <summary>
