@@ -15,7 +15,16 @@ import io
 from typing import Any, Dict, Optional
 
 UNITY_URL = "http://localhost:8090"
-DEFAULT_PORT = 8090
+
+def setup_utf8_output():
+    """设置标准输出为UTF-8编码，解决Windows控制台中文乱码问题"""
+    if sys.platform == 'win32':
+        try:
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+        except:
+            pass  # 如果失败就使用默认编码
+
 
 def get_registry_path():
     import os
