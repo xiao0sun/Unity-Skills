@@ -75,7 +75,7 @@ namespace UnitySkills
                     })
                 })
             };
-            return JsonConvert.SerializeObject(manifest, Formatting.Indented);
+            return JsonSettings.Serialize(manifest, indented: true);
         }
 
         public static string Execute(string name, string json)
@@ -83,7 +83,7 @@ namespace UnitySkills
             Initialize();
             if (!_skills.TryGetValue(name, out var skill))
             {
-                return JsonConvert.SerializeObject(new
+                return JsonSettings.Serialize(new
                 {
                     status = "error",
                     error = $"Skill '{name}' not found",
@@ -114,7 +114,7 @@ namespace UnitySkills
                     }
                     else
                     {
-                        return JsonConvert.SerializeObject(new
+                        return JsonSettings.Serialize(new
                         {
                             status = "error",
                             error = $"Missing required parameter: {p.Name}"
@@ -166,12 +166,12 @@ namespace UnitySkills
                             ["hint"] = "Result is truncated. To see all items, pass 'verbose=true' parameter."
                         };
                         
-                        return JsonConvert.SerializeObject(new { status = "success", result = wrapper });
+                        return JsonSettings.Serialize(new { status = "success", result = wrapper });
                     }
                 }
                 
                 // Full Mode (verbose=true OR small result) - Return original result as is
-                return JsonConvert.SerializeObject(new { status = "success", result });
+                return JsonSettings.Serialize(new { status = "success", result });
             }
             catch (TargetInvocationException ex)
             {
@@ -179,7 +179,7 @@ namespace UnitySkills
                 UnityEditor.Undo.RevertAllInCurrentGroup();
                 
                 var inner = ex.InnerException ?? ex;
-                return JsonConvert.SerializeObject(new
+                return JsonSettings.Serialize(new
                 {
                     status = "error",
                     error = $"[Transactional Revert] {inner.Message}"
@@ -190,7 +190,7 @@ namespace UnitySkills
                 // Revert transaction
                 UnityEditor.Undo.RevertAllInCurrentGroup();
                 
-                return JsonConvert.SerializeObject(new { 
+                return JsonSettings.Serialize(new { 
                     status = "error", 
                     error = $"[Transactional Revert] {ex.Message}" 
                 });

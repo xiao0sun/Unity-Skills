@@ -80,6 +80,7 @@ class UnitySkills:
             # Combine verbose into kwargs for JSON body
             kwargs['verbose'] = verbose
             response = requests.post(f"{self.url}/skill/{skill_name}", json=kwargs, timeout=30)
+            response.encoding = 'utf-8'  # 强制 UTF-8 解码，确保中文正确显示
             return response.json()
         except requests.exceptions.ConnectionError:
              return {"status": "error", "error": f"Connection failed to {self.url}. Unity instance may be down."}

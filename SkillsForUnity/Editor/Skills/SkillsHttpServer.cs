@@ -316,7 +316,7 @@ namespace UnitySkills
                 {
                     var job = _jobQueue.Dequeue();
                     job.StatusCode = 503;
-                    job.ResponseJson = JsonConvert.SerializeObject(new { error = "Server stopped" });
+                    job.ResponseJson = JsonSettings.Serialize(new { error = "Server stopped" });
                     job.IsProcessed = true;
                     job.CompletionSignal?.Set();
                 }
@@ -437,7 +437,7 @@ namespace UnitySkills
                 if (!completed)
                 {
                     job.StatusCode = 504;
-                    job.ResponseJson = JsonConvert.SerializeObject(new {
+                    job.ResponseJson = JsonSettings.Serialize(new {
                         error = "Gateway Timeout: Main thread did not respond within 60 seconds",
                         suggestion = "Unity Editor may be paused or showing a modal dialog"
                     });
@@ -452,7 +452,7 @@ namespace UnitySkills
                 try
                 {
                     job.StatusCode = 500;
-                    job.ResponseJson = JsonConvert.SerializeObject(new { error = "Internal server error" });
+                    job.ResponseJson = JsonSettings.Serialize(new { error = "Internal server error" });
                     SendResponse(job);
                 }
                 catch { }
@@ -482,7 +482,7 @@ namespace UnitySkills
                 
                 if (!string.IsNullOrEmpty(job.ResponseJson))
                 {
-                    response.ContentType = "application/json";
+                    response.ContentType = "application/json; charset=utf-8";
                     byte[] buffer = Encoding.UTF8.GetBytes(job.ResponseJson);
                     response.ContentLength64 = buffer.Length;
                     response.OutputStream.Write(buffer, 0, buffer.Length);
@@ -525,7 +525,7 @@ namespace UnitySkills
                 catch (Exception ex)
                 {
                     job.StatusCode = 500;
-                    job.ResponseJson = JsonConvert.SerializeObject(new {
+                    job.ResponseJson = JsonSettings.Serialize(new {
                         error = ex.Message,
                         type = ex.GetType().Name
                     });
@@ -572,7 +572,7 @@ namespace UnitySkills
             if (path == "/" || path == "/health")
             {
                 job.StatusCode = 200;
-                job.ResponseJson = JsonConvert.SerializeObject(new {
+                job.ResponseJson = JsonSettings.Serialize(new {
                     status = "ok",
                     service = "UnitySkills",
                     version = "1.3.4",
@@ -602,7 +602,7 @@ namespace UnitySkills
                 if (!CheckRateLimit())
                 {
                     job.StatusCode = 429;
-                    job.ResponseJson = JsonConvert.SerializeObject(new {
+                    job.ResponseJson = JsonSettings.Serialize(new {
                         error = "Rate limit exceeded",
                         limit = MaxRequestsPerSecond,
                         suggestion = "Please slow down requests"
@@ -622,7 +622,7 @@ namespace UnitySkills
                 catch (Exception ex)
                 {
                     job.StatusCode = 500;
-                    job.ResponseJson = JsonConvert.SerializeObject(new {
+                    job.ResponseJson = JsonSettings.Serialize(new {
                         error = ex.Message,
                         type = ex.GetType().Name,
                         skill = skillName,
@@ -636,7 +636,7 @@ namespace UnitySkills
             
             // Not found
             job.StatusCode = 404;
-            job.ResponseJson = JsonConvert.SerializeObject(new {
+            job.ResponseJson = JsonSettings.Serialize(new {
                 error = "Not found",
                 endpoints = new[] { "GET /skills", "POST /skill/{name}", "GET /health" }
             });
