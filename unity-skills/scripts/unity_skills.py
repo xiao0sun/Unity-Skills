@@ -9,7 +9,14 @@ Usage:
 """
 
 import requests
+import sys
+import io
 from typing import Any, Dict, Optional
+
+# Windows 控制台 UTF-8 编码设置，解决中文显示乱码
+if sys.platform == 'win32':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
 UNITY_URL = "http://localhost:8090"
 DEFAULT_PORT = 8090
