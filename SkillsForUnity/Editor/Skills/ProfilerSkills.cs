@@ -18,6 +18,17 @@ namespace UnitySkills
             long totalReservedMemory = Profiler.GetTotalReservedMemoryLong();
             long totalUnusedReservedMemory = Profiler.GetTotalUnusedReservedMemoryLong();
             
+            return new
+            {
+                fps = UnityStats.fps,
+                frameTime = UnityStats.frameTime,
+                triangles = UnityStats.triangles,
+                vertices = UnityStats.vertices,
+                batches = UnityStats.batches,
+                setPassCalls = UnityStats.setPassCalls,
+                drawCalls = UnityStats.drawCalls,
+                visibleSkinnedMeshes = UnityStats.visibleSkinnedMeshes,
+                visibleAnimations = UnityStats.visibleAnimationComponents,
                 memory = new
                 {
                     totalAllocatedMB = totalAllocatedMemory / (1024f * 1024f),
