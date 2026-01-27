@@ -56,10 +56,8 @@ namespace UnitySkills
         private static long _totalRequestsReceived = 0;
         
         // JSON 序列化设置，禁用 Unicode 转义确保中文正确显示
-        private static readonly JsonSerializerSettings _jsonSettings = new JsonSerializerSettings
-        {
-            StringEscapeHandling = StringEscapeHandling.Default
-        };
+        // JSON serialization now handled by global JsonSettings
+
         
         // Persistence keys for Domain Reload recovery (Project Scoped)
         private static string PrefKey(string key) => $"UnitySkills_{RegistryService.InstanceId}_{key}";
@@ -322,7 +320,7 @@ namespace UnitySkills
                 {
                     var job = _jobQueue.Dequeue();
                     job.StatusCode = 503;
-                    job.ResponseJson = JsonConvert.SerializeObject(new { error = "Server stopped" }, _jsonSettings);
+                    job.ResponseJson = JsonConvert.SerializeObject(new { error = "Server stopped" }, JsonSettings.Default);
                     job.IsProcessed = true;
                     job.CompletionSignal?.Set();
                 }
@@ -446,7 +444,7 @@ namespace UnitySkills
                     job.ResponseJson = JsonConvert.SerializeObject(new {
                         error = "Gateway Timeout: Main thread did not respond within 60 seconds",
                         suggestion = "Unity Editor may be paused or showing a modal dialog"
-                    }, _jsonSettings);
+                    }, JsonSettings.Default);
                 }
                 
                 // Send HTTP response (thread-safe)
@@ -458,7 +456,7 @@ namespace UnitySkills
                 try
                 {
                     job.StatusCode = 500;
-                    job.ResponseJson = JsonConvert.SerializeObject(new { error = "Internal server error" }, _jsonSettings);
+                    job.ResponseJson = JsonConvert.SerializeObject(new { error = "Internal server error" }, JsonSettings.Default);
                     SendResponse(job);
                 }
                 catch { }
@@ -534,7 +532,7 @@ namespace UnitySkills
                     job.ResponseJson = JsonConvert.SerializeObject(new {
                         error = ex.Message,
                         type = ex.GetType().Name
-                    }, _jsonSettings);
+                    }, JsonSettings.Default);
                     Debug.LogWarning($"[UnitySkills] Job processing error: {ex.Message}");
                 }
                 finally
@@ -589,7 +587,7 @@ namespace UnitySkills
                     domainReloadRecovery = "enabled",
                     architecture = "Producer-Consumer (Thread-Safe)",
                     note = "If you get 'Connection Refused', Unity may be reloading scripts. Wait 2-3 seconds and retry."
-                }, _jsonSettings);
+                }, JsonSettings.Default);
                 return;
             }
             
@@ -612,7 +610,7 @@ namespace UnitySkills
                         error = "Rate limit exceeded",
                         limit = MaxRequestsPerSecond,
                         suggestion = "Please slow down requests"
-                    }, _jsonSettings);
+                    }, JsonSettings.Default);
                     return;
                 }
                 
@@ -634,7 +632,7 @@ namespace UnitySkills
                         skill = skillName,
                         suggestion = "If this error persists, check Unity console for details. " +
                                     "For 'Connection Refused' errors, Unity may be reloading scripts - wait 2-3 seconds and retry."
-                    }, _jsonSettings);
+                    }, JsonSettings.Default);
                     Debug.LogWarning($"[UnitySkills] Skill '{skillName}' error: {ex.Message}");
                 }
                 return;
@@ -645,7 +643,7 @@ namespace UnitySkills
             job.ResponseJson = JsonConvert.SerializeObject(new {
                 error = "Not found",
                 endpoints = new[] { "GET /skills", "POST /skill/{name}", "GET /health" }
-            }, _jsonSettings);
+            }, JsonSettings.Default);
         }
 
         /// <summary>
