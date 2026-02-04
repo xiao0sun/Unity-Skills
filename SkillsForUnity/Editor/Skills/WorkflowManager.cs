@@ -205,11 +205,23 @@ namespace UnitySkills
         /// <summary>
         /// Undoes a specific task.
         /// Handle deletion of objects that were marked as 'Created' during the task.
+        /// Saves the task to undoneStack for potential redo.
         /// </summary>
         public static bool UndoTask(string taskId)
         {
             var task = History.tasks.FirstOrDefault(t => t.id == taskId);
             if (task == null) return false;
+
+            // Capture current state before undo (for redo)
+            var redoTask = new WorkflowTask
+            {
+                id = task.id,
+                tag = task.tag,
+                description = task.description,
+                timestamp = task.timestamp,
+                sessionId = task.sessionId,
+                snapshots = new List<ObjectSnapshot>()
+            };
 
             Undo.IncrementCurrentGroup();
             Undo.SetCurrentGroupName($"Undo Task: {task.tag}");
@@ -223,6 +235,27 @@ namespace UnitySkills
             {
                 if (snapshot.type == SnapshotType.Created)
                 {
+                    // Capture current state for redo (the created object exists now)
+                    if (!GlobalObjectId.TryParse(snapshot.globalObjectId, out GlobalObjectId createdGid))
+                        continue;
+
+                    var createdObj = GlobalObjectId.GlobalObjectIdentifierToObjectSlow(createdGid);
+                    if (createdObj != null)
+                    {
+                        // Save current state for redo
+                        redoTask.snapshots.Add(new ObjectSnapshot
+                        {
+                            globalObjectId = snapshot.globalObjectId,
+                            originalJson = EditorJsonUtility.ToJson(createdObj),
+                            objectName = snapshot.objectName,
+                            typeName = snapshot.typeName,
+                            type = SnapshotType.Created,
+                            componentTypeName = snapshot.componentTypeName,
+                            parentGameObjectId = snapshot.parentGameObjectId,
+                            assetPath = snapshot.assetPath
+                        });
+                    }
+
                     // For components: use parentGameObjectId and componentTypeName for reliable deletion
                     if (!string.IsNullOrEmpty(snapshot.componentTypeName) &&
                         !string.IsNullOrEmpty(snapshot.parentGameObjectId))
@@ -248,10 +281,7 @@ namespace UnitySkills
                     }
 
                     // Fallback: try to find by GlobalObjectId directly
-                    if (!GlobalObjectId.TryParse(snapshot.globalObjectId, out GlobalObjectId gid))
-                        continue;
-
-                    var obj = GlobalObjectId.GlobalObjectIdentifierToObjectSlow(gid);
+                    var obj = createdObj;
                     if (obj == null) continue;
 
                     // This was a NEW object created by AI, so we delete it to undo
@@ -268,6 +298,17 @@ namespace UnitySkills
                     var obj = GlobalObjectId.GlobalObjectIdentifierToObjectSlow(gid);
                     if (obj == null) continue;
 
+                    // Capture current state for redo
+                    redoTask.snapshots.Add(new ObjectSnapshot
+                    {
+                        globalObjectId = snapshot.globalObjectId,
+                        originalJson = EditorJsonUtility.ToJson(obj),
+                        objectName = snapshot.objectName,
+                        typeName = snapshot.typeName,
+                        type = SnapshotType.Modified,
+                        assetPath = snapshot.assetPath
+                    });
+
                     Undo.RecordObject(obj, "Undo Workflow Modification");
                     EditorJsonUtility.FromJsonOverwrite(snapshot.originalJson, obj);
                     EditorUtility.SetDirty(obj);
@@ -276,9 +317,137 @@ namespace UnitySkills
 
             Undo.CollapseUndoOperations(undoGroup);
 
-            // Also update history to mark it as undone (optional UX improvement)
+            // Move task from history to undone stack
+            _history.tasks.Remove(task);
+            _history.undoneStack.Add(redoTask);
             SaveHistory();
             return true;
+        }
+
+        /// <summary>
+        /// Redoes a previously undone task.
+        /// </summary>
+        public static bool RedoTask(string taskId)
+        {
+            var task = History.undoneStack.FirstOrDefault(t => t.id == taskId);
+            if (task == null) return false;
+
+            Undo.IncrementCurrentGroup();
+            Undo.SetCurrentGroupName($"Redo Task: {task.tag}");
+            int undoGroup = Undo.GetCurrentGroup();
+
+            // Create a new task to store original state (for future undo)
+            var newTask = new WorkflowTask
+            {
+                id = task.id,
+                tag = task.tag,
+                description = task.description,
+                timestamp = task.timestamp,
+                sessionId = task.sessionId,
+                snapshots = new List<ObjectSnapshot>()
+            };
+
+            // Process snapshots to restore the state
+            foreach (var snapshot in task.snapshots)
+            {
+                if (snapshot.type == SnapshotType.Created)
+                {
+                    // Re-create the object
+                    if (!string.IsNullOrEmpty(snapshot.componentTypeName) &&
+                        !string.IsNullOrEmpty(snapshot.parentGameObjectId))
+                    {
+                        // Re-add component
+                        if (GlobalObjectId.TryParse(snapshot.parentGameObjectId, out GlobalObjectId parentGid))
+                        {
+                            var parentObj = GlobalObjectId.GlobalObjectIdentifierToObjectSlow(parentGid);
+                            if (parentObj is GameObject go)
+                            {
+                                var compType = Type.GetType(snapshot.componentTypeName) ??
+                                               ComponentSkills.FindComponentType(snapshot.componentTypeName);
+                                if (compType != null)
+                                {
+                                    var comp = Undo.AddComponent(go, compType);
+                                    if (comp != null && !string.IsNullOrEmpty(snapshot.originalJson))
+                                    {
+                                        EditorJsonUtility.FromJsonOverwrite(snapshot.originalJson, comp);
+                                    }
+
+                                    // Record for future undo
+                                    newTask.snapshots.Add(new ObjectSnapshot
+                                    {
+                                        globalObjectId = GlobalObjectId.GetGlobalObjectIdSlow(comp).ToString(),
+                                        originalJson = "",
+                                        objectName = snapshot.objectName,
+                                        typeName = snapshot.typeName,
+                                        type = SnapshotType.Created,
+                                        componentTypeName = snapshot.componentTypeName,
+                                        parentGameObjectId = snapshot.parentGameObjectId
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Re-create GameObject - this is more complex, we restore from JSON if possible
+                        // For now, we can only restore if the object still exists in some form
+                        // Full recreation would require storing prefab/primitive type info
+                        Debug.LogWarning($"[UnitySkills] Cannot fully recreate deleted GameObject: {snapshot.objectName}. Consider using Unity's Undo (Ctrl+Z) instead.");
+                    }
+                }
+                else
+                {
+                    // Restore modified object to its post-modification state
+                    if (!GlobalObjectId.TryParse(snapshot.globalObjectId, out GlobalObjectId gid))
+                        continue;
+
+                    var obj = GlobalObjectId.GlobalObjectIdentifierToObjectSlow(gid);
+                    if (obj == null) continue;
+
+                    // Save current state for future undo
+                    newTask.snapshots.Add(new ObjectSnapshot
+                    {
+                        globalObjectId = snapshot.globalObjectId,
+                        originalJson = EditorJsonUtility.ToJson(obj),
+                        objectName = snapshot.objectName,
+                        typeName = snapshot.typeName,
+                        type = SnapshotType.Modified,
+                        assetPath = snapshot.assetPath
+                    });
+
+                    Undo.RecordObject(obj, "Redo Workflow Modification");
+                    EditorJsonUtility.FromJsonOverwrite(snapshot.originalJson, obj);
+                    EditorUtility.SetDirty(obj);
+                }
+            }
+
+            Undo.CollapseUndoOperations(undoGroup);
+
+            // Move task from undone stack back to history
+            _history.undoneStack.Remove(task);
+            _history.tasks.Add(newTask);
+            SaveHistory();
+            return true;
+        }
+
+        /// <summary>
+        /// Gets the list of undone tasks that can be redone.
+        /// </summary>
+        public static List<WorkflowTask> GetUndoneStack()
+        {
+            return History.undoneStack;
+        }
+
+        /// <summary>
+        /// Clears the undo stack (called when new changes are made after undo).
+        /// </summary>
+        public static void ClearUndoneStack()
+        {
+            if (_history != null)
+            {
+                _history.undoneStack.Clear();
+                SaveHistory();
+            }
         }
 
         /// <summary>

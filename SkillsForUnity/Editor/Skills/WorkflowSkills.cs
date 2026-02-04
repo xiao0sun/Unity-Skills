@@ -224,6 +224,38 @@ namespace UnitySkills
             return new { success = result, taskId = taskId };
         }
 
+        [UnitySkill("workflow_redo_task", "Redo a previously undone task (restore changes)")]
+        public static object WorkflowRedoTask(string taskId = null)
+        {
+            // If no taskId provided, redo the most recent undone task
+            if (string.IsNullOrEmpty(taskId))
+            {
+                var undoneStack = WorkflowManager.GetUndoneStack();
+                if (undoneStack.Count == 0)
+                    return new { success = false, error = "No undone tasks to redo" };
+                taskId = undoneStack[undoneStack.Count - 1].id;
+            }
+
+            bool result = WorkflowManager.RedoTask(taskId);
+            return new { success = result, taskId = taskId };
+        }
+
+        [UnitySkill("workflow_undone_list", "List all undone tasks that can be redone")]
+        public static object WorkflowUndoneList()
+        {
+            var undoneStack = WorkflowManager.GetUndoneStack();
+            var list = undoneStack.Select(t => new
+            {
+                id = t.id,
+                tag = t.tag,
+                description = t.description,
+                time = t.GetFormattedTime(),
+                changes = t.snapshots.Count
+            }).ToList<object>();
+
+            return new { success = true, count = list.Count, undoneStack = list };
+        }
+
         [UnitySkill("workflow_revert_task", "Alias for workflow_undo_task (deprecated, use workflow_undo_task instead)")]
         public static object WorkflowRevertTask(string taskId)
         {

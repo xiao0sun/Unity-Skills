@@ -722,7 +722,7 @@ namespace UnitySkills
         private void DrawHistoryTab()
         {
             var history = WorkflowManager.History;
-            
+
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField(Localization.Current == Localization.Language.Chinese ? "AI 操作历史 (持久化)" : "AI Operation History (Persistent)", EditorStyles.boldLabel);
             if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "刷新" : "Refresh", GUILayout.Width(60)))
@@ -738,51 +738,109 @@ namespace UnitySkills
 
             EditorGUILayout.Space(5);
 
-            if (history.tasks.Count == 0)
-            {
-                EditorGUILayout.HelpBox(Localization.Current == Localization.Language.Chinese ? "暂无历史记录" : "No history records.", MessageType.Info);
-                return;
-            }
-
             _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition);
 
-            // Show in reverse order (newest first)
-            for (int i = history.tasks.Count - 1; i >= 0; i--)
+            // Active tasks section
+            if (history.tasks.Count > 0)
             {
-                var task = history.tasks[i];
-                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-                
-                EditorGUILayout.BeginHorizontal();
-                GUILayout.Label($"[{task.GetFormattedTime()}]", EditorStyles.miniLabel, GUILayout.Width(60));
-                GUILayout.Label(task.tag, EditorStyles.boldLabel);
-                GUILayout.FlexibleSpace();
-                GUILayout.Label($"{task.snapshots.Count} changes", EditorStyles.miniLabel);
-                EditorGUILayout.EndHorizontal();
+                EditorGUILayout.LabelField(Localization.Current == Localization.Language.Chinese ? "活动任务" : "Active Tasks", EditorStyles.miniBoldLabel);
 
-                if (!string.IsNullOrEmpty(task.description))
+                // Show in reverse order (newest first)
+                for (int i = history.tasks.Count - 1; i >= 0; i--)
                 {
-                    EditorGUILayout.LabelField(task.description, EditorStyles.wordWrappedLabel);
-                }
+                    var task = history.tasks[i];
+                    EditorGUILayout.BeginVertical(EditorStyles.helpBox);
 
-                EditorGUILayout.Space(2);
-                EditorGUILayout.BeginHorizontal();
-                if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "回滚 (Revert)" : "Revert"))
-                {
-                    if (EditorUtility.DisplayDialog("Confirm", $"Revert '{task.tag}'?\nThis will overwrite current object properties.", "Revert", "Cancel"))
+                    EditorGUILayout.BeginHorizontal();
+                    GUILayout.Label($"[{task.GetFormattedTime()}]", EditorStyles.miniLabel, GUILayout.Width(60));
+                    GUILayout.Label(task.tag, EditorStyles.boldLabel);
+                    GUILayout.FlexibleSpace();
+                    GUILayout.Label($"{task.snapshots.Count} changes", EditorStyles.miniLabel);
+                    EditorGUILayout.EndHorizontal();
+
+                    if (!string.IsNullOrEmpty(task.description))
                     {
-                        bool success = WorkflowManager.RevertTask(task.id);
-                        if (success) EditorUtility.DisplayDialog("Success", "Revert completed!", "OK");
-                        else EditorUtility.DisplayDialog("Error", "Revert failed (objects might be missing).", "OK");
+                        EditorGUILayout.LabelField(task.description, EditorStyles.wordWrappedLabel);
                     }
+
+                    EditorGUILayout.Space(2);
+                    EditorGUILayout.BeginHorizontal();
+                    if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "撤销 (Undo)" : "Undo"))
+                    {
+                        if (EditorUtility.DisplayDialog("Confirm", $"Undo '{task.tag}'?\nThis will restore objects to their previous state.", "Undo", "Cancel"))
+                        {
+                            bool success = WorkflowManager.UndoTask(task.id);
+                            if (success) EditorUtility.DisplayDialog("Success", "Undo completed!", "OK");
+                            else EditorUtility.DisplayDialog("Error", "Undo failed (objects might be missing).", "OK");
+                        }
+                    }
+                    if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "删除" : "Delete", GUILayout.Width(60)))
+                    {
+                        WorkflowManager.DeleteTask(task.id);
+                    }
+                    EditorGUILayout.EndHorizontal();
+
+                    EditorGUILayout.EndVertical();
+                    EditorGUILayout.Space(2);
                 }
-                if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "删除" : "Delete", GUILayout.Width(60)))
+            }
+            else
+            {
+                EditorGUILayout.HelpBox(Localization.Current == Localization.Language.Chinese ? "暂无活动任务" : "No active tasks.", MessageType.Info);
+            }
+
+            // Undone tasks section (for redo)
+            if (history.undoneStack != null && history.undoneStack.Count > 0)
+            {
+                EditorGUILayout.Space(10);
+                EditorGUILayout.LabelField(Localization.Current == Localization.Language.Chinese ? "已撤销任务 (可恢复)" : "Undone Tasks (Can Redo)", EditorStyles.miniBoldLabel);
+
+                // Show in reverse order (most recently undone first)
+                for (int i = history.undoneStack.Count - 1; i >= 0; i--)
                 {
-                    WorkflowManager.DeleteTask(task.id);
+                    var task = history.undoneStack[i];
+                    EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+
+                    EditorGUILayout.BeginHorizontal();
+                    var undoneStyle = new GUIStyle(EditorStyles.miniLabel);
+                    undoneStyle.normal.textColor = Color.gray;
+                    GUILayout.Label($"[{task.GetFormattedTime()}]", undoneStyle, GUILayout.Width(60));
+                    var tagStyle = new GUIStyle(EditorStyles.boldLabel);
+                    tagStyle.normal.textColor = Color.gray;
+                    GUILayout.Label(task.tag, tagStyle);
+                    GUILayout.FlexibleSpace();
+                    GUILayout.Label($"{task.snapshots.Count} changes", undoneStyle);
+                    EditorGUILayout.EndHorizontal();
+
+                    if (!string.IsNullOrEmpty(task.description))
+                    {
+                        var descStyle = new GUIStyle(EditorStyles.wordWrappedLabel);
+                        descStyle.normal.textColor = Color.gray;
+                        EditorGUILayout.LabelField(task.description, descStyle);
+                    }
+
+                    EditorGUILayout.Space(2);
+                    EditorGUILayout.BeginHorizontal();
+
+                    // Redo button with green tint
+                    var originalColor = GUI.backgroundColor;
+                    GUI.backgroundColor = new Color(0.6f, 1f, 0.6f);
+                    if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "恢复 (Redo)" : "Redo"))
+                    {
+                        if (EditorUtility.DisplayDialog("Confirm", $"Redo '{task.tag}'?\nThis will restore the changes.", "Redo", "Cancel"))
+                        {
+                            bool success = WorkflowManager.RedoTask(task.id);
+                            if (success) EditorUtility.DisplayDialog("Success", "Redo completed!", "OK");
+                            else EditorUtility.DisplayDialog("Error", "Redo failed (some objects might not be recoverable).", "OK");
+                        }
+                    }
+                    GUI.backgroundColor = originalColor;
+
+                    EditorGUILayout.EndHorizontal();
+
+                    EditorGUILayout.EndVertical();
+                    EditorGUILayout.Space(2);
                 }
-                EditorGUILayout.EndHorizontal();
-                
-                EditorGUILayout.EndVertical();
-                EditorGUILayout.Space(2);
             }
 
             EditorGUILayout.EndScrollView();

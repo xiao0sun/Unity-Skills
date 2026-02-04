@@ -8,6 +8,7 @@ namespace UnitySkills
     public class WorkflowHistoryData
     {
         public List<WorkflowTask> tasks = new List<WorkflowTask>();
+        public List<WorkflowTask> undoneStack = new List<WorkflowTask>(); // Stack of undone tasks for redo
     }
 
     [Serializable]

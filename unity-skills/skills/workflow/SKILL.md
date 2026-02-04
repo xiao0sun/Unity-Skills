@@ -100,11 +100,33 @@ List persistent workflow history.
 ```
 
 ### `workflow_undo_task`
-Undo changes from a specific task. Restores snapshotted objects to their original state and deletes objects created during the task.
+Undo changes from a specific task. Restores snapshotted objects to their original state and deletes objects created during the task. The undone task is saved and can be redone later.
 **Parameters:**
 - `taskId` (string): The UUID of the task to undo.
 
 **Returns:** `{ success: true, taskId: "..." }`
+
+### `workflow_redo_task`
+Redo a previously undone task (restore changes).
+**Parameters:**
+- `taskId` (string, optional): The UUID of the task to redo. If not provided, redoes the most recently undone task.
+
+**Returns:** `{ success: true, taskId: "..." }`
+
+### `workflow_undone_list`
+List all undone tasks that can be redone.
+**Parameters:** None.
+
+**Returns:**
+```json
+{
+  "success": true,
+  "count": 2,
+  "undoneStack": [
+    { "id": "...", "tag": "Add Physics", "time": "14:30:00", "changes": 3 }
+  ]
+}
+```
 
 ### `workflow_revert_task` (deprecated)
 Alias for `workflow_undo_task`. Use `workflow_undo_task` instead.
