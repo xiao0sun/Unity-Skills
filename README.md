@@ -123,11 +123,11 @@ https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#beta
 | **Scene** | 6 | 场景切换/保存/加载/截图 |
 | **Script** | 6 | C# 脚本创建/编译检查/搜索 |
 | **Shader** | 6 | Shader 查找/创建/属性列举 |
-| **Workflow** | 7 | 书签/撤销/重做/历史 [v1.5 NEW] |
-| **DebugEnhance** | 4 | 控制台日志/清空/错误暂停 [v1.5 NEW] |
-| **AssetImport** | 4 | 重新导入/贴图设置/模型设置 [v1.5 NEW] |
+| **Workflow** | 6 | **[NEW]** 持久化历史/回滚/快照/标签管理 [v1.4] |
+| **DebugEnhance** | 4 | 控制台日志/清空/错误暂停 [v1.4] |
+| **AssetImport** | 4 | 重新导入/贴图设置/模型设置 [v1.4] |
 | **Cleaner** | 5 | 未使用资源/重复文件/丢失引用检测 [v1.3.1] |
-| **Others** | 41+ | Prefab, Console, Debug, Cinemachine, Physics, NavMesh, Timeline, Importer 等 |
+| **Physics** | 4 | 物理材质/射线检测/层设置 |
 
 > ⚠️ 大部分模块支持 `*_batch` 批量操作，操作多个物体时应优先使用批量 Skills 以提升性能。
 
