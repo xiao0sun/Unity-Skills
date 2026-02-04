@@ -126,6 +126,42 @@ class UnitySkills:
 # Global Default Client
 _default_client = UnitySkills()
 
+# Auto-workflow configuration
+_auto_workflow_enabled = True  # Enable auto-workflow
+_current_workflow_active = False  # Is a workflow currently active?
+
+# Skills that should trigger auto-workflow (modification operations)
+_workflow_tracked_skills = {
+    'gameobject_create', 'gameobject_delete', 'gameobject_rename',
+    'gameobject_set_transform', 'gameobject_duplicate', 'gameobject_set_parent',
+    'gameobject_set_active', 'gameobject_create_batch', 'gameobject_delete_batch',
+    'gameobject_rename_batch', 'gameobject_set_transform_batch',
+    'component_add', 'component_remove', 'component_set_property',
+    'component_add_batch', 'component_remove_batch', 'component_set_property_batch',
+    'material_create', 'material_assign', 'material_set_color', 'material_set_texture',
+    'material_set_emission', 'material_set_float', 'material_set_shader',
+    'material_create_batch', 'material_assign_batch', 'material_set_colors_batch',
+    'light_create', 'light_set_properties', 'light_set_enabled',
+    'prefab_create', 'prefab_instantiate', 'prefab_apply', 'prefab_unpack',
+    'prefab_instantiate_batch',
+    'ui_create_canvas', 'ui_create_panel', 'ui_create_button', 'ui_create_text',
+    'ui_create_image', 'ui_create_inputfield', 'ui_create_slider', 'ui_create_toggle',
+    'ui_create_batch', 'ui_set_text', 'ui_set_anchor', 'ui_set_rect',
+    'script_create', 'script_delete', 'script_create_batch',
+    'terrain_create', 'terrain_set_height', 'terrain_set_heights_batch', 'terrain_paint_texture',
+    'asset_import', 'asset_delete', 'asset_move', 'asset_duplicate',
+    'scene_create', 'scene_save',
+}
+
+def set_auto_workflow(enabled: bool):
+    """Enable or disable auto-workflow recording."""
+    global _auto_workflow_enabled
+    _auto_workflow_enabled = enabled
+
+def is_auto_workflow_enabled() -> bool:
+    """Check if auto-workflow is enabled."""
+    return _auto_workflow_enabled
+
 def connect(port: int = None, target: str = None) -> UnitySkills:
     return UnitySkills(port=port, target=target)
 
@@ -142,7 +178,73 @@ def list_instances() -> list:
         return []
 
 def call_skill(skill_name: str, **kwargs) -> Dict[str, Any]:
-    return _default_client.call(skill_name, **kwargs)
+    """
+    Call a Unity skill, supporting auto-workflow recording.
+
+    If auto-workflow is enabled (default), it will automatically:
+    1. Start a workflow task before a modification operation
+    2. Execute the operation
+    3. End the workflow task
+    """
+    global _current_workflow_active
+
+    # Check if we should track this call
+    should_track = (
+        _auto_workflow_enabled and
+        skill_name in _workflow_tracked_skills and
+        not _current_workflow_active and
+        not skill_name.startswith('workflow_')  # Avoid recursion
+    )
+
+    if should_track:
+        # Start workflow
+        _current_workflow_active = True
+        _default_client.call(
+            'workflow_task_start',
+            tag=skill_name,
+            description=f"Auto: {skill_name} - {str(kwargs)[:100]}"
+        )
+
+        # Execute actual operation
+        result = _default_client.call(skill_name, **kwargs)
+
+        # End workflow
+        _default_client.call('workflow_task_end')
+        _current_workflow_active = False
+
+        return result
+    else:
+        return _default_client.call(skill_name, **kwargs)
+
+
+class WorkflowContext:
+    """
+    Workflow context manager for batching multiple operations into a single workflow task.
+
+    Usage:
+        with WorkflowContext('Create Scene', 'Build player and environment'):
+            call_skill('gameobject_create', name='Player')
+            call_skill('component_add', name='Player', componentType='Rigidbody')
+    """
+    def __init__(self, tag: str, description: str = ''):
+        self.tag = tag
+        self.description = description
+
+    def __enter__(self):
+        global _current_workflow_active
+        _current_workflow_active = True
+        call_skill('workflow_task_start', tag=self.tag, description=self.description)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        global _current_workflow_active
+        call_skill('workflow_task_end')
+        _current_workflow_active = False
+        return False  # Do not suppress exceptions
+
+def workflow_context(tag: str, description: str = '') -> WorkflowContext:
+    """Convenience function to create a WorkflowContext."""
+    return WorkflowContext(tag, description)
 
 def call_skill_with_retry(skill_name: str, max_retries: int = 3, retry_delay: float = 2.0, **kwargs) -> Dict[str, Any]:
     """Call a Unity skill with automatic retry logic for Domain Reload scenarios."""
