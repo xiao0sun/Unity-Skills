@@ -29,6 +29,15 @@ namespace UnitySkills
         private bool _autoStartServer = true;
         private string _customInstallPath = "";
 
+        // Colors
+        private static readonly Color SuccessColor = new Color(0.3f, 0.8f, 0.4f);
+        private static readonly Color ErrorColor = new Color(0.9f, 0.3f, 0.3f);
+        private static readonly Color WarningColor = new Color(1f, 0.7f, 0.2f);
+        private static readonly Color AccentColor = new Color(0.4f, 0.6f, 0.9f);
+        private static readonly Color MutedColor = new Color(0.6f, 0.6f, 0.6f);
+        private static readonly Color HeaderBgColor = new Color(0.22f, 0.22f, 0.22f);
+        private static readonly Color CardBgColor = new Color(0.25f, 0.25f, 0.25f);
+
         private class SkillInfo
         {
             public string Name;
@@ -143,107 +152,136 @@ namespace UnitySkills
 
         private void DrawServerTab()
         {
-            // Server Status
-            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            // Server Status Card
+            DrawColoredBox(HeaderBgColor, () =>
+            {
+                EditorGUILayout.BeginHorizontal();
 
-            EditorGUILayout.BeginHorizontal();
-            var statusStyle = new GUIStyle(EditorStyles.boldLabel);
-            statusStyle.normal.textColor = _serverRunning ? Color.green : Color.red;
-            GUILayout.Label(_serverRunning ? L("server_running") : L("server_stopped"), statusStyle);
+                // Status indicator
+                var statusColor = _serverRunning ? SuccessColor : ErrorColor;
+                var statusText = _serverRunning ? L("server_running") : L("server_stopped");
+                DrawColoredLabel(statusText, statusColor, true);
 
-            GUILayout.FlexibleSpace();
+                GUILayout.FlexibleSpace();
+
+                // Control button
+                var originalBg = GUI.backgroundColor;
+                GUI.backgroundColor = _serverRunning ? new Color(0.9f, 0.5f, 0.5f) : new Color(0.5f, 0.9f, 0.5f);
+                if (_serverRunning)
+                {
+                    if (GUILayout.Button(L("stop_server"), GUILayout.Width(100), GUILayout.Height(24)))
+                    {
+                        SkillsHttpServer.StopPermanent();
+                        _serverRunning = false;
+                    }
+                }
+                else
+                {
+                    if (GUILayout.Button(L("start_server"), GUILayout.Width(100), GUILayout.Height(24)))
+                    {
+                        SkillsHttpServer.Start();
+                        _serverRunning = true;
+                    }
+                }
+                GUI.backgroundColor = originalBg;
+                EditorGUILayout.EndHorizontal();
+            });
 
             if (_serverRunning)
             {
-                if (GUILayout.Button(L("stop_server"), GUILayout.Width(100)))
+                EditorGUILayout.Space(8);
+
+                // Connection Info Card
+                DrawColoredBox(CardBgColor, () =>
                 {
-                    SkillsHttpServer.StopPermanent();
-                    _serverRunning = false;
-                }
+                    DrawColoredLabel(Localization.Current == Localization.Language.Chinese ? "连接信息" : "Connection Info", AccentColor, true);
+                    EditorGUILayout.Space(4);
+
+                    var portLabel = Localization.Current == Localization.Language.Chinese ? "端口" : "Port";
+                    EditorGUILayout.LabelField($"{portLabel}: {SkillsHttpServer.Port}");
+                    EditorGUILayout.LabelField($"ID: {RegistryService.InstanceId}");
+
+                    EditorGUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField("URL:", GUILayout.Width(35));
+                    EditorGUILayout.SelectableLabel(SkillsHttpServer.Url, EditorStyles.textField, GUILayout.Height(18));
+                    if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "复制" : "Copy", GUILayout.Width(50)))
+                    {
+                        EditorGUIUtility.systemCopyBuffer = RegistryService.InstanceId;
+                    }
+                    EditorGUILayout.EndHorizontal();
+                });
+
+                EditorGUILayout.Space(8);
+
+                // Statistics Card
+                DrawColoredBox(CardBgColor, () =>
+                {
+                    DrawColoredLabel(L("server_stats"), AccentColor, true);
+                    EditorGUILayout.Space(4);
+
+                    EditorGUILayout.LabelField($"{L("queued_requests")}: {SkillsHttpServer.QueuedRequests}");
+
+                    EditorGUILayout.BeginHorizontal();
+                    EditorGUILayout.LabelField($"{L("total_processed")}: {SkillsHttpServer.TotalProcessed}");
+                    if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "重置" : "Reset", GUILayout.Width(50)))
+                    {
+                        SkillsHttpServer.ResetStatistics();
+                    }
+                    EditorGUILayout.EndHorizontal();
+                });
             }
-            else
+
+            EditorGUILayout.Space(8);
+
+            // Settings Card
+            DrawColoredBox(CardBgColor, () =>
             {
-                if (GUILayout.Button(L("start_server"), GUILayout.Width(100)))
+                DrawColoredLabel(Localization.Current == Localization.Language.Chinese ? "设置" : "Settings", AccentColor, true);
+                EditorGUILayout.Space(4);
+
+                var newAutoStart = EditorGUILayout.Toggle(L("auto_restart"), SkillsHttpServer.AutoStart);
+                if (newAutoStart != SkillsHttpServer.AutoStart)
                 {
-                    SkillsHttpServer.Start();
-                    _serverRunning = true;
+                    SkillsHttpServer.AutoStart = newAutoStart;
                 }
-            }
-            EditorGUILayout.EndHorizontal();
-
-            if (_serverRunning)
-            {
-                EditorGUILayout.Space(5);
-
-                // Connection Info
-                var portLabel = Localization.Current == Localization.Language.Chinese ? "端口" : "Port";
-                EditorGUILayout.LabelField($"{portLabel}: {SkillsHttpServer.Port}");
-                EditorGUILayout.LabelField($"ID: {RegistryService.InstanceId}");
-
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField("URL:", GUILayout.Width(35));
-                EditorGUILayout.SelectableLabel(SkillsHttpServer.Url, EditorStyles.textField, GUILayout.Height(18));
-                if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "复制" : "Copy", GUILayout.Width(50)))
-                {
-                    EditorGUIUtility.systemCopyBuffer = RegistryService.InstanceId;
-                }
-                EditorGUILayout.EndHorizontal();
-
-                EditorGUILayout.Space(5);
-
-                // Statistics
-                EditorGUILayout.LabelField(L("server_stats"), EditorStyles.boldLabel);
-                EditorGUILayout.LabelField($"{L("queued_requests")}: {SkillsHttpServer.QueuedRequests}");
-
-                EditorGUILayout.BeginHorizontal();
-                EditorGUILayout.LabelField($"{L("total_processed")}: {SkillsHttpServer.TotalProcessed}");
-                if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "重置" : "Reset", GUILayout.Width(50)))
-                {
-                    SkillsHttpServer.ResetStatistics();
-                }
-                EditorGUILayout.EndHorizontal();
-            }
-
-            EditorGUILayout.Space(5);
-
-            // Auto-restart setting
-            var newAutoStart = EditorGUILayout.Toggle(L("auto_restart"), SkillsHttpServer.AutoStart);
-            if (newAutoStart != SkillsHttpServer.AutoStart)
-            {
-                SkillsHttpServer.AutoStart = newAutoStart;
-            }
-            EditorGUILayout.LabelField(L("auto_restart_hint"), EditorStyles.miniLabel);
-
-            EditorGUILayout.EndVertical();
+                DrawColoredLabel(L("auto_restart_hint"), MutedColor, false);
+            });
 
             EditorGUILayout.Space(10);
 
             // Test Skill Section
-            EditorGUILayout.LabelField(L("test_skill"), EditorStyles.boldLabel);
-            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            DrawColoredLabel(L("test_skill"), AccentColor, true);
+            EditorGUILayout.Space(4);
 
-            _testSkillName = EditorGUILayout.TextField(L("skill_name"), _testSkillName);
-            EditorGUILayout.LabelField(L("parameters_json") + ":");
-            _testSkillParams = EditorGUILayout.TextArea(_testSkillParams, GUILayout.Height(60));
-
-            if (GUILayout.Button(L("execute_skill")))
+            DrawColoredBox(CardBgColor, () =>
             {
-                _testResult = SkillRouter.Execute(_testSkillName, _testSkillParams);
-            }
+                _testSkillName = EditorGUILayout.TextField(L("skill_name"), _testSkillName);
+                EditorGUILayout.LabelField(L("parameters_json") + ":");
+                _testSkillParams = EditorGUILayout.TextArea(_testSkillParams, GUILayout.Height(60));
 
-            if (!string.IsNullOrEmpty(_testResult))
-            {
-                EditorGUILayout.LabelField(L("result") + ":");
-                EditorGUILayout.TextArea(_testResult, GUILayout.Height(80));
-            }
-            EditorGUILayout.EndVertical();
+                var originalBg = GUI.backgroundColor;
+                GUI.backgroundColor = AccentColor;
+                if (GUILayout.Button(L("execute_skill"), GUILayout.Height(26)))
+                {
+                    _testResult = SkillRouter.Execute(_testSkillName, _testSkillParams);
+                }
+                GUI.backgroundColor = originalBg;
+
+                if (!string.IsNullOrEmpty(_testResult))
+                {
+                    EditorGUILayout.Space(5);
+                    EditorGUILayout.LabelField(L("result") + ":");
+                    EditorGUILayout.TextArea(_testResult, GUILayout.Height(80));
+                }
+            });
         }
 
         private void DrawSkillsTab()
         {
             // Header
             EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(L("available_skills"), EditorStyles.boldLabel);
+            DrawColoredLabel(L("available_skills"), AccentColor, true);
+            GUILayout.FlexibleSpace();
             if (GUILayout.Button(L("refresh"), GUILayout.Width(60)))
             {
                 RefreshSkillsList();
@@ -251,44 +289,58 @@ namespace UnitySkills
             }
             EditorGUILayout.EndHorizontal();
 
+            if (_skillsByCategory != null)
+            {
+                int totalSkills = _skillsByCategory.Values.Sum(l => l.Count);
+                DrawColoredLabel(string.Format(L("total_skills"), totalSkills, _skillsByCategory.Count), MutedColor, false);
+            }
+
+            EditorGUILayout.Space(8);
+
             _scrollPosition = EditorGUILayout.BeginScrollView(_scrollPosition);
 
             if (_skillsByCategory != null)
             {
-                int totalSkills = _skillsByCategory.Values.Sum(l => l.Count);
-                EditorGUILayout.LabelField(string.Format(L("total_skills"), totalSkills, _skillsByCategory.Count), EditorStyles.miniLabel);
-
-                EditorGUILayout.Space(5);
-
                 foreach (var kvp in _skillsByCategory.OrderBy(k => k.Key))
                 {
-                    _categoryFoldouts[kvp.Key] = EditorGUILayout.Foldout(_categoryFoldouts[kvp.Key], $"{kvp.Key} ({kvp.Value.Count})", true);
-
-                    if (_categoryFoldouts[kvp.Key])
+                    DrawColoredBox(CardBgColor, () =>
                     {
-                        EditorGUI.indentLevel++;
-                        foreach (var skill in kvp.Value)
-                        {
-                            EditorGUILayout.BeginHorizontal();
-                            EditorGUILayout.LabelField(skill.Name, EditorStyles.boldLabel);
-                            if (GUILayout.Button(L("use"), GUILayout.Width(40)))
-                            {
-                                _testSkillName = skill.Name;
-                                _testSkillParams = BuildDefaultParams(skill.Method);
-                                _selectedTab = 0;
-                            }
-                            EditorGUILayout.EndHorizontal();
+                        EditorGUILayout.BeginHorizontal();
+                        _categoryFoldouts[kvp.Key] = EditorGUILayout.Foldout(_categoryFoldouts[kvp.Key], "", true);
+                        DrawColoredLabel($"{kvp.Key}", AccentColor, true);
+                        GUILayout.FlexibleSpace();
+                        DrawColoredLabel($"{kvp.Value.Count} skills", MutedColor, false);
+                        EditorGUILayout.EndHorizontal();
 
-                            var desc = Localization.Get(skill.Name);
-                            if (desc == skill.Name) desc = skill.Description;
-                            if (!string.IsNullOrEmpty(desc))
+                        if (_categoryFoldouts[kvp.Key])
+                        {
+                            EditorGUILayout.Space(4);
+                            foreach (var skill in kvp.Value)
                             {
-                                EditorGUILayout.LabelField(desc, EditorStyles.miniLabel);
+                                EditorGUILayout.BeginHorizontal();
+                                EditorGUILayout.LabelField(skill.Name, EditorStyles.boldLabel);
+                                var originalBg = GUI.backgroundColor;
+                                GUI.backgroundColor = AccentColor;
+                                if (GUILayout.Button(L("use"), GUILayout.Width(45)))
+                                {
+                                    _testSkillName = skill.Name;
+                                    _testSkillParams = BuildDefaultParams(skill.Method);
+                                    _selectedTab = 0;
+                                }
+                                GUI.backgroundColor = originalBg;
+                                EditorGUILayout.EndHorizontal();
+
+                                var desc = Localization.Get(skill.Name);
+                                if (desc == skill.Name) desc = skill.Description;
+                                if (!string.IsNullOrEmpty(desc))
+                                {
+                                    DrawColoredLabel("  " + desc, MutedColor, false);
+                                }
+                                EditorGUILayout.Space(4);
                             }
-                            EditorGUILayout.Space(2);
                         }
-                        EditorGUI.indentLevel--;
-                    }
+                    });
+                    EditorGUILayout.Space(4);
                 }
             }
 
@@ -700,62 +752,75 @@ namespace UnitySkills
 
             // Header
             EditorGUILayout.BeginHorizontal();
-            EditorGUILayout.LabelField(Localization.Current == Localization.Language.Chinese ? "AI 操作历史" : "AI Operation History", EditorStyles.boldLabel);
+            DrawColoredLabel(Localization.Current == Localization.Language.Chinese ? "AI 操作历史" : "AI Operation History", AccentColor, true);
+            GUILayout.FlexibleSpace();
             if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "刷新" : "Refresh", GUILayout.Width(60)))
             {
                 WorkflowManager.LoadHistory();
             }
+            var originalBg = GUI.backgroundColor;
+            GUI.backgroundColor = WarningColor;
             if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "清空" : "Clear", GUILayout.Width(60)))
             {
                 if (EditorUtility.DisplayDialog("Confirm", "Clear all history?", "Yes", "No"))
                     WorkflowManager.ClearHistory();
             }
+            GUI.backgroundColor = originalBg;
             EditorGUILayout.EndHorizontal();
 
-            EditorGUILayout.Space(5);
+            EditorGUILayout.Space(8);
 
             _historyScrollPosition = EditorGUILayout.BeginScrollView(_historyScrollPosition);
 
             // Active tasks section
             if (history.tasks.Count > 0)
             {
-                EditorGUILayout.LabelField(Localization.Current == Localization.Language.Chinese ? "活动任务" : "Active Tasks", EditorStyles.miniBoldLabel);
+                DrawColoredLabel(Localization.Current == Localization.Language.Chinese ? "活动任务" : "Active Tasks", SuccessColor, true);
+                EditorGUILayout.Space(4);
 
                 for (int i = history.tasks.Count - 1; i >= 0; i--)
                 {
                     var task = history.tasks[i];
-                    EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-
-                    EditorGUILayout.BeginHorizontal();
-                    GUILayout.Label($"[{task.GetFormattedTime()}]", EditorStyles.miniLabel, GUILayout.Width(65));
-                    GUILayout.Label(task.tag, EditorStyles.boldLabel);
-                    GUILayout.FlexibleSpace();
-                    GUILayout.Label($"{task.snapshots.Count} changes", EditorStyles.miniLabel);
-                    EditorGUILayout.EndHorizontal();
-
-                    if (!string.IsNullOrEmpty(task.description))
+                    DrawColoredBox(CardBgColor, () =>
                     {
-                        EditorGUILayout.LabelField(task.description, EditorStyles.wordWrappedMiniLabel);
-                    }
+                        EditorGUILayout.BeginHorizontal();
+                        DrawColoredLabel($"[{task.GetFormattedTime()}]", MutedColor, false);
+                        GUILayout.Space(8);
+                        EditorGUILayout.LabelField(task.tag, EditorStyles.boldLabel);
+                        GUILayout.FlexibleSpace();
+                        DrawColoredLabel($"{task.snapshots.Count} changes", AccentColor, false);
+                        EditorGUILayout.EndHorizontal();
 
-                    EditorGUILayout.BeginHorizontal();
-                    if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "撤销" : "Undo"))
-                    {
-                        if (EditorUtility.DisplayDialog("Confirm", $"Undo '{task.tag}'?", "Undo", "Cancel"))
+                        if (!string.IsNullOrEmpty(task.description))
                         {
-                            bool success = WorkflowManager.UndoTask(task.id);
-                            if (success) EditorUtility.DisplayDialog("Success", "Undo completed!", "OK");
-                            else EditorUtility.DisplayDialog("Error", "Undo failed.", "OK");
+                            DrawColoredLabel(task.description, MutedColor, false);
                         }
-                    }
-                    if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "删除" : "Delete", GUILayout.Width(60)))
-                    {
-                        WorkflowManager.DeleteTask(task.id);
-                    }
-                    EditorGUILayout.EndHorizontal();
 
-                    EditorGUILayout.EndVertical();
-                    EditorGUILayout.Space(2);
+                        EditorGUILayout.Space(4);
+                        EditorGUILayout.BeginHorizontal();
+
+                        var bg = GUI.backgroundColor;
+                        GUI.backgroundColor = WarningColor;
+                        if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "撤销" : "Undo", GUILayout.Height(22)))
+                        {
+                            if (EditorUtility.DisplayDialog("Confirm", $"Undo '{task.tag}'?", "Undo", "Cancel"))
+                            {
+                                bool success = WorkflowManager.UndoTask(task.id);
+                                if (success) EditorUtility.DisplayDialog("Success", "Undo completed!", "OK");
+                                else EditorUtility.DisplayDialog("Error", "Undo failed.", "OK");
+                            }
+                        }
+
+                        GUI.backgroundColor = ErrorColor;
+                        if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "删除" : "Delete", GUILayout.Width(60), GUILayout.Height(22)))
+                        {
+                            WorkflowManager.DeleteTask(task.id);
+                        }
+                        GUI.backgroundColor = bg;
+
+                        EditorGUILayout.EndHorizontal();
+                    });
+                    EditorGUILayout.Space(4);
                 }
             }
             else
@@ -766,44 +831,43 @@ namespace UnitySkills
             // Undone tasks section (for redo)
             if (history.undoneStack != null && history.undoneStack.Count > 0)
             {
-                EditorGUILayout.Space(10);
-                EditorGUILayout.LabelField(Localization.Current == Localization.Language.Chinese ? "已撤销任务 (可恢复)" : "Undone Tasks (Can Redo)", EditorStyles.miniBoldLabel);
+                EditorGUILayout.Space(12);
+                DrawColoredLabel(Localization.Current == Localization.Language.Chinese ? "已撤销任务 (可恢复)" : "Undone Tasks (Can Redo)", MutedColor, true);
+                EditorGUILayout.Space(4);
 
                 for (int i = history.undoneStack.Count - 1; i >= 0; i--)
                 {
                     var task = history.undoneStack[i];
-                    EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-
-                    EditorGUILayout.BeginHorizontal();
-                    var grayStyle = new GUIStyle(EditorStyles.miniLabel);
-                    grayStyle.normal.textColor = Color.gray;
-                    GUILayout.Label($"[{task.GetFormattedTime()}]", grayStyle, GUILayout.Width(65));
-                    var grayBoldStyle = new GUIStyle(EditorStyles.boldLabel);
-                    grayBoldStyle.normal.textColor = Color.gray;
-                    GUILayout.Label(task.tag, grayBoldStyle);
-                    GUILayout.FlexibleSpace();
-                    GUILayout.Label($"{task.snapshots.Count} changes", grayStyle);
-                    EditorGUILayout.EndHorizontal();
-
-                    if (!string.IsNullOrEmpty(task.description))
+                    DrawColoredBox(new Color(0.2f, 0.2f, 0.2f), () =>
                     {
-                        var descStyle = new GUIStyle(EditorStyles.wordWrappedMiniLabel);
-                        descStyle.normal.textColor = Color.gray;
-                        EditorGUILayout.LabelField(task.description, descStyle);
-                    }
+                        EditorGUILayout.BeginHorizontal();
+                        DrawColoredLabel($"[{task.GetFormattedTime()}]", new Color(0.45f, 0.45f, 0.45f), false);
+                        GUILayout.Space(8);
+                        DrawColoredLabel(task.tag, MutedColor, true);
+                        GUILayout.FlexibleSpace();
+                        DrawColoredLabel($"{task.snapshots.Count} changes", new Color(0.45f, 0.45f, 0.45f), false);
+                        EditorGUILayout.EndHorizontal();
 
-                    if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "恢复" : "Redo"))
-                    {
-                        if (EditorUtility.DisplayDialog("Confirm", $"Redo '{task.tag}'?", "Redo", "Cancel"))
+                        if (!string.IsNullOrEmpty(task.description))
                         {
-                            bool success = WorkflowManager.RedoTask(task.id);
-                            if (success) EditorUtility.DisplayDialog("Success", "Redo completed!", "OK");
-                            else EditorUtility.DisplayDialog("Error", "Redo failed.", "OK");
+                            DrawColoredLabel(task.description, new Color(0.45f, 0.45f, 0.45f), false);
                         }
-                    }
 
-                    EditorGUILayout.EndVertical();
-                    EditorGUILayout.Space(2);
+                        EditorGUILayout.Space(4);
+                        var bg = GUI.backgroundColor;
+                        GUI.backgroundColor = SuccessColor;
+                        if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "恢复" : "Redo", GUILayout.Height(22)))
+                        {
+                            if (EditorUtility.DisplayDialog("Confirm", $"Redo '{task.tag}'?", "Redo", "Cancel"))
+                            {
+                                bool success = WorkflowManager.RedoTask(task.id);
+                                if (success) EditorUtility.DisplayDialog("Success", "Redo completed!", "OK");
+                                else EditorUtility.DisplayDialog("Error", "Redo failed.", "OK");
+                            }
+                        }
+                        GUI.backgroundColor = bg;
+                    });
+                    EditorGUILayout.Space(4);
                 }
             }
 
@@ -811,6 +875,25 @@ namespace UnitySkills
         }
 
         private string L(string key) => Localization.Get(key);
+
+        // Helper methods for colored UI elements
+        private void DrawColoredLabel(string text, Color color, bool bold)
+        {
+            var style = bold ? new GUIStyle(EditorStyles.boldLabel) : new GUIStyle(EditorStyles.label);
+            style.normal.textColor = color;
+            style.wordWrap = true;
+            EditorGUILayout.LabelField(text, style);
+        }
+
+        private void DrawColoredBox(Color bgColor, System.Action content)
+        {
+            var originalBg = GUI.backgroundColor;
+            GUI.backgroundColor = bgColor;
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            GUI.backgroundColor = originalBg;
+            content?.Invoke();
+            EditorGUILayout.EndVertical();
+        }
 
         private string BuildDefaultParams(MethodInfo method)
         {
