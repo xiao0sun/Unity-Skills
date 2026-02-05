@@ -597,5 +597,101 @@ namespace UnitySkills
              Undo.DestroyObjectImmediate(ext);
              return new { success = true, message = "Removed extension " + type.Name };
         }
+
+        [UnitySkill("cinemachine_create_mixing_camera", "Create a Cinemachine Mixing Camera.")]
+        public static object CinemachineCreateMixingCamera(string name)
+        {
+            var go = new GameObject(name);
+            Undo.RegisterCreatedObjectUndo(go, "Create Mixing Camera");
+            var cam = Undo.AddComponent<CinemachineMixingCamera>(go);
+            return new { success = true, name = name };
+        }
+
+        [UnitySkill("cinemachine_mixing_camera_set_weight", "Set weight of a child camera in a Mixing Camera. Inputs: mixerName, childName, weight.")]
+        public static object CinemachineMixingCameraSetWeight(string mixerName, string childName, float weight)
+        {
+            var mixerGo = GameObject.Find(mixerName);
+            if (mixerGo == null) return new { error = "Mixer GameObject not found" };
+            var mixer = mixerGo.GetComponent<CinemachineMixingCamera>();
+            if (mixer == null) return new { error = "Not a CinemachineMixingCamera" };
+
+            var childGo = GameObject.Find(childName);
+            if (childGo == null) return new { error = "Child GameObject not found" };
+            var childVcam = childGo.GetComponent<CinemachineVirtualCameraBase>();
+            if (childVcam == null) return new { error = "Child is not a Cinemachine Virtual Camera" };
+
+            Undo.RecordObject(mixer, "Set Mixing Weight");
+            mixer.SetWeight(childVcam, weight);
+            EditorUtility.SetDirty(mixer);
+
+            return new { success = true, message = $"Set weight of {childName} to {weight} in {mixerName}" };
+        }
+
+        [UnitySkill("cinemachine_create_clear_shot", "Create a Cinemachine Clear Shot Camera.")]
+        public static object CinemachineCreateClearShot(string name)
+        {
+            var go = new GameObject(name);
+            Undo.RegisterCreatedObjectUndo(go, "Create Clear Shot");
+            var cam = Undo.AddComponent<CinemachineClearShot>(go);
+            return new { success = true, name = name };
+        }
+
+        [UnitySkill("cinemachine_create_state_driven_camera", "Create a Cinemachine State Driven Camera. Optional: targetAnimatorName.")]
+        public static object CinemachineCreateStateDrivenCamera(string name, string targetAnimatorName = null)
+        {
+            var go = new GameObject(name);
+            Undo.RegisterCreatedObjectUndo(go, "Create State Driven Camera");
+            var cam = Undo.AddComponent<CinemachineStateDrivenCamera>(go);
+            
+            if (!string.IsNullOrEmpty(targetAnimatorName))
+            {
+                var animatorGo = GameObject.Find(targetAnimatorName);
+                if (animatorGo != null)
+                {
+                    var animator = animatorGo.GetComponent<Animator>();
+                    if (animator != null)
+                    {
+                        Undo.RecordObject(cam, "Set Animated Target");
+                        cam.AnimatedTarget = animator;
+                    }
+                }
+            }
+            return new { success = true, name = name };
+        }
+
+        [UnitySkill("cinemachine_state_driven_camera_add_instruction", "Add instruction to State Driven Camera. Inputs: cameraName, stateName, childCameraName, minDuration, activateAfter.")]
+        public static object CinemachineStateDrivenCameraAddInstruction(string cameraName, string stateName, string childCameraName, float minDuration = 0, float activateAfter = 0)
+        {
+            var go = GameObject.Find(cameraName);
+            if (go == null) return new { error = "Camera GameObject not found" };
+            var stateCam = go.GetComponent<CinemachineStateDrivenCamera>();
+            if (stateCam == null) return new { error = "Not a CinemachineStateDrivenCamera" };
+
+            var childGo = GameObject.Find(childCameraName);
+            if (childGo == null) return new { error = "Child Camera GameObject not found" };
+            var childVcam = childGo.GetComponent<CinemachineVirtualCameraBase>();
+            if (childVcam == null) return new { error = "Child is not a Cinemachine Virtual Camera" };
+
+            int hash = Animator.StringToHash(stateName);
+
+            Undo.RecordObject(stateCam, "Add Instruction");
+            
+            var list = new List<CinemachineStateDrivenCamera.Instruction>();
+            if (stateCam.Instructions != null) list.AddRange(stateCam.Instructions);
+
+            var newInstr = new CinemachineStateDrivenCamera.Instruction
+            {
+                FullHash = hash,
+                Camera = childVcam,
+                MinDuration = minDuration,
+                ActivateAfter = activateAfter
+            };
+            list.Add(newInstr);
+
+            stateCam.Instructions = list.ToArray();
+            EditorUtility.SetDirty(stateCam);
+
+            return new { success = true, message = $"Added instruction: {stateName} -> {childCameraName}" };
+        }
     }
 }

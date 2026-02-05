@@ -107,6 +107,38 @@ Force activation of a VCam (SOLO) by setting highest priority.
 **Parameters:**
 - `vcamName` (string): Name of the VCam to activate.
 
+### `cinemachine_create_mixing_camera`
+Create a Cinemachine Mixing Camera.
+**Parameters:**
+- `name` (string): Name of the new GameObject.
+
+### `cinemachine_mixing_camera_set_weight`
+Set the weight of a child camera within a Mixing Camera.
+**Parameters:**
+- `mixerName` (string): Name of the Mixing Camera.
+- `childName` (string): Name of the child VCam.
+- `weight` (float): Weight value (usually 0.0 to 1.0).
+
+### `cinemachine_create_clear_shot`
+Create a Cinemachine Clear Shot Camera.
+**Parameters:**
+- `name` (string): Name of the new GameObject.
+
+### `cinemachine_create_state_driven_camera`
+Create a Cinemachine State Driven Camera.
+**Parameters:**
+- `name` (string): Name of the new GameObject.
+- `targetAnimatorName` (string, optional): Name of the GameObject with the Animator to bind.
+
+### `cinemachine_state_driven_camera_add_instruction`
+Add a state mapping instruction to a State Driven Camera.
+**Parameters:**
+- `cameraName` (string): Name of the State Driven Camera.
+- `stateName` (string): Name of the animation state (e.g., "Run").
+- `childCameraName` (string): Name of the child VCam to activate for this state.
+- `minDuration` (float, optional): Minimum duration in seconds.
+- `activateAfter` (float, optional): Delay in seconds before activation.
+
 ### `cinemachine_set_noise`
 Configure Noise settings (Basic Multi Channel Perlin).
 **Parameters:**
