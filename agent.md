@@ -9,7 +9,7 @@
 | 属性 | 值 |
 |------|-----|
 | **项目名称** | UnitySkills |
-| **版本** | 1.4.0 |
+| **版本** | 1.4.1 |
 | **技术栈** | C# (Unity Editor) + Python (Client) |
 | **Unity 版本** | 2021.3+ |
 | **协议** | MIT |
@@ -215,7 +215,7 @@ python unity_skills.py gameobject_create name=MyCube primitiveType=Cube
 | **Camera** | 4 | 相机创建/属性配置/截屏/视角对齐 |
 | **NavMesh** | 3 | 烘焙设置/代理创建/区域管理/路径计算 |
 | **Timeline** | 3 | 轨道创建/剪辑添加/绑定 |
-| **Cinemachine** | 5 | 虚拟相机创建/属性设置/Follow&LookAt [v1.5 NEW] |
+| **Cinemachine** | 10+ | 3.x支持/混合相机/ClearShot/TargetGroup/Spline [v1.4.1] |
 | **Event** | 4 | UnityEvent 监听器管理/调用 [v1.5 NEW] |
 | **Project** | 4 | 渲染管线检测/Shader列表/质量设置 [v1.5 NEW] |
 | **Optimization** | 2 | 纹理压缩批量优化/模型网格压缩 [v1.5 NEW] |

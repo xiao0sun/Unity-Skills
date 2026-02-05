@@ -2,6 +2,24 @@
 
 All notable changes to **UnitySkills** will be documented in this file.
 
+## [1.4.1] - 2026-02-05
+
+*> This PR upgrades the project to support Cinemachine 3.x (Unity.Cinemachine namespace), which is standard in Unity 6.*
+*> Credit: [PieAIStudio](https://github.com/PieAIStudio)*
+
+### 🚀 Cinemachine 3.x Upgrade
+- **Namespace Migration**: Refactored `CinemachineSkills.cs` to use the new `Unity.Cinemachine` namespace and API (replacing `CinemachineCamera`, etc.).
+- **Dependency Update**:
+    - Updated `com.unity.cinemachine` to **3.1.3**.
+    - Added `com.unity.splines` **2.8.0** as a hard dependency (required for CM 3.x).
+    - Updated `UnitySkills.Editor.asmdef` to reference `Unity.Cinemachine` and `Unity.Splines`.
+- **Advanced Features**:
+    - Full support for **Manager Cameras**: `MixingCamera`, `ClearShot`, `StateDrivenCamera`.
+    - Support for **Spline Dolly** (`cinemachine_set_spline`) and **Target Group** (`cinemachine_create_target_group`).
+    - Fixed infinite recursion issues in JSON serialization for deep inspection.
+
+---
+
 ## [1.4.0] - 2026-02-04
 
 ### 🌟 New Features / 新特性 (Major Update since v1.3.0)
