@@ -242,7 +242,7 @@ namespace UnitySkills
                 return new { success = true, message = "Updated Lens settings" };
             }
 
-            return new { success = false, message = "No values provided to update." };
+            return new { error = "No values provided to update." };
         }
 
         [UnitySkill("cinemachine_list_components", "List all available Cinemachine component names.")]
@@ -576,7 +576,7 @@ namespace UnitySkills
              if (!typeof(CinemachineExtension).IsAssignableFrom(type)) return new { error = type.Name + " is not a CinemachineExtension" };
 
              // check if already exists
-             if (go.GetComponent(type) != null) return new { warning = "Extension " + type.Name + " already exists on " + vcamName };
+             if (go.GetComponent(type) != null) return new { success = true, message = "Extension " + type.Name + " already exists on " + vcamName };
 
              var ext = Undo.AddComponent(go, type);
              return new { success = true, message = "Added extension " + type.Name };
