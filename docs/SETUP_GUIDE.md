@@ -4,6 +4,16 @@ REST API 直接控制 Unity Editor，让 AI 生成极简脚本完成场景操作
 
 ---
 
+## 📋 前置要求 (Prerequisites)
+
+- **Unity 版本**: 2021.3 或更高 (推荐 Unity 6)
+- **依赖包**:
+    - `com.unity.cinemachine`: 3.1.3+ (核心依赖)
+    - `com.unity.splines`: 2.8.0+ (v1.4.1 新增硬依赖)
+- **注意**: 安装插件时会自动拉取上述依赖，无需手动安装。
+
+---
+
 ## 一、安装 Unity 插件
 
 ### 方式 A：Git URL（推荐）

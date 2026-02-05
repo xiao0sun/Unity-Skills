@@ -199,7 +199,7 @@ python unity_skills.py gameobject_create name=MyCube primitiveType=Cube
 | **Prefab** | 5 | 预制体创建/实例化/应用更改 |
 | **Console** | 5 | 日志捕获/清理/输出监视 |
 | **Debug** | 5 | 调试绘图/射线/Gizmos |
-| **Cinemachine** | 5 | 虚拟相机创建/跟随/噪声配置 |
+
 | **ScriptableObject**| 5 | 创建实例/读写数据 |
 | **Perception** | 3 | 场景摘要/层级描述/脚本分析 [v1.5] |
 | **Smart** | 3 | 场景查询/自动布局/引用装配 [v1.5 NEW] |
