@@ -65,6 +65,31 @@ Get info about the Active Camera and Blend.
 **Parameters:**
 - None.
 
+### `cinemachine_create_target_group`
+Create a CinemachineTargetGroup.
+**Parameters:**
+- `name` (string): Name of the new TargetGroup GameObject.
+
+### `cinemachine_target_group_add_member`
+Add or update a member in a TargetGroup.
+**Parameters:**
+- `groupName` (string): Name of the TargetGroup.
+- `targetName` (string): Name of the member GameObject.
+- `weight` (float): Member weight (default 1).
+- `radius` (float): Member radius (default 1).
+
+### `cinemachine_target_group_remove_member`
+Remove a member from a TargetGroup.
+**Parameters:**
+- `groupName` (string): Name of the TargetGroup.
+- `targetName` (string): Name of the member GameObject.
+
+### `cinemachine_set_spline`
+Assign a SplineContainer to a VCam's SplineDolly component (Body stage).
+**Parameters:**
+- `vcamName` (string): Name of the VCam.
+- `splineName` (string): Name of the GameObject with SplineContainer.
+
 ### `cinemachine_set_active`
 Force activation of a VCam (SOLO) by setting highest priority.
 **Parameters:**

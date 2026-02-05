@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEditor;
 using Unity.Cinemachine;
+using UnityEngine.Splines;
 using System.Reflection;
 using System.Collections.Generic;
 using System.Linq;
@@ -447,6 +448,76 @@ namespace UnitySkills
              var type = cmAssembly.GetType("Unity.Cinemachine." + name, false, true);
              if (type == null) type = cmAssembly.GetType(name, false, true);
              return type;
+        }
+        [UnitySkill("cinemachine_create_target_group", "Create a CinemachineTargetGroup. Returns name.")]
+        public static object CinemachineCreateTargetGroup(string name)
+        {
+             var go = new GameObject(name);
+             Undo.RegisterCreatedObjectUndo(go, "Create TargetGroup");
+             var group = Undo.AddComponent<CinemachineTargetGroup>(go);
+             return new { success = true, name = go.name };
+        }
+
+        [UnitySkill("cinemachine_target_group_add_member", "Add/Update member in TargetGroup. Inputs: groupName, targetName, weight, radius.")]
+        public static object CinemachineTargetGroupAddMember(string groupName, string targetName, float weight = 1f, float radius = 1f)
+        {
+             var groupGo = GameObject.Find(groupName);
+             if (groupGo == null) return new { error = "TargetGroup not found" };
+             var group = groupGo.GetComponent<CinemachineTargetGroup>();
+             if (group == null) return new { error = "GameObject is not a CinemachineTargetGroup" };
+
+             var targetGo = GameObject.Find(targetName);
+             if (targetGo == null) return new { error = "Target GameObject not found" };
+
+             Undo.RecordObject(group, "Add TargetGroup Member");
+             // Remove first to ensure no duplicates/update existing
+             group.RemoveMember(targetGo.transform); 
+             group.AddMember(targetGo.transform, weight, radius);
+             
+             return new { success = true, message = $"Added {targetName} to {groupName} (W:{weight}, R:{radius})" };
+        }
+
+        [UnitySkill("cinemachine_target_group_remove_member", "Remove member from TargetGroup. Inputs: groupName, targetName.")]
+        public static object CinemachineTargetGroupRemoveMember(string groupName, string targetName)
+        {
+             var groupGo = GameObject.Find(groupName);
+             if (groupGo == null) return new { error = "TargetGroup not found" };
+             var group = groupGo.GetComponent<CinemachineTargetGroup>();
+             if (group == null) return new { error = "GameObject is not a CinemachineTargetGroup" };
+
+             var targetGo = GameObject.Find(targetName);
+             if (targetGo == null) return new { error = "Target GameObject not found" };
+
+             Undo.RecordObject(group, "Remove TargetGroup Member");
+             group.RemoveMember(targetGo.transform);
+             
+             return new { success = true, message = $"Removed {targetName} from {groupName}" };
+        }
+
+        [UnitySkill("cinemachine_set_spline", "Set Spline for VCam Body. Inputs: vcamName, splineName.")]
+        public static object CinemachineSetSpline(string vcamName, string splineName)
+        {
+            var vcamGo = GameObject.Find(vcamName);
+            if (vcamGo == null) return new { error = "VCam not found" };
+            var vcam = vcamGo.GetComponent<CinemachineCamera>();
+            if (vcam == null) return new { error = "Not a CinemachineCamera" };
+
+            // Ensure we have a SplineDolly
+            var dolly = vcam.GetCinemachineComponent(CinemachineCore.Stage.Body) as CinemachineSplineDolly;
+            if (dolly == null)
+            {
+                return new { error = "VCam does not have a CinemachineSplineDolly component on Body stage. Use cinemachine_set_component first." };
+            }
+
+            var splineGo = GameObject.Find(splineName);
+            if (splineGo == null) return new { error = "Spline GameObject not found" };
+            var container = splineGo.GetComponent<SplineContainer>();
+            if (container == null) return new { error = "GameObject does not have a SplineContainer" };
+
+            Undo.RecordObject(dolly, "Set Spline");
+            dolly.Spline = container;
+
+            return new { success = true, message = $"Assigned Spline {splineName} to VCam {vcamName}" };
         }
     }
 }
