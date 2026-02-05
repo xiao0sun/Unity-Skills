@@ -183,44 +183,40 @@ python unity_skills.py gameobject_create name=MyCube primitiveType=Cube
 | 模块 | Skills 数量 | 核心功能 |
 |------|:-----------:|----------|
 | **Material** | 21 | 材质属性批量修改/HDR/PBR设置 |
+| **Cinemachine** | 22 | 3.x全面支持/混合相机/ClearShot/TargetGroup/Spline [v1.4.1] |
 | **GameObject** | 18 | 创建/查找/变换同步/批量操作/层级管理 |
 | **Editor** | 12 | 播放模式/选择/撤销重做/上下文获取 |
 | **Asset** | 11 | 资产导入/搜索/文件夹/GUID管理 |
-| **UI** | 11 | Canvas/Button/Text/Slider/RectTransform |
+| **UI System** | 11 | Canvas/Button/Text/Slider/RectTransform |
+| **Scene** | 9 | 多场景加载/卸载/激活/截图 [v1.4+] |
+| **Texture/Audio/Model**| 9 | 导入设置/压缩格式/质量优化 |
 | **Component** | 8 | 添加/移除/属性配置/复制粘贴 |
 | **Animator** | 8 | 动画控制器/参数/状态机/过渡 |
 | **Sample** | 8 | 示例场景/测试用例生成 |
+| **Prefab** | 8 | 创建/实例化/覆盖应用与恢复 [v1.4+] |
 | **Light** | 7 | 灯光创建/类型配置/强度颜色/批量开关 |
 | **Validation** | 7 | 项目验证/空文件夹清理/引用检测 |
-| **Terrain** | 6 | 地形创建/高度图编辑/纹理绘制 [v1.3.1] |
-| **Scene** | 6 | 场景切换/保存/加载/截图 |
+| **Terrain** | 6 | 地形创建/高度图编辑/纹理绘制 |
 | **Script** | 6 | C# 脚本创建/编译检查/搜索 |
 | **Shader** | 6 | Shader 查找/创建/属性列举 |
-| **Prefab** | 5 | 预制体创建/实例化/应用更改 |
+| **Workflow** | 6 | 持久化历史/回滚/快照/标签管理 |
 | **Console** | 5 | 日志捕获/清理/输出监视 |
 | **Debug** | 5 | 调试绘图/射线/Gizmos |
-
 | **ScriptableObject**| 5 | 创建实例/读写数据 |
-| **Perception** | 3 | 场景摘要/层级描述/脚本分析 [v1.5] |
-| **Smart** | 3 | 场景查询/自动布局/引用装配 [v1.5 NEW] |
-| **UI Layout** | 5 | 锚点/尺寸/布局组/对齐/分布 [v1.5 NEW] |
-| **Cleaner** | 5 | 未使用资源/重复文件/丢失引用检测 [v1.3.1] |
+| **Cleaner** | 5 | 未使用资源/重复文件/丢失引用检测 |
+| **UI Layout** | 5 | 锚点/尺寸/布局组/对齐/分布 |
 | **Physics** | 4 | 物理材质/射线检测/层设置 |
-| **Physics** | 4 | 物理材质/射线检测/层设置 |
-| **Workflow** | 6 | **[NEW]** 持久化历史/回滚/快照/标签管理 |
-| **DebugEnhance** | 4 | 控制台日志/清空/错误暂停 [v1.5 NEW] |
-| **AssetImport** | 4 | 重新导入/贴图设置/模型设置 [v1.5 NEW] |
-| **Prefab** | +3 | 获取覆盖/应用覆盖/恢复覆盖 [v1.5] |
-| **Scene** | +3 | 多场景加载/卸载/设置活动 [v1.5] |
+| **Event** | 4 | UnityEvent 监听器管理/调用 |
+| **Project** | 4 | 渲染管线检测/Shader列表/质量设置 |
+| **DebugEnhance** | 4 | 控制台日志增强/错误暂停 |
 | **Camera** | 4 | 相机创建/属性配置/截屏/视角对齐 |
-| **NavMesh** | 3 | 烘焙设置/代理创建/区域管理/路径计算 |
+| **AssetImport** | 4 | 强制重import/批量修复 |
+| **Perception** | 3 | 场景摘要/层级树/脚本分析 [Smart] |
+| **Smart** | 3 | 场景SQL查询/自动布局/引用绑定 [Smart] |
+| **NavMesh** | 3 | 烘焙设置/代理创建/路径计算 |
 | **Timeline** | 3 | 轨道创建/剪辑添加/绑定 |
-| **Cinemachine** | 10+ | 3.x支持/混合相机/ClearShot/TargetGroup/Spline [v1.4.1] |
-| **Event** | 4 | UnityEvent 监听器管理/调用 [v1.5 NEW] |
-| **Project** | 4 | 渲染管线检测/Shader列表/质量设置 [v1.5 NEW] |
-| **Optimization** | 2 | 纹理压缩批量优化/模型网格压缩 [v1.5 NEW] |
-| **Profiler** | 1 | 获取性能统计 (FPS/Memory) [v1.5 NEW] |
-| **Texture/Audio/Model**| 9 | 导入设置/压缩格式/质量优化 (v1.2+) |
+| **Optimization** | 2 | 纹理压缩批量优化/模型网格压缩 |
+| **Profiler** | 1 | 获取性能统计 (FPS/Memory) |
 
 > ⚠️ **重要提示**：大部分模块都支持 `*_batch` 批量操作，操作多个物体时应优先使用批量 Skills。
 
