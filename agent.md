@@ -28,20 +28,25 @@
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                unity_skills.py Client                        │
-│        Python 封装层 - call_skill() / health() / get_skills()│
+│   call_skill() / workflow_context() / health() / get_skills()│
 └─────────────────────┬───────────────────────────────────────┘
-                      │ HTTP POST → localhost:8090
+                      │ HTTP POST → localhost:8090-8100
                       ▼
 ┌─────────────────────────────────────────────────────────────┐
 │             SkillsForUnity (Unity Editor Plugin)             │
 │  ┌─────────────────┐  ┌─────────────┐  ┌─────────────────┐  │
 │  │ SkillsHttpServer│→ │ SkillRouter │→ │[UnitySkill] 方法│  │
-│  │ (Multi-Instance)│  │(Undo-Aware) │  │  (Atomic)       │  │
+│  │ (Multi-Instance)│  │(Auto-Undo)  │  │  (272 Skills)   │  │
 │  └─────────────────┘  └─────────────┘  └─────────────────┘  │
+│           ↓                  ↓                              │
+│  ┌─────────────────┐  ┌─────────────────────────────────┐   │
+│  │RegistryService  │  │ WorkflowManager (Persistent Undo)│  │
+│  │ (多实例发现)     │  │ (Task/Session/Snapshot 回滚)     │  │
+│  └─────────────────┘  └─────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 核心设计模式 & 新特性 (v1.1)
+### 核心设计模式 & 新特性 (v1.4+)
 
 1.  **Multi-Instance (多实例支持)**:
     - Server 自动寻找可用端口 `8090-8100`。
@@ -57,6 +62,12 @@
 4.  **Token Optimization (Summary Mode)**:
     - 大量数据返回时自动截断 (`verbose=false`)。
     - `SKILL.md` 专为 AI 阅读优化。
+
+5.  **Persistent Workflow (持久化回滚)** [v1.4]:
+    - `workflow_task_start/end`：创建可回滚的任务标签。
+    - `workflow_undo_task/redo_task`：任意任务回滚与重做。
+    - `workflow_session_*`：会话级（对话级）批量回滚。
+    - 历史记录跨 Editor 重启持久保存。
 
 **Producer-Consumer 模式** (线程安全)：
 - **Producer** (HTTP 线程)：接收 HTTP 请求，入队到 `RequestJob` 队列
@@ -75,28 +86,34 @@ Unity-Skills/
 │       └── Skills/
 │           ├── SkillsHttpServer.cs     # HTTP 服务器核心 (Producer-Consumer)
 │           ├── SkillRouter.cs          # 请求路由 & 反射发现 Skills
+│           ├── WorkflowManager.cs      # 持久化工作流核心 (Task/Session)
+│           ├── WorkflowModels.cs       # Snapshot/Task/Session 数据模型
+│           ├── RegistryService.cs      # 全局注册表 (多实例发现)
+│           ├── GameObjectFinder.cs     # 统一 GO 查找器 (name/instanceId/path)
 │           ├── UnitySkillAttribute.cs  # [UnitySkill] 特性定义
 │           ├── UnitySkillsWindow.cs    # 编辑器窗口 UI
 │           ├── SkillInstaller.cs       # AI 工具一键安装器
+│           ├── Localization.cs         # 中英双语 UI
 │           │
-│           ├── GameObjectSkills.cs     # GameObject 操作 (8 skills, +1 batch)
+│           ├── GameObjectSkills.cs     # GameObject 操作 (18 skills)
 │           ├── ComponentSkills.cs      # Component 操作 (8 skills)
-│           ├── SceneSkills.cs          # Scene 管理 (6 skills)
-│           ├── MaterialSkills.cs       # Material 操作 (17 skills)
-│           ├── LightSkills.cs          # Light 配置 (7 skills, +2 batch)
-│           ├── AnimatorSkills.cs       # Animator 管理 (8 skills)
-│           ├── UISkills.cs             # UI 元素创建 (10 skills)
-│           ├── PrefabSkills.cs         # Prefab 操作 (5 skills)
-│           ├── AssetSkills.cs          # Asset 管理 (8 skills)
+│           ├── SceneSkills.cs          # Scene 管理 (9 skills)
+│           ├── MaterialSkills.cs       # Material 操作 (21 skills)
+│           ├── CinemachineSkills.cs    # Cinemachine 3.x (23 skills)
+│           ├── WorkflowSkills.cs       # Workflow 撤销/回滚 (22 skills)
+│           ├── UISkills.cs             # UI 元素创建 (16 skills)
 │           ├── EditorSkills.cs         # Editor 控制 (12 skills)
-│           ├── ConsoleSkills.cs        # Console 日志 (5 skills)
-│           ├── ScriptSkills.cs         # Script 管理 (4 skills)
-│           ├── ShaderSkills.cs         # Shader 操作 (3 skills)
+│           ├── AssetSkills.cs          # Asset 管理 (11 skills)
+│           ├── TerrainSkills.cs        # Terrain 地形 (10 skills)
+│           ├── PrefabSkills.cs         # Prefab 操作 (8 skills)
+│           ├── AnimatorSkills.cs       # Animator 管理 (8 skills)
+│           ├── LightSkills.cs          # Light 配置 (7 skills)
 │           ├── ValidationSkills.cs     # 项目验证 (7 skills)
-│           ├── TextureSkills.cs        # 纹理导入设置 (3 skills) [v1.2]
-│           ├── AudioSkills.cs          # 音频导入设置 (3 skills) [v1.2]
-│           ├── ModelSkills.cs          # 模型导入设置 (3 skills) [v1.2]
-│           └── ...
+│           ├── ScriptSkills.cs         # Script 管理 (6 skills)
+│           ├── ShaderSkills.cs         # Shader 操作 (6 skills)
+│           ├── NextGenSkills.cs        # Perception 场景理解 (3 skills)
+│           ├── SmartSkills.cs          # AI 推理技能 (3 skills)
+│           └── ... (37 个 *Skills.cs 文件, 共 272 Skills)
 │
 ├── unity-skills/                   # 跨平台 AI Skill 模板 (分发给 AI 工具)
 │   ├── SKILL.md                    # 主 Skill 定义 (AI 读取)
@@ -171,6 +188,16 @@ unity_skills.call_skill("gameobject_create", name="Cube", primitiveType="Cube")
 unity_skills.health()      # 检查服务器状态
 unity_skills.get_skills()  # 获取所有可用 Skills
 
+# Auto-Workflow (v1.4+) - 自动记录可回滚的操作
+# 默认开启，所有修改操作自动创建 workflow task
+unity_skills.set_auto_workflow(True)  # 开启/关闭
+
+# Workflow Context - 多操作批量回滚
+with unity_skills.workflow_context('Build Scene', 'Create player and env'):
+    unity_skills.call_skill('gameobject_create', name='Player')
+    unity_skills.call_skill('component_add', name='Player', componentType='Rigidbody')
+# 所有操作可通过 workflow_undo_task 一次性回滚
+
 # CLI 用法
 python unity_skills.py --list
 python unity_skills.py gameobject_create name=MyCube primitiveType=Cube
@@ -178,41 +205,41 @@ python unity_skills.py gameobject_create name=MyCube primitiveType=Cube
 
 ---
 
-## 📊 Skills 模块汇总 (270+)
+## 📊 Skills 模块汇总 (272)
 
 | 模块 | Skills 数量 | 核心功能 |
 |------|:-----------:|----------|
+| **Cinemachine** | 23 | 3.x全面支持/混合相机/ClearShot/TargetGroup/Spline |
+| **Workflow** | 22 | 持久化历史/任务快照/会话级撤销/回滚 |
 | **Material** | 21 | 材质属性批量修改/HDR/PBR设置 |
-| **Cinemachine** | 22 | 3.x全面支持/混合相机/ClearShot/TargetGroup/Spline [v1.4.1] |
 | **GameObject** | 18 | 创建/查找/变换同步/批量操作/层级管理 |
+| **UI System** | 16 | Canvas/Button/Text/Slider/锚点/布局 |
 | **Editor** | 12 | 播放模式/选择/撤销重做/上下文获取 |
 | **Asset** | 11 | 资产导入/搜索/文件夹/GUID管理 |
-| **UI System** | 11 | Canvas/Button/Text/Slider/RectTransform |
-| **Scene** | 9 | 多场景加载/卸载/激活/截图 [v1.4+] |
-| **Texture/Audio/Model**| 9 | 导入设置/压缩格式/质量优化 |
-| **Component** | 8 | 添加/移除/属性配置/复制粘贴 |
+| **Terrain** | 10 | 地形创建/高度图/Perlin噪声/纹理绘制 |
+| **Scene** | 9 | 多场景加载/卸载/激活/截图 |
+| **Texture/Audio/Model** | 9 | 导入设置/压缩格式/质量优化 |
+| **Prefab** | 8 | 创建/实例化/覆盖应用与恢复/批量实例化 |
+| **Component** | 8 | 添加/移除/属性配置/批量操作 |
 | **Animator** | 8 | 动画控制器/参数/状态机/过渡 |
 | **Sample** | 8 | 示例场景/测试用例生成 |
-| **Prefab** | 8 | 创建/实例化/覆盖应用与恢复 [v1.4+] |
 | **Light** | 7 | 灯光创建/类型配置/强度颜色/批量开关 |
 | **Validation** | 7 | 项目验证/空文件夹清理/引用检测 |
-| **Terrain** | 6 | 地形创建/高度图编辑/纹理绘制 |
 | **Script** | 6 | C# 脚本创建/编译检查/搜索 |
 | **Shader** | 6 | Shader 查找/创建/属性列举 |
-| **Workflow** | 6 | 持久化历史/回滚/快照/标签管理 |
+| **Debug** | 5 | 调试绘图/射线/Gizmos/Scene标注 |
 | **Console** | 5 | 日志捕获/清理/输出监视 |
-| **Debug** | 5 | 调试绘图/射线/Gizmos |
-| **ScriptableObject**| 5 | 创建实例/读写数据 |
 | **Cleaner** | 5 | 未使用资源/重复文件/丢失引用检测 |
-| **UI Layout** | 5 | 锚点/尺寸/布局组/对齐/分布 |
-| **Physics** | 4 | 物理材质/射线检测/层设置 |
+| **ScriptableObject** | 5 | 创建SO实例/读写数据/查找 |
 | **Event** | 4 | UnityEvent 监听器管理/调用 |
 | **Project** | 4 | 渲染管线检测/Shader列表/质量设置 |
-| **DebugEnhance** | 4 | 控制台日志增强/错误暂停 |
+| **DebugEnhance** | 4 | 控制台日志增强/错误时暂停 |
+| **Physics** | 4 | 物理材质/射线检测/层设置 |
 | **Camera** | 4 | 相机创建/属性配置/截屏/视角对齐 |
-| **AssetImport** | 4 | 强制重import/批量修复 |
+| **AssetImport** | 4 | 强制重导入/批量修复/刷新 |
+| **Test** | 4 | 断言测试/边界条件/性能测试 |
 | **Perception** | 3 | 场景摘要/层级树/脚本分析 [Smart] |
-| **Smart** | 3 | 场景SQL查询/自动布局/引用绑定 [Smart] |
+| **Smart** | 3 | 场景SQL查询/自动布局/引用绑定 |
 | **NavMesh** | 3 | 烘焙设置/代理创建/路径计算 |
 | **Timeline** | 3 | 轨道创建/剪辑添加/绑定 |
 | **Optimization** | 2 | 纹理压缩批量优化/模型网格压缩 |
