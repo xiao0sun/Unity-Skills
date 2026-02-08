@@ -458,13 +458,17 @@ namespace UnitySkills
             if (brain == null) return new { error = "No CinemachineBrain on Main Camera" };
 
             var activeCam = brain.ActiveVirtualCamera as Component;
-
+#if CINEMACHINE_3
+            var updateMethod = brain.UpdateMethod.ToString();
+#else
+            var updateMethod = brain.m_UpdateMethod.ToString();
+#endif
             return new {
                 success = true,
                 activeCamera = activeCam ? activeCam.name : "None",
                 isBlending = brain.IsBlending,
                 activeBlend = brain.ActiveBlend?.Description ?? "None",
-                updateMethod = brain.m_UpdateMethod.ToString()
+                updateMethod
             };
 #endif
         }
