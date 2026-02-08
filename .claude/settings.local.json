@@ -9,7 +9,10 @@
       "Bash(powershell -Command:*)",
       "Bash(for:*)",
       "Bash(do curl -s -X POST http://localhost:8090/skill/gameobject_delete -H \"Content-Type: application/json\" -d \"{\"\"name\"\":\"\"$obj\"\"}\")",
-      "Bash(done)"
+      "Bash(done)",
+      "WebFetch(domain:localhost)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)"
     ]
   }
 }
