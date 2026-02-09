@@ -1,6 +1,6 @@
 ---
 name: unity-material
-description: "Create and configure materials with HDR, emission, and texture support. Use *_batch skills for 2+ objects."
+description: "Unity material and shader properties. Use when users want to create materials, set colors, textures, emission, or shader properties. Triggers: material, shader, color, texture, emission, albedo, metallic, smoothness."
 ---
 
 # Unity Material Skills
@@ -30,8 +30,8 @@ description: "Create and configure materials with HDR, emission, and texture sup
 
 ## Skills
 
-### material_create / material_create_batch
-Create new materials (auto-detects render pipeline).
+### material_create
+Create a new material (auto-detects render pipeline).
 
 | Parameter | Type | Required | Default | Description |
 |-----------|------|----------|---------|-------------|
@@ -39,11 +39,10 @@ Create new materials (auto-detects render pipeline).
 | `shaderName` | string | No | auto-detect | Shader (auto-detects URP/HDRP/Standard) |
 | `savePath` | string | No | null | Save path (folder or full path) |
 
-```python
-# Single
-unity_skills.call_skill("material_create", name="RedMetal", savePath="Assets/Materials")
+### material_create_batch
+Create multiple materials.
 
-# Batch
+```python
 unity_skills.call_skill("material_create_batch", items=[
     {"name": "Red", "savePath": "Assets/Materials"},
     {"name": "Blue", "savePath": "Assets/Materials"},
@@ -51,7 +50,7 @@ unity_skills.call_skill("material_create_batch", items=[
 ])
 ```
 
-### material_assign / material_assign_batch
+### material_assign
 Assign material to object's renderer.
 
 | Parameter | Type | Required | Description |
@@ -61,18 +60,17 @@ Assign material to object's renderer.
 | `path` | string | No* | Material asset path (for asset) |
 | `materialPath` | string | Yes | Material to assign |
 
-```python
-# Single
-unity_skills.call_skill("material_assign", name="Cube", materialPath="Assets/Materials/Red.mat")
+### material_assign_batch
+Assign materials to multiple objects.
 
-# Batch
+```python
 unity_skills.call_skill("material_assign_batch", items=[
     {"name": "Cube1", "materialPath": "Assets/Materials/Red.mat"},
     {"name": "Cube2", "materialPath": "Assets/Materials/Blue.mat"}
 ])
 ```
 
-### material_set_color / material_set_colors_batch
+### material_set_color
 Set material color with optional HDR intensity.
 
 | Parameter | Type | Required | Default | Description |
@@ -84,11 +82,10 @@ Set material color with optional HDR intensity.
 | `propertyName` | string | No | auto-detect | Color property |
 | `intensity` | float | No | 1.0 | HDR intensity (>1 for bloom) |
 
-```python
-# Single
-unity_skills.call_skill("material_set_color", name="Cube", r=1, g=0, b=0)
+### material_set_colors_batch
+Set colors on multiple objects.
 
-# Batch
+```python
 unity_skills.call_skill("material_set_colors_batch", items=[
     {"name": "Cube1", "r": 1, "g": 0, "b": 0},
     {"name": "Cube2", "r": 0, "g": 1, "b": 0},
@@ -96,7 +93,7 @@ unity_skills.call_skill("material_set_colors_batch", items=[
 ])
 ```
 
-### material_set_emission / material_set_emission_batch
+### material_set_emission
 Set emission color with auto-enable keyword.
 
 | Parameter | Type | Required | Default | Description |
@@ -107,14 +104,10 @@ Set emission color with auto-enable keyword.
 | `intensity` | float | No | 1.0 | HDR intensity (>1 for bloom) |
 | `enableEmission` | bool | No | true | Auto-enable _EMISSION keyword |
 
-```python
-# Single - glowing green
-unity_skills.call_skill("material_set_emission",
-    path="Assets/Materials/Glow.mat",
-    r=0, g=1, b=0.5, intensity=3.0
-)
+### material_set_emission_batch
+Set emission on multiple objects.
 
-# Batch
+```python
 unity_skills.call_skill("material_set_emission_batch", items=[
     {"name": "Neon1", "r": 1, "g": 0, "b": 1, "intensity": 5.0},
     {"name": "Neon2", "r": 0, "g": 1, "b": 1, "intensity": 5.0}
@@ -131,15 +124,25 @@ Set material texture.
 | `texturePath` | string | Yes | - | Texture asset path |
 | `propertyName` | string | No | auto-detect | Texture property |
 
-### material_set_float / material_set_int
-Set numeric properties.
+### material_set_float
+Set a float property on a material.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `name` | string | No* | GameObject name |
 | `path` | string | No* | Material asset path |
 | `propertyName` | string | Yes | Property name |
-| `value` | float/int | Yes | Value |
+| `value` | float | Yes | Value |
+
+### material_set_int
+Set an integer property on a material.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | No* | GameObject name |
+| `path` | string | No* | Material asset path |
+| `propertyName` | string | Yes | Property name |
+| `value` | int | Yes | Value |
 
 ### material_set_keyword
 Enable/disable shader keywords.
@@ -162,6 +165,79 @@ Get all material properties.
 | `path` | string | No* | Material asset path |
 
 **Returns**: `{colors, floats, vectors, textures, integers, keywords, renderQueue}`
+
+### material_get_keywords
+Get all enabled shader keywords on a material.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | No* | GameObject name |
+| `path` | string | No* | Material asset path |
+
+### material_duplicate
+Duplicate a material asset.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sourcePath` | string | Yes | Source material path |
+| `destPath` | string | Yes | Destination path |
+
+### material_set_shader
+Change the shader of a material.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | No* | GameObject name |
+| `path` | string | No* | Material asset path |
+| `shaderName` | string | Yes | Shader name |
+
+### material_set_vector
+Set a Vector4 property on a material.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | No* | GameObject name |
+| `path` | string | No* | Material asset path |
+| `propertyName` | string | Yes | Property name |
+| `x`, `y`, `z`, `w` | float | Yes | Vector components |
+
+### material_set_texture_offset
+Set texture offset (tiling position).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | No* | GameObject name |
+| `path` | string | No* | Material asset path |
+| `propertyName` | string | No | Texture property name |
+| `x`, `y` | float | Yes | Offset values |
+
+### material_set_texture_scale
+Set texture scale (tiling).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | No* | GameObject name |
+| `path` | string | No* | Material asset path |
+| `propertyName` | string | No | Texture property name |
+| `x`, `y` | float | Yes | Scale values |
+
+### material_set_render_queue
+Set material render queue.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | No* | GameObject name |
+| `path` | string | No* | Material asset path |
+| `queue` | int | Yes | Render queue value |
+
+### material_set_gi_flags
+Set material global illumination flags.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | No* | GameObject name |
+| `path` | string | No* | Material asset path |
+| `flags` | string | Yes | GI flags (None/Emissive/RealtimeEmissive/BakedEmissive)
 
 ---
 

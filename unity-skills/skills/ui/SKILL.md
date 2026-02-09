@@ -1,6 +1,6 @@
 ---
 name: unity-ui
-description: "Create UI elements (Canvas, Button, Text, etc.). Use ui_create_batch for 2+ elements."
+description: "Unity UI creation. Use when users want to create Canvas, Button, Text, Image, or other UI elements. Triggers: UI, canvas, button, text, image, panel, slider, toggle, UGUI."
 ---
 
 # Unity UI Skills
@@ -16,6 +16,11 @@ description: "Create UI elements (Canvas, Button, Text, etc.). Use ui_create_bat
 **Query/Utility Skills**:
 - `ui_set_text` - Update text content
 - `ui_find_all` - Find UI elements
+- `ui_set_rect` - Set RectTransform size/position
+- `ui_set_anchor` - Set anchor preset
+- `ui_layout_children` - Arrange children in layout
+- `ui_align_selected` - Align selected elements
+- `ui_distribute_selected` - Distribute selected elements
 
 ---
 
@@ -120,6 +125,57 @@ Find UI elements in scene.
 |-----------|------|----------|---------|-------------|
 | `uiType` | string | No | null | Filter: Button/Text/Image/etc. |
 | `limit` | int | No | 100 | Max results |
+
+### ui_set_rect
+Set RectTransform size, position, and padding.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | No* | UI element name |
+| `instanceId` | int | No* | Instance ID |
+| `width`, `height` | float | No | Size |
+| `x`, `y` | float | No | Position |
+| `left`, `right`, `top`, `bottom` | float | No | Padding offsets |
+
+### ui_set_anchor
+Set anchor preset for a UI element.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `name` | string | No* | - | UI element name |
+| `instanceId` | int | No* | - | Instance ID |
+| `preset` | string | No | "MiddleCenter" | Anchor preset |
+| `setPivot` | bool | No | true | Also set pivot |
+
+**Presets**: TopLeft, TopCenter, TopRight, MiddleLeft, MiddleCenter, MiddleRight, BottomLeft, BottomCenter, BottomRight, StretchHorizontal, StretchVertical, StretchAll
+
+### ui_layout_children
+Arrange child UI elements in a layout.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `name` | string | No* | - | Parent element name |
+| `instanceId` | int | No* | - | Instance ID |
+| `layout` | string | No | "Vertical" | Layout type |
+| `spacing` | float | No | 10 | Spacing between elements |
+
+**Layout types**: Vertical, Horizontal, Grid
+
+### ui_align_selected
+Align selected UI elements.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `alignment` | string | No | "Center" | Alignment type |
+
+**Alignments**: Left, Center, Right, Top, Middle, Bottom
+
+### ui_distribute_selected
+Distribute selected UI elements evenly.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `direction` | string | No | "Horizontal" | Distribution direction |
 
 ---
 

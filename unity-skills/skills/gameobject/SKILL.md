@@ -1,6 +1,6 @@
 ---
 name: unity-gameobject
-description: "Create, delete, find, and transform GameObjects. Use *_batch skills for 2+ objects."
+description: "GameObject creation and manipulation. Use when users want to create, delete, move, rotate, scale, or parent GameObjects. Triggers: gameobject, create, delete, transform, position, rotation, scale, parent, hierarchy."
 ---
 
 # Unity GameObject Skills
@@ -205,15 +205,20 @@ unity_skills.call_skill("gameobject_set_parent_batch", items=[
 ])
 ```
 
-### gameobject_set_layer_batch / gameobject_set_tag_batch
-Set layer or tag for multiple objects.
+### gameobject_set_layer_batch
+Set layer for multiple objects.
 
 ```python
 unity_skills.call_skill("gameobject_set_layer_batch", items=[
     {"name": "Enemy1", "layer": 8},
     {"name": "Enemy2", "layer": 8}
 ])
+```
 
+### gameobject_set_tag_batch
+Set tag for multiple objects.
+
+```python
 unity_skills.call_skill("gameobject_set_tag_batch", items=[
     {"name": "Enemy1", "tag": "Enemy"},
     {"name": "Enemy2", "tag": "Enemy"}

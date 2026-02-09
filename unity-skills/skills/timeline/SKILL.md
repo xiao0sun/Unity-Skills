@@ -1,3 +1,8 @@
+---
+name: unity-timeline
+description: "Unity Timeline operations. Use when users want to create timelines or add animation/audio tracks. Triggers: timeline, cutscene, sequence, track, clip, playable."
+---
+
 # Timeline Skills
 
 Create and modify Unity Timelines.

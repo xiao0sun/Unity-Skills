@@ -1,6 +1,6 @@
 ---
 name: unity-light
-description: "Create and configure lights. Use *_batch skills for 2+ lights."
+description: "Unity lighting control. Use when users want to create or configure lights (Directional, Point, Spot, Area). Triggers: light, lighting, directional light, point light, spot light, shadows, intensity."
 ---
 
 # Unity Light Skills
@@ -50,7 +50,7 @@ Create a new light.
 
 **Returns**: `{success, name, instanceId, lightType, position, color, intensity, shadows}`
 
-### light_set_properties / light_set_properties_batch
+### light_set_properties
 Configure light properties.
 
 | Parameter | Type | Required | Description |
@@ -62,11 +62,10 @@ Configure light properties.
 | `range` | float | No | Range (Point/Spot) |
 | `shadows` | string | No | none/hard/soft |
 
-```python
-# Single
-unity_skills.call_skill("light_set_properties", name="TorchLight", intensity=2.0, r=1, g=0.6, b=0.2)
+### light_set_properties_batch
+Configure multiple lights.
 
-# Batch
+```python
 unity_skills.call_skill("light_set_properties_batch", items=[
     {"name": "Light1", "intensity": 2.0},
     {"name": "Light2", "intensity": 2.0},
@@ -74,8 +73,8 @@ unity_skills.call_skill("light_set_properties_batch", items=[
 ])
 ```
 
-### light_set_enabled / light_set_enabled_batch
-Enable or disable lights.
+### light_set_enabled
+Enable or disable a light.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -83,11 +82,10 @@ Enable or disable lights.
 | `instanceId` | int | No* | Instance ID |
 | `enabled` | bool | Yes | Enable state |
 
-```python
-# Single
-unity_skills.call_skill("light_set_enabled", name="TorchLight", enabled=False)
+### light_set_enabled_batch
+Enable or disable multiple lights.
 
-# Batch - turn off all torches
+```python
 unity_skills.call_skill("light_set_enabled_batch", items=[
     {"name": "Torch1", "enabled": False},
     {"name": "Torch2", "enabled": False},

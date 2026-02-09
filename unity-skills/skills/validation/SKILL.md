@@ -1,6 +1,6 @@
 ---
 name: unity-validation
-description: "Validate and clean up Unity projects - find missing scripts, unused assets, and issues."
+description: "Project validation and cleanup. Use when users want to find missing scripts, validate references, or check project health. Triggers: validate, missing script, broken reference, check, health."
 ---
 
 # Unity Validation Skills

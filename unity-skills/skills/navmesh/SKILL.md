@@ -1,3 +1,8 @@
+---
+name: unity-navmesh
+description: "Navigation mesh operations. Use when users want to bake NavMesh or calculate paths for AI navigation. Triggers: navmesh, navigation, pathfinding, bake, AI, agent, obstacle."
+---
+
 # NavMesh Skills
 
 Baking and pathfinding.

@@ -1,6 +1,6 @@
 ---
 name: unity-script
-description: "Create and manage C# scripts. Use script_create_batch for 2+ scripts."
+description: "C# script management. Use when users want to create, read, or modify C# scripts. Triggers: script, C#, MonoBehaviour, code, class, method."
 ---
 
 # Unity Script Skills

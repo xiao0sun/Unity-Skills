@@ -3,7 +3,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Unity-2021.3%2B-black?style=for-the-badge&logo=unity" alt="Unity">
-  <img src="https://img.shields.io/badge/Skills-279-green?style=for-the-badge" alt="Skills">
+  <img src="https://img.shields.io/badge/Skills-277-green?style=for-the-badge" alt="Skills">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-orange?style=for-the-badge" alt="License"></a>
 </p>
 
@@ -20,7 +20,7 @@
 ## 🚀 核心特性
 
 - ⚡ **极致效能**：支持 **Result Truncation** 与 **SKILL.md** 瘦身，最大化节省 Token。
-- 🛠️ **全能工具库**：内置 279 Skills，支持 **Batch (批处理)** 操作，大幅减少 HTTP 通信开销，显著提升执行效率。
+- 🛠️ **全能工具库**：内置 277 Skills，支持 **Batch (批处理)** 操作，大幅减少 HTTP 通信开销，显著提升执行效率。
 - 🛡️ **安全第一**：支持 **Transactional (事务原子性)**，操作失败自动回滚，场景零残留。
 - 🌍 **多实例支持**：自动端口发现、全局注册表，支持同时控制多个 Unity 项目。
 - 🤖 **深度集成**：独家支持 **Antigravity Slash Commands**，解锁 `/unity-skills` 交互新体验。
@@ -75,7 +75,7 @@ https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#beta
 📘 需要更完整的安装与使用说明，请查看：[docs/SETUP_GUIDE.md](docs/SETUP_GUIDE.md)
 
 ### 4. 手动安装 Skills（可选）
-如果不使用一键安装，可按以下**标准流程**手动部署（适用于所有支持 Skills 的工具）：
+如果不支持不使用一键安装，可按以下**标准流程**手动部署（适用于所有支持 Skills 的工具）：
 
 #### ✅ 标准安装规范A
 1. **自定义安装**: 在安装界面，你可以选择 "Custom Path" 选项，将 Skills 安装到你指定的任意目录（例如 `Assets/MyTools/AI`），方便项目管理。
@@ -104,7 +104,7 @@ https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#beta
 
 ---
 
-## 📦 Skills 分类概要 (279)
+## 📦 Skills 分类概要 (277)
 
 | 分类 | 数量 | 核心功能 |
 | :--- | :---: | :--- |

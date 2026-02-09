@@ -17,7 +17,16 @@
       "mcp__ide__getDiagnostics",
       "WebFetch(domain:github.com)",
       "WebFetch(domain:docs.unity3d.com)",
-      "Bash(cmd /c:*)"
+      "Bash(cmd /c:*)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(grep:*)",
+      "Bash(python3:*)",
+      "Bash(comm:*)",
+      "Bash(do if ! head -1 \"$f\")",
+      "Bash(then echo \"缺少frontmatter: $f\")",
+      "Bash(fi)",
+      "Bash(do if ! grep -q \"Use when\\\\|Triggers:\" \"$f\")",
+      "Bash(then echo \"description格式不完整: $f\")"
     ]
   }
 }

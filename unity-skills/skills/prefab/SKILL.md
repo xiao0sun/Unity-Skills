@@ -1,6 +1,6 @@
 ---
 name: unity-prefab
-description: "Create, instantiate, and manage prefabs. Use prefab_instantiate_batch for spawning 2+ instances."
+description: "Prefab management. Use when users want to create, instantiate, apply, or unpack prefabs. Triggers: prefab, instantiate, spawn, apply, unpack, variant."
 ---
 
 # Unity Prefab Skills
@@ -17,6 +17,9 @@ description: "Create, instantiate, and manage prefabs. Use prefab_instantiate_ba
 - `prefab_create` - Create prefab from scene object
 - `prefab_apply` - Apply instance changes to prefab
 - `prefab_unpack` - Unpack prefab instance
+- `prefab_get_overrides` - Get instance overrides
+- `prefab_revert_overrides` - Revert to prefab values
+- `prefab_apply_overrides` - Apply overrides to prefab
 
 ---
 
@@ -82,6 +85,32 @@ Unpack a prefab instance (break prefab connection).
 | `completely` | bool | No | false | Unpack all nested prefabs |
 
 **Returns**: `{success, gameObject, mode}`
+
+### prefab_get_overrides
+Get list of property overrides on a prefab instance.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | No* | Prefab instance name |
+| `instanceId` | int | No* | Instance ID |
+
+**Returns**: `{success, overrides: [{type, path, property}]}`
+
+### prefab_revert_overrides
+Revert all overrides on a prefab instance back to prefab values.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | No* | Prefab instance name |
+| `instanceId` | int | No* | Instance ID |
+
+### prefab_apply_overrides
+Apply all overrides from instance to source prefab asset.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | No* | Prefab instance name |
+| `instanceId` | int | No* | Instance ID |
 
 ---
 

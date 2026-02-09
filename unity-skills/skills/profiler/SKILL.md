@@ -1,3 +1,8 @@
+---
+name: unity-profiler
+description: "Performance profiling. Use when users want to get FPS, memory usage, or performance statistics. Triggers: profiler, performance, FPS, memory, stats, benchmark."
+---
+
 # Profiler Skills
 
 Get performance statistics.

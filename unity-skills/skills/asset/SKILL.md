@@ -1,6 +1,6 @@
 ---
 name: unity-asset
-description: "Import, manage, and organize assets. Use *_batch skills for 2+ assets."
+description: "Unity asset management. Use when users want to import, move, delete, duplicate, or organize project assets. Triggers: asset, import, export, folder, file, resource, AssetDatabase."
 ---
 
 # Unity Asset Skills
@@ -21,67 +21,60 @@ description: "Import, manage, and organize assets. Use *_batch skills for 2+ ass
 - `asset_create_folder` - Create folder
 - `asset_refresh` - Refresh AssetDatabase
 - `asset_get_info` - Get asset information
+- `asset_reimport` - Force reimport asset
+- `asset_reimport_batch` - Reimport multiple assets
 
 ---
 
 ## Skills
 
-### asset_import / asset_import_batch
-Import external files into the project.
+### asset_import
+Import an external file into the project.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `sourcePath` | string | Yes | External file path |
 | `destinationPath` | string | Yes | Project destination |
 
-```python
-# Single
-unity_skills.call_skill("asset_import",
-    sourcePath="C:/Downloads/texture.png",
-    destinationPath="Assets/Textures/texture.png"
-)
+### asset_import_batch
+Import multiple external files.
 
-# Batch
+```python
 unity_skills.call_skill("asset_import_batch", items=[
     {"sourcePath": "C:/Downloads/tex1.png", "destinationPath": "Assets/Textures/tex1.png"},
     {"sourcePath": "C:/Downloads/tex2.png", "destinationPath": "Assets/Textures/tex2.png"}
 ])
 ```
 
-### asset_delete / asset_delete_batch
-Delete assets from the project.
+### asset_delete
+Delete an asset from the project.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `assetPath` | string | Yes | Asset path to delete |
 
-```python
-# Single
-unity_skills.call_skill("asset_delete", assetPath="Assets/Textures/old.png")
+### asset_delete_batch
+Delete multiple assets.
 
-# Batch
+```python
 unity_skills.call_skill("asset_delete_batch", items=[
     {"path": "Assets/Textures/old1.png"},
     {"path": "Assets/Textures/old2.png"}
 ])
 ```
 
-### asset_move / asset_move_batch
-Move or rename assets.
+### asset_move
+Move or rename an asset.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `sourcePath` | string | Yes | Current asset path |
 | `destinationPath` | string | Yes | New path/name |
 
-```python
-# Single (also works for rename)
-unity_skills.call_skill("asset_move",
-    sourcePath="Assets/Materials/Red.mat",
-    destinationPath="Assets/Materials/Player/RedMetal.mat"
-)
+### asset_move_batch
+Move multiple assets.
 
-# Batch
+```python
 unity_skills.call_skill("asset_move_batch", items=[
     {"sourcePath": "Assets/Old/mat1.mat", "destinationPath": "Assets/New/mat1.mat"},
     {"sourcePath": "Assets/Old/mat2.mat", "destinationPath": "Assets/New/mat2.mat"}
@@ -132,6 +125,20 @@ Get information about an asset.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `assetPath` | string | Yes | Asset path |
+
+### asset_reimport
+Force reimport of an asset.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `assetPath` | string | Yes | Asset path to reimport |
+
+### asset_reimport_batch
+Reimport multiple assets matching a pattern.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `pattern` | string | Yes | Search pattern (e.g., "Assets/Textures/*.png") |
 
 ---
 

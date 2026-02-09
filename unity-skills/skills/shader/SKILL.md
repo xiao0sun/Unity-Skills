@@ -1,6 +1,6 @@
 ---
 name: unity-shader
-description: "Create and manage shaders in Unity Editor."
+description: "Shader creation and management. Use when users want to create or inspect shaders. Triggers: shader, HLSL, ShaderLab, Unlit, Standard, custom shader."
 ---
 
 # Unity Shader Skills
@@ -14,6 +14,9 @@ Work with shaders - create shader files, read source code, and list available sh
 | `shader_create` | Create shader file |
 | `shader_read` | Read shader source |
 | `shader_list` | List all shaders |
+| `shader_find` | Find shader by name |
+| `shader_delete` | Delete shader file |
+| `shader_get_properties` | Get shader properties |
 
 ---
 
@@ -53,6 +56,32 @@ List all shaders in project.
 | `limit` | int | No | 100 | Max results |
 
 **Returns**: `{success, count, shaders: [{name, path}]}`
+
+### shader_find
+Find a shader by name.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `shaderName` | string | Yes | Shader name to find |
+
+**Returns**: `{success, name, path, propertyCount}`
+
+### shader_delete
+Delete a shader file.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `shaderPath` | string | Yes | Shader asset path |
+
+### shader_get_properties
+Get all properties defined in a shader.
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `shaderName` | string | No* | Shader name |
+| `shaderPath` | string | No* | Shader asset path |
+
+**Returns**: `{success, properties: [{name, type, description}]}`
 
 ---
 

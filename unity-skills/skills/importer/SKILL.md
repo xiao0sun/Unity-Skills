@@ -1,6 +1,6 @@
 ---
 name: unity-importer
-description: "Get and set import settings for Textures, Audio, and Models. Use *_batch skills for 2+ assets."
+description: "Asset import settings. Use when users want to configure texture, audio, or model import settings. Triggers: import settings, texture settings, audio settings, model settings, compression, max size."
 ---
 
 # Unity Importer Skills
@@ -15,6 +15,10 @@ description: "Get and set import settings for Textures, Audio, and Models. Use *
 | `audio_set_settings` | `audio_set_settings_batch` | Configuring 2+ audio files |
 | `model_set_settings` | `model_set_settings_batch` | Configuring 2+ models |
 
+**Alternative Skills**:
+- `texture_set_import_settings` - Set texture import settings (alternative API)
+- `model_set_import_settings` - Set model import settings (alternative API)
+
 **Query Skills** (no batch needed):
 - `texture_get_settings` - Get texture import settings
 - `audio_get_settings` - Get audio import settings
@@ -24,7 +28,17 @@ description: "Get and set import settings for Textures, Audio, and Models. Use *
 
 ## Texture Skills
 
-### texture_get_settings / texture_set_settings
+### texture_get_settings
+Get texture import settings.
+
+### texture_set_settings
+Set texture import settings.
+
+### texture_set_settings_batch
+Set texture import settings for multiple textures.
+
+### texture_set_import_settings
+Set texture import settings (alternative API).
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -60,7 +74,14 @@ unity_skills.call_skill("texture_set_settings_batch", items=[
 
 ## Audio Skills
 
-### audio_get_settings / audio_set_settings
+### audio_get_settings
+Get audio import settings.
+
+### audio_set_settings
+Set audio import settings.
+
+### audio_set_settings_batch
+Set audio import settings for multiple audio files.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -99,7 +120,17 @@ unity_skills.call_skill("audio_set_settings_batch", items=[
 
 ## Model Skills
 
-### model_get_settings / model_set_settings
+### model_get_settings
+Get model import settings.
+
+### model_set_settings
+Set model import settings.
+
+### model_set_settings_batch
+Set model import settings for multiple models.
+
+### model_set_import_settings
+Set model import settings (alternative API).
 
 | Parameter | Type | Description |
 |-----------|------|-------------|

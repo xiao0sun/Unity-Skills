@@ -1,6 +1,6 @@
 ---
 name: unity-terrain
-description: "Create and modify Unity Terrain. Set heights, paint textures, query elevation."
+description: "Unity Terrain operations. Use when users want to create terrain, set heights, paint textures, or add trees. Triggers: terrain, heightmap, landscape, paint, trees, grass."
 ---
 
 # Unity Terrain Skills

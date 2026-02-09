@@ -1,6 +1,6 @@
 ---
 name: unity-scene
-description: "Manage Unity scenes - create, load, save, and query scene information."
+description: "Unity scene management. Use when users want to create, load, save scenes, or get scene hierarchy. Triggers: scene, load scene, save scene, hierarchy, screenshot."
 ---
 
 # Unity Scene Skills
@@ -17,6 +17,10 @@ Control Unity scenes - the containers that hold all your GameObjects.
 | `scene_get_info` | Get scene information |
 | `scene_get_hierarchy` | Get hierarchy tree |
 | `scene_screenshot` | Capture screenshot |
+| `scene_get_loaded` | Get all loaded scenes |
+| `scene_unload` | Unload an additive scene |
+| `scene_set_active` | Set active scene |
+| `scene_summarize` | Get scene summary |
 
 ---
 
@@ -68,6 +72,37 @@ Capture a screenshot.
 | `filename` | string | No | "screenshot.png" | Output filename |
 | `width` | int | No | 1920 | Image width |
 | `height` | int | No | 1080 | Image height |
+
+### scene_get_loaded
+Get list of all currently loaded scenes.
+
+No parameters.
+
+**Returns**: `{success, scenes: [{name, path, isActive, isDirty}]}`
+
+### scene_unload
+Unload a loaded scene (additive).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sceneName` | string | Yes | Scene name to unload |
+
+### scene_set_active
+Set the active scene (for multi-scene editing).
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `sceneName` | string | Yes | Scene name to set active |
+
+### scene_summarize
+Get a structured summary of the current scene.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `includeComponentStats` | bool | No | true | Include component statistics |
+| `topComponentsLimit` | int | No | 10 | Max components to list |
+
+**Returns**: `{success, objectCount, componentStats, hierarchyDepth}`
 
 ---
 

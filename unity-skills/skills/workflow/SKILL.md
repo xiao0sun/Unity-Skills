@@ -1,3 +1,8 @@
+---
+name: unity-workflow
+description: "Operation history and rollback. Use when users want to track changes, create snapshots, or undo operations. Triggers: undo, redo, snapshot, rollback, history, revert, session."
+---
+
 # Workflow Skills
 
 Persistent history and rollback system for AI operations ("Time Machine").
@@ -128,8 +133,8 @@ List all undone tasks that can be redone.
 }
 ```
 
-### `workflow_revert_task` (deprecated)
-Alias for `workflow_undo_task`. Use `workflow_undo_task` instead.
+### workflow_revert_task
+**(deprecated)** Alias for `workflow_undo_task`. Use `workflow_undo_task` instead.
 **Parameters:**
 - `taskId` (string): The UUID of the task to undo.
 

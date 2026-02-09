@@ -1,6 +1,6 @@
 ---
 name: unity-editor
-description: "Control Unity Editor state - play mode, selection, undo, and menu commands."
+description: "Unity Editor control. Use when users want to enter play mode, select objects, undo/redo, or execute menu commands. Triggers: play, stop, pause, select, undo, redo, menu, editor."
 ---
 
 # Unity Editor Skills
@@ -23,19 +23,20 @@ Control the Unity Editor itself - enter play mode, manage selection, undo/redo, 
 | `editor_execute_menu` | Execute menu item |
 | `editor_get_tags` | Get all tags |
 | `editor_get_layers` | Get all layers |
+| `editor_set_pause_on_error` | Pause play mode on error |
 
 ---
 
 ## Skills
 
-### editor_play / editor_stop / editor_pause
-Control play mode.
+### editor_play
+Enter play mode.
 
-```python
-unity_skills.call_skill("editor_play")   # Enter play mode
-unity_skills.call_skill("editor_pause")  # Toggle pause
-unity_skills.call_skill("editor_stop")   # Exit play mode
-```
+### editor_stop
+Exit play mode.
+
+### editor_pause
+Toggle pause state.
 
 ### editor_select
 Select a GameObject.
@@ -67,13 +68,11 @@ Get full editor context including selection, assets, and scene info.
 - `focusedWindow`: Name of focused editor window
 - `isPlaying`, `isCompiling`: Editor state
 
-### editor_undo / editor_redo
-Undo or redo the last action.
+### editor_undo
+Undo the last action.
 
-```python
-unity_skills.call_skill("editor_undo")
-unity_skills.call_skill("editor_redo")
-```
+### editor_redo
+Redo the last undone action.
 
 ### editor_get_state
 Get current editor state.
@@ -97,10 +96,22 @@ Execute a menu command.
 | `Window/General/Console` | Open console |
 | `Assets/Refresh` | Refresh assets |
 
-### editor_get_tags / editor_get_layers
-Get available tags or layers.
+### editor_get_tags
+Get all available tags.
 
-**Returns**: `{success, tags: [string]}` or `{success, layers: [{index, name}]}`
+**Returns**: `{success, tags: [string]}`
+
+### editor_get_layers
+Get all available layers.
+
+**Returns**: `{success, layers: [{index, name}]}`
+
+### editor_set_pause_on_error
+Configure whether to pause play mode when an error occurs.
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `enabled` | bool | No | true | Enable pause on error |
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: unity-component
-description: "Add, remove, and configure components on GameObjects. Use *_batch skills for 2+ objects."
+description: "GameObject component management. Use when users want to add, remove, or configure components like Rigidbody, Collider, AudioSource. Triggers: component, add component, rigidbody, collider, audio source, script."
 ---
 
 # Unity Component Skills

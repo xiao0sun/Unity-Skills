@@ -1,3 +1,8 @@
+---
+name: unity-project
+description: "Project information. Use when users want to get project settings, quality settings, or shader lists. Triggers: project, settings, quality, build, configuration."
+---
+
 # Project Skills
 
 Project information and configuration.

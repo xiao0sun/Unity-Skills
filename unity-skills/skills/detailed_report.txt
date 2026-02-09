@@ -1,0 +1,155 @@
+========================================
+Unity Skills 彻底审查报告
+========================================
+
+【审查日期】2026-02-09
+【审查范围】E:\Betsy\temp\Unity-Skills\unity-skills\
+
+【核心发现】
+- 文档中声称的 Skills: 174 个
+- 代码中实际实现的 Skills: 147 个
+- 真实的 Skill 数量: 147 个
+
+【差异统计】
+- 文档有但代码没有: 48 个 (27.6%)
+- 代码有但文档没有: 21 个 (14.3%)
+- 两者都有: 126 个 (72.4%)
+
+【代码实现的 Skills 按模块分布】
+animator: 8 个
+asset: 8 个
+cleaner: 5 个 (新增，文档未列出)
+component: 8 个
+console: 5 个
+editor: 8 个
+gameobject: 17 个
+importer: 3 个
+light: 5 个
+material: 8 个
+perception: 3 个 (新增，文档未列出)
+prefab: 5 个
+scene: 6 个
+script: 6 个
+shader: 3 个
+smart: 3 个 (新增，文档未列出)
+terrain: 10 个 (新增，文档未列出)
+ui: 11 个
+validation: 7 个
+
+【文档有但代码没有的 Skills】(48 个)
+1. 相机相关 (4 个):
+   - camera_align_view_to_object
+   - camera_get_info
+   - camera_look_at
+   - camera_set_transform
+
+2. Cinemachine 相关 (3 个):
+   - cinemachine_create_vcam
+   - cinemachine_set_targets
+   - cinemachine_set_vcam_property
+
+3. 事件相关 (3 个):
+   - event_add_listener
+   - event_get_listeners
+   - event_invoke
+
+4. 材质相关 (6 个):
+   - material_duplicate
+   - material_get_keywords
+   - material_set_render_queue
+   - material_set_shader
+   - material_set_texture_offset
+   - material_set_texture_scale
+   - material_set_vector
+
+5. 物理相关 (4 个):
+   - physics_raycast
+   - physics_check_overlap
+   - physics_get_gravity
+   - physics_set_gravity
+
+6. NavMesh 相关 (2 个):
+   - navmesh_bake
+   - navmesh_calculate_path
+
+7. 包管理相关 (6 个):
+   - package_list
+   - package_check
+   - package_install
+   - package_remove
+   - package_refresh
+   - package_install_cinemachine
+   - package_get_cinemachine_status
+
+8. 项目相关 (3 个):
+   - project_get_info
+   - project_list_shaders
+   - project_get_quality_settings
+
+9. 优化相关 (2 个):
+   - optimize_textures
+   - optimize_mesh_compression
+
+10. 分析相关 (1 个):
+    - profiler_get_stats
+
+11. Timeline 相关 (3 个):
+    - timeline_create
+    - timeline_add_audio_track
+    - timeline_add_animation_track
+
+12. Workflow 相关 (5 个):
+    - workflow_task_start
+    - workflow_task_end
+    - workflow_snapshot_object
+    - workflow_list
+    - workflow_revert_task
+    - workflow_delete_task
+
+13. Importer Batch (2 个):
+    - audio_set_settings_batch
+    - model_set_settings_batch
+    - texture_set_settings_batch
+
+【代码有但文档没有的 Skills】(21 个)
+1. Cleaner 模块 (5 个):
+   - cleaner_find_unused_assets
+   - cleaner_find_duplicates
+   - cleaner_find_missing_references
+   - cleaner_delete_assets
+   - cleaner_get_asset_usage
+
+2. Perception 模块 (3 个):
+   - scene_summarize
+   - hierarchy_describe
+   - script_analyze
+
+3. Smart 模块 (3 个):
+   - smart_scene_query
+   - smart_scene_layout
+   - smart_reference_bind
+
+4. Terrain 模块 (10 个):
+   - terrain_create
+   - terrain_get_info
+   - terrain_get_height
+   - terrain_set_height
+   - terrain_set_heights_batch
+   - terrain_add_hill
+   - terrain_generate_perlin
+   - terrain_smooth
+   - terrain_flatten
+   - terrain_paint_texture
+
+【结论】
+真实的 Skill 数量: 147 个
+
+这包括：
+- 126 个在文档和代码中都有的 Skills
+- 21 个在代码中新增但文档未更新的 Skills
+- 48 个在文档中声称但代码中未实现的 Skills
+
+【建议】
+1. 更新主文档 SKILL.md，添加 21 个新增的 Skills
+2. 实现或移除文档中声称但未实现的 48 个 Skills
+3. 定期同步文档和代码，保持一致性

@@ -1,6 +1,6 @@
 ---
 name: unity-animator
-description: "Create and manage Animator Controllers and parameters."
+description: "Unity Animator Controller management. Use when users want to create animation controllers, add parameters, play animations, or control animation state machines. Triggers: animation, animator, controller, parameter, state machine, blend tree, animation clip."
 ---
 
 # Unity Animator Skills

@@ -1,6 +1,6 @@
 ---
 name: unity-perception
-description: "Scene Understanding Skills - Help AI quickly perceive project state."
+description: "Scene understanding and analysis. Use when users want to get a summary or overview of the current scene state. Triggers: scene summary, analyze, overview, statistics, count."
 ---
 
 # Unity Perception Skills

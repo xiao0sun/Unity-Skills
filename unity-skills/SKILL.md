@@ -1,6 +1,6 @@
 ---
 name: unity-skills
-description: "Unity Editor REST API. BATCH-FIRST: Use *_batch for 2+ objects."
+description: "Unity Editor automation via REST API. Use when users want to create, modify, or manage GameObjects, components, scenes, materials, prefabs, lights, UI elements, or any Unity Editor operations. Triggers on: Unity, GameObject, prefab, scene, material, component, animator, shader, UI canvas, lighting setup, asset import, play mode, editor automation."
 ---
 
 # Unity Skills API
