@@ -15,7 +15,8 @@ namespace UnitySkills
     {
         private static Dictionary<string, SkillInfo> _skills;
         private static bool _initialized;
-        
+        private static string _cachedManifest;
+
         // JSON 序列化设置，禁用 Unicode 转义确保中文正确显示
         private static readonly JsonSerializerSettings _jsonSettings = new JsonSerializerSettings
         {
@@ -64,6 +65,8 @@ namespace UnitySkills
         public static string GetManifest()
         {
             Initialize();
+            if (_cachedManifest != null) return _cachedManifest;
+
             var manifest = new
             {
                 version = "1.4.3",
@@ -82,7 +85,8 @@ namespace UnitySkills
                     })
                 })
             };
-            return JsonConvert.SerializeObject(manifest, Formatting.Indented, _jsonSettings);
+            _cachedManifest = JsonConvert.SerializeObject(manifest, Formatting.Indented, _jsonSettings);
+            return _cachedManifest;
         }
 
         public static string Execute(string name, string json)
@@ -242,6 +246,7 @@ namespace UnitySkills
         {
             _initialized = false;
             _skills = null;
+            _cachedManifest = null;
             Initialize();
         }
 
