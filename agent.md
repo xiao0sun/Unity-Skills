@@ -410,3 +410,24 @@ public static class MyCustomSkills
 # 检查所有版本号是否一致
 grep -rn "1.3.1" --include="*.cs" --include="*.json" --include="*.md" | grep -E "version|版本"
 ```
+
+---
+
+## 🔀 Git 分支规则
+
+> ⚠️ **重要规则**：main 和 beta 分支必须保持线性同步，不使用 merge commit。
+
+### 同步方式
+
+```bash
+git checkout main
+git reset --hard beta
+git push origin main --force
+```
+
+### 规则说明
+
+- main 和 beta 保持相同的提交历史（线性）
+- 不使用 merge commit，使用 `git reset --hard` 让分支指向同一提交
+- 每次提交独立显示，最大化 GitHub 贡献记录
+- 同步后使用 `git push --force` 更新远程
