@@ -2,6 +2,27 @@
 
 All notable changes to **UnitySkills** will be documented in this file.
 
+## [1.4.4] - 2026-02-11
+
+### Added
+- 统一错误响应格式：自动检测并转换 Skill 返回的错误对象
+- 参数验证工具类：`Validate.Required()` 和 `Validate.SafePath()`
+- 请求追踪 ID：每个请求分配唯一 X-Request-Id
+- Agent 标识：支持 X-Agent-Id header 识别调用的 AI 工具
+- 日志级别控制：支持 Off/Error/Warning/Info/Agent/Verbose
+- SkillsLogger 类：统一日志管理
+- 服务端自动工作流记录：修改类 Skill 自动记录历史
+
+### Changed
+- Python 客户端：使用 UTF-8 编码发送 JSON，内置重试逻辑
+- Skill Manifest：添加缓存机制减少开销
+- GameObjectFinder：使用场景根遍历优化性能
+
+### Security
+- 文件路径安全校验：防止路径遍历攻击，限制在 Assets/Packages 目录
+
+---
+
 ## [1.4.3] - 2026-02-09
 
 ### 📝 文档规范化

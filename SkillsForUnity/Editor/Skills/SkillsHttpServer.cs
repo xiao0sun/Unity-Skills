@@ -698,7 +698,7 @@ namespace UnitySkills
                 job.ResponseJson = JsonConvert.SerializeObject(new {
                     status = "ok",
                     service = "UnitySkills",
-                    version = "1.4.3",
+                    version = "1.4.4",
                     unityVersion = Application.unityVersion,
                     instanceId = RegistryService.InstanceId,
                     projectName = RegistryService.ProjectName,

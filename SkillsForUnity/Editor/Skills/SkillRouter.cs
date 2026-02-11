@@ -93,7 +93,7 @@ namespace UnitySkills
 
             var manifest = new
             {
-                version = "1.4.3",
+                version = "1.4.4",
                 unityVersion = Application.unityVersion,
                 totalSkills = _skills.Count,
                 skills = _skills.Values.Select(s => new
