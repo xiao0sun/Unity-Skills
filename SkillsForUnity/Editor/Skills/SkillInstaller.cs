@@ -46,7 +46,7 @@ namespace UnitySkills
             try
             {
                 var targetPath = global ? ClaudeGlobalPath : ClaudeProjectPath;
-                return InstallSkill(targetPath, "Claude Code");
+                return InstallSkill(targetPath, "Claude Code", "ClaudeCode");
             }
             catch (Exception ex)
             {
@@ -59,7 +59,7 @@ namespace UnitySkills
             try
             {
                 var targetPath = global ? AntigravityGlobalPath : AntigravityProjectPath;
-                var res = InstallSkill(targetPath, "Antigravity");
+                var res = InstallSkill(targetPath, "Antigravity", "Antigravity");
                 if (!res.success) return res;
 
                 // Install Workflow for Antigravity slash commands
@@ -118,7 +118,7 @@ namespace UnitySkills
             try
             {
                 var targetPath = global ? GeminiGlobalPath : GeminiProjectPath;
-                return InstallSkill(targetPath, "Gemini CLI");
+                return InstallSkill(targetPath, "Gemini CLI", "Gemini");
             }
             catch (Exception ex)
             {
@@ -144,7 +144,7 @@ namespace UnitySkills
             try
             {
                 var targetPath = global ? CodexGlobalPath : CodexProjectPath;
-                var res = InstallSkill(targetPath, "Codex");
+                var res = InstallSkill(targetPath, "Codex", "Codex");
                 if (!res.success) return res;
 
                 // For project-level install, also update AGENTS.md
@@ -182,14 +182,14 @@ namespace UnitySkills
             }
         }
 
-        public static (bool success, string message) InstallCustom(string path)
+        public static (bool success, string message) InstallCustom(string path, string agentName = "Custom")
         {
             try
             {
-                if (string.IsNullOrEmpty(path)) 
+                if (string.IsNullOrEmpty(path))
                     return (false, "Path cannot be empty");
-                    
-                return InstallSkill(path, "Custom Path");
+
+                return InstallSkill(path, "Custom Path", agentName);
             }
             catch (Exception ex)
             {
@@ -265,7 +265,7 @@ This file declares available skills for AI agents like Codex.
             return (true, targetPath);
         }
 
-        private static (bool success, string message) InstallSkill(string targetPath, string name)
+        private static (bool success, string message) InstallSkill(string targetPath, string name, string agentId)
         {
             if (!Directory.Exists(targetPath))
                 Directory.CreateDirectory(targetPath);
@@ -286,7 +286,11 @@ This file declares available skills for AI agents like Codex.
                 Directory.CreateDirectory(scriptsPath);
             File.WriteAllText(Path.Combine(scriptsPath, "unity_skills.py"), pythonHelper, utf8NoBom);
 
-            Debug.Log("[UnitySkills] Installed skill to: " + targetPath);
+            // Write agent config for automatic agent identification
+            var agentConfig = $"{{\"agentId\": \"{agentId}\", \"installedAt\": \"{DateTime.UtcNow:O}\"}}";
+            File.WriteAllText(Path.Combine(scriptsPath, "agent_config.json"), agentConfig, utf8NoBom);
+
+            Debug.Log($"[UnitySkills] Installed skill to: {targetPath} (Agent: {agentId})");
             return (true, targetPath);
         }
 
@@ -559,6 +563,18 @@ This file declares available skills for AI agents like Codex.
             sb.AppendLine("def get_registry_path():");
             sb.AppendLine("    return os.path.join(os.path.expanduser(\"~\"), \".unity_skills\", \"registry.json\")");
             sb.AppendLine();
+            sb.AppendLine("def _get_agent_id():");
+            sb.AppendLine("    \"\"\"Read agent ID from agent_config.json in the same directory as this script.\"\"\"");
+            sb.AppendLine("    try:");
+            sb.AppendLine("        config_path = os.path.join(os.path.dirname(__file__), 'agent_config.json')");
+            sb.AppendLine("        if os.path.exists(config_path):");
+            sb.AppendLine("            with open(config_path, 'r') as f:");
+            sb.AppendLine("                return json.load(f).get('agentId', 'Unknown')");
+            sb.AppendLine("    except: pass");
+            sb.AppendLine("    return 'Unknown'");
+            sb.AppendLine();
+            sb.AppendLine("AGENT_ID = _get_agent_id()");
+            sb.AppendLine();
 
             // UnitySkills class
             sb.AppendLine("class UnitySkills:");
@@ -616,7 +632,8 @@ This file declares available skills for AI agents like Codex.
             sb.AppendLine("        try:");
             sb.AppendLine("            # Combine verbose into kwargs for JSON body");
             sb.AppendLine("            kwargs['verbose'] = verbose");
-            sb.AppendLine("            response = requests.post(f\"{self.url}/skill/{skill_name}\", json=kwargs, timeout=30)");
+            sb.AppendLine("            headers = {'X-Agent-Id': AGENT_ID}");
+            sb.AppendLine("            response = requests.post(f\"{self.url}/skill/{skill_name}\", json=kwargs, headers=headers, timeout=30)");
             sb.AppendLine("            response.encoding = 'utf-8'  # Ensure correct UTF-8 decoding");
             sb.AppendLine();
             sb.AppendLine("            try:");

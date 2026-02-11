@@ -28,6 +28,7 @@ namespace UnitySkills
         private const double RepaintInterval = 0.5;
         private bool _autoStartServer = true;
         private string _customInstallPath = "";
+        private string _customAgentName = "Custom";
 
         // Colors
         private static readonly Color SuccessColor = new Color(0.3f, 0.8f, 0.4f);
@@ -732,6 +733,11 @@ namespace UnitySkills
             }
             EditorGUILayout.EndHorizontal();
 
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField(Localization.Current == Localization.Language.Chinese ? "Agent:" : "Agent:", GUILayout.Width(50));
+            _customAgentName = EditorGUILayout.TextField(_customAgentName);
+            EditorGUILayout.EndHorizontal();
+
             if (GUILayout.Button(Localization.Current == Localization.Language.Chinese ? "安装 / 更新" : "Install / Update"))
             {
                 if (string.IsNullOrEmpty(_customInstallPath))
@@ -740,7 +746,7 @@ namespace UnitySkills
                 }
                 else
                 {
-                    var result = SkillInstaller.InstallCustom(_customInstallPath);
+                    var result = SkillInstaller.InstallCustom(_customInstallPath, _customAgentName);
                     if (result.success)
                         EditorUtility.DisplayDialog("Success", L("install_success"), "OK");
                     else
