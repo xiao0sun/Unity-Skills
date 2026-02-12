@@ -34,7 +34,7 @@ namespace UnitySkills
         [UnitySkill("delete_object", "Delete a GameObject by name")]
         public static object DeleteObject(string objectName)
         {
-            var (obj, err) = GameObjectFinder.Find(objectName);
+            var (obj, err) = GameObjectFinder.FindOrError(objectName);
             if (err != null) return err;
             WorkflowManager.SnapshotObject(obj);
             Undo.DestroyObjectImmediate(obj);
@@ -58,7 +58,7 @@ namespace UnitySkills
         [UnitySkill("set_object_position", "Set position of a GameObject")]
         public static object SetObjectPosition(string objectName, float x, float y, float z)
         {
-            var (obj, err) = GameObjectFinder.Find(objectName);
+            var (obj, err) = GameObjectFinder.FindOrError(objectName);
             if (err != null) return err;
             Undo.RecordObject(obj.transform, "Set Position");
             obj.transform.position = new Vector3(x, y, z);
@@ -68,7 +68,7 @@ namespace UnitySkills
         [UnitySkill("set_object_rotation", "Set rotation of a GameObject (Euler angles)")]
         public static object SetObjectRotation(string objectName, float x, float y, float z)
         {
-            var (obj, err) = GameObjectFinder.Find(objectName);
+            var (obj, err) = GameObjectFinder.FindOrError(objectName);
             if (err != null) return err;
             Undo.RecordObject(obj.transform, "Set Rotation");
             obj.transform.rotation = Quaternion.Euler(x, y, z);
@@ -78,7 +78,7 @@ namespace UnitySkills
         [UnitySkill("set_object_scale", "Set scale of a GameObject")]
         public static object SetObjectScale(string objectName, float x, float y, float z)
         {
-            var (obj, err) = GameObjectFinder.Find(objectName);
+            var (obj, err) = GameObjectFinder.FindOrError(objectName);
             if (err != null) return err;
             Undo.RecordObject(obj.transform, "Set Scale");
             obj.transform.localScale = new Vector3(x, y, z);
