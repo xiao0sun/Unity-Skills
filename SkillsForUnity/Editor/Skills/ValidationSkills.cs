@@ -203,6 +203,7 @@ namespace UnitySkills
 
             return new
             {
+                success = true,
                 dryRun,
                 emptyFolderCount = emptyFolders.Count,
                 folders = emptyFolders,
@@ -385,6 +386,7 @@ namespace UnitySkills
 
             return new
             {
+                success = true,
                 dryRun,
                 fixedCount = fixedObjects.Count,
                 message = dryRun ? "Dry run - no scripts removed" : $"Removed missing scripts from {fixedObjects.Count} objects",

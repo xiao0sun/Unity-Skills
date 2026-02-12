@@ -63,6 +63,7 @@ namespace UnitySkills
 
             return new
             {
+                success = true,
                 count = modified.Count,
                 message = $"Optimized {modified.Count} textures",
                 modified
@@ -101,6 +102,7 @@ namespace UnitySkills
 
             return new
             {
+                success = true,
                 count = modified.Count,
                 compression = comp.ToString(),
                 modified
