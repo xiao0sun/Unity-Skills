@@ -212,50 +212,19 @@ namespace UnitySkills
         [UnitySkill("light_set_enabled_batch", "Enable/disable multiple lights in one call (Efficient). items: JSON array of {name, instanceId, path, enabled}")]
         public static object LightSetEnabledBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required. Example: [{\"name\":\"Light1\",\"enabled\":false}]" };
-
-            try
+            return BatchExecutor.Execute<BatchLightEnabledItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<System.Collections.Generic.List<BatchLightEnabledItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
+                if (error != null) throw new System.Exception("Object not found");
 
-                var results = new System.Collections.Generic.List<object>();
-                int successCount = 0;
-                int failCount = 0;
+                var light = go.GetComponent<Light>();
+                if (light == null) throw new System.Exception("No Light component");
 
-                foreach (var item in itemList)
-                {
-                    var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
-                    if (error != null)
-                    {
-                        results.Add(new { target = item.name ?? item.path ?? item.instanceId.ToString(), success = false, error = "Object not found" });
-                        failCount++;
-                        continue;
-                    }
-
-                    var light = go.GetComponent<Light>();
-                    if (light == null)
-                    {
-                        results.Add(new { target = go.name, success = false, error = "No Light component" });
-                        failCount++;
-                        continue;
-                    }
-
-                    WorkflowManager.SnapshotObject(light);
-                    Undo.RecordObject(light, "Batch Set Light Enabled");
-                    light.enabled = item.enabled;
-                    results.Add(new { target = go.name, success = true, enabled = item.enabled });
-                    successCount++;
-                }
-
-                return new { success = failCount == 0, totalItems = itemList.Count, successCount, failCount, results };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+                WorkflowManager.SnapshotObject(light);
+                Undo.RecordObject(light, "Batch Set Light Enabled");
+                light.enabled = item.enabled;
+                return new { target = go.name, success = true, enabled = item.enabled };
+            }, item => item.name ?? item.path ?? item.instanceId.ToString());
         }
 
         private class BatchLightEnabledItem
@@ -269,67 +238,36 @@ namespace UnitySkills
         [UnitySkill("light_set_properties_batch", "Set properties for multiple lights in one call (Efficient). items: JSON array of {name, instanceId, r, g, b, intensity, range, shadows}")]
         public static object LightSetPropertiesBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required. Example: [{\"name\":\"Light1\",\"intensity\":2.0}]" };
-
-            try
+            return BatchExecutor.Execute<BatchLightPropsItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<System.Collections.Generic.List<BatchLightPropsItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
+                if (error != null) throw new System.Exception("Object not found");
 
-                var results = new System.Collections.Generic.List<object>();
-                int successCount = 0;
-                int failCount = 0;
+                var light = go.GetComponent<Light>();
+                if (light == null) throw new System.Exception("No Light component");
 
-                foreach (var item in itemList)
+                WorkflowManager.SnapshotObject(light);
+                Undo.RecordObject(light, "Batch Set Light Properties");
+
+                if (item.r.HasValue || item.g.HasValue || item.b.HasValue)
                 {
-                    var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
-                    if (error != null)
+                    var c = light.color;
+                    light.color = new Color(item.r ?? c.r, item.g ?? c.g, item.b ?? c.b);
+                }
+                if (item.intensity.HasValue) light.intensity = item.intensity.Value;
+                if (item.range.HasValue) light.range = item.range.Value;
+                if (!string.IsNullOrEmpty(item.shadows))
+                {
+                    switch (item.shadows.ToLower())
                     {
-                        results.Add(new { target = item.name ?? item.path ?? item.instanceId.ToString(), success = false, error = "Object not found" });
-                        failCount++;
-                        continue;
+                        case "hard": light.shadows = LightShadows.Hard; break;
+                        case "soft": light.shadows = LightShadows.Soft; break;
+                        case "none": light.shadows = LightShadows.None; break;
                     }
-
-                    var light = go.GetComponent<Light>();
-                    if (light == null)
-                    {
-                        results.Add(new { target = go.name, success = false, error = "No Light component" });
-                        failCount++;
-                        continue;
-                    }
-
-                    WorkflowManager.SnapshotObject(light);
-                    Undo.RecordObject(light, "Batch Set Light Properties");
-
-                    if (item.r.HasValue || item.g.HasValue || item.b.HasValue)
-                    {
-                        var c = light.color;
-                        light.color = new Color(item.r ?? c.r, item.g ?? c.g, item.b ?? c.b);
-                    }
-                    if (item.intensity.HasValue) light.intensity = item.intensity.Value;
-                    if (item.range.HasValue) light.range = item.range.Value;
-                    if (!string.IsNullOrEmpty(item.shadows))
-                    {
-                        switch (item.shadows.ToLower())
-                        {
-                            case "hard": light.shadows = LightShadows.Hard; break;
-                            case "soft": light.shadows = LightShadows.Soft; break;
-                            case "none": light.shadows = LightShadows.None; break;
-                        }
-                    }
-
-                    results.Add(new { target = go.name, success = true });
-                    successCount++;
                 }
 
-                return new { success = failCount == 0, totalItems = itemList.Count, successCount, failCount, results };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+                return new { target = go.name, success = true };
+            }, item => item.name ?? item.path ?? item.instanceId.ToString());
         }
 
         private class BatchLightPropsItem

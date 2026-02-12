@@ -19,10 +19,17 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
+__version__ = "1.4.4"
+
 UNITY_URL = "http://localhost:8090"
 DEFAULT_PORT = 8090
 PORT_RANGE_START = 8090
 PORT_RANGE_END = 8100
+
+# Timeout constants (seconds)
+DEFAULT_CALL_TIMEOUT = 30
+HEALTH_TIMEOUT = 2
+SCAN_TIMEOUT = 1
 
 def get_registry_path():
     return os.path.join(os.path.expanduser("~"), ".unity_skills", "registry.json")
@@ -66,7 +73,7 @@ class UnitySkills:
     """
     Client for interacting with a specific Unity Editor instance.
     """
-    def __init__(self, port: int = None, target: str = None, url: str = None, version: str = None, agent_id: str = None):
+    def __init__(self, port: int = None, target: str = None, url: str = None, version: str = None, agent_id: str = None, timeout: int = None):
         """
         Initialize client.
         Args:
@@ -75,13 +82,18 @@ class UnitySkills:
             url: Full URL override.
             version: Connect to instance by Unity version (e.g. "6", "2022", "2022.3") - auto-discovers port.
             agent_id: Custom agent identifier (e.g. "MyScript", "ClaudeCode")
+            timeout: Request timeout in seconds (default: 30)
         Priority: url > port > target > version > default port 8090
         """
         self.url = url
         self.agent_id = agent_id or "Python"
+        self.timeout = timeout or DEFAULT_CALL_TIMEOUT
         # 连接复用：使用 Session 保持 TCP 连接
         self._session = requests.Session()
-        self._session.headers.update({'X-Agent-Id': self.agent_id})
+        self._session.headers.update({
+            'X-Agent-Id': self.agent_id,
+            'User-Agent': f'unity-skills-python/{__version__}',
+        })
 
         if not self.url:
             if port:
@@ -107,10 +119,10 @@ class UnitySkills:
         """扫描 8090-8100，返回第一个响应的端口"""
         for port in range(PORT_RANGE_START, PORT_RANGE_END + 1):
             try:
-                resp = requests.get(f"http://localhost:{port}/health", timeout=1)
+                resp = requests.get(f"http://localhost:{port}/health", timeout=SCAN_TIMEOUT)
                 if resp.status_code == 200:
                     return port
-            except:
+            except (requests.exceptions.RequestException, ValueError):
                 continue
         return DEFAULT_PORT  # fallback 到 8090
 
@@ -131,7 +143,7 @@ class UnitySkills:
                     if info.get('name') == target:
                         return info.get('port')
                 return None
-        except:
+        except (IOError, json.JSONDecodeError, KeyError):
             return None
 
     def _find_port_by_version(self, version: str) -> Optional[int]:
@@ -151,7 +163,7 @@ class UnitySkills:
             try:
                 with open(reg_path, 'r') as f:
                     registry_data = json.load(f)
-            except:
+            except (IOError, json.JSONDecodeError):
                 registry_data = None
 
         # Stage 1: Check registry unityVersion field
@@ -171,26 +183,26 @@ class UnitySkills:
 
             for port in ports_without_version:
                 try:
-                    resp = requests.get(f"http://localhost:{port}/health", timeout=2)
+                    resp = requests.get(f"http://localhost:{port}/health", timeout=HEALTH_TIMEOUT)
                     if resp.status_code == 200:
                         health_data = resp.json()
                         health_version = health_data.get('unityVersion')
                         if health_version and _version_matches(health_version, version):
                             return port
-                except:
+                except (requests.exceptions.RequestException, ValueError):
                     continue
 
         # Stage 3: Scan port range (fallback when registry is empty/missing)
         if not registry_data:
             for port in range(PORT_RANGE_START, PORT_RANGE_END + 1):
                 try:
-                    resp = requests.get(f"http://localhost:{port}/health", timeout=1)
+                    resp = requests.get(f"http://localhost:{port}/health", timeout=SCAN_TIMEOUT)
                     if resp.status_code == 200:
                         health_data = resp.json()
                         health_version = health_data.get('unityVersion')
                         if health_version and _version_matches(health_version, version):
                             return port
-                except:
+                except (requests.exceptions.RequestException, ValueError):
                     continue
 
         return None
@@ -218,7 +230,7 @@ class UnitySkills:
                     f"{self.url}/skill/{skill_name}",
                     data=json_data.encode('utf-8'),
                     headers={'Content-Type': 'application/json; charset=utf-8'},
-                    timeout=30
+                    timeout=self.timeout
                 )
                 response.encoding = 'utf-8'  # 确保正确解码UTF-8
 
@@ -349,7 +361,7 @@ def list_instances() -> list:
         with open(reg_path, 'r') as f:
             data = json.load(f)
             return list(data.values())
-    except:
+    except (IOError, json.JSONDecodeError):
         return []
 
 def call_skill(skill_name: str, **kwargs) -> Dict[str, Any]:
@@ -425,9 +437,14 @@ def call_skill_with_retry(skill_name: str, max_retries: int = 3, retry_delay: fl
     """Call a Unity skill with automatic retry logic for Domain Reload scenarios."""
     for attempt in range(max_retries):
         result = call_skill(skill_name, **kwargs)
-        # 检查success字段而不是error字段
-        if result.get('success') or ('error' not in result or 'Cannot connect' not in result.get('error', '')):
+
+        is_connection_error = (
+            not result.get('success')
+            and 'Cannot connect' in result.get('error', '')
+        )
+        if not is_connection_error:
             return result
+
         if attempt < max_retries - 1:
             time.sleep(retry_delay)
     return result
@@ -435,7 +452,7 @@ def call_skill_with_retry(skill_name: str, max_retries: int = 3, retry_delay: fl
 def get_skills() -> Dict[str, Any]:
     """Get list of all available skills from the current default client."""
     try:
-        response = requests.get(f"{_get_default_client().url}/skills", timeout=5)
+        response = requests.get(f"{_get_default_client().url}/skills", timeout=DEFAULT_CALL_TIMEOUT)
         response.encoding = 'utf-8'
         return response.json()
     except Exception as e:
@@ -444,10 +461,10 @@ def get_skills() -> Dict[str, Any]:
 def health() -> bool:
     """Check if the current default Unity server is running."""
     try:
-        response = requests.get(f"{_get_default_client().url}/health", timeout=2)
+        response = requests.get(f"{_get_default_client().url}/health", timeout=HEALTH_TIMEOUT)
         response.encoding = 'utf-8'
         return response.json().get("status") == "ok"
-    except:
+    except (requests.exceptions.RequestException, ValueError):
         return False
 
 # ============================================================

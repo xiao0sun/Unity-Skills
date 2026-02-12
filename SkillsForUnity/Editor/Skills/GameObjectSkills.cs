@@ -14,85 +14,47 @@ namespace UnitySkills
         [UnitySkill("gameobject_create_batch", "Create multiple GameObjects in one call (Efficient). items: JSON array of {name, primitiveType, x, y, z}")]
         public static object GameObjectCreateBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required. Example: [{\"name\":\"Cube1\",\"primitiveType\":\"Cube\",\"x\":0,\"y\":0,\"z\":0}]" };
-
-            try
+            return BatchExecutor.Execute<BatchCreateItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchCreateItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                GameObject go;
+                string primitiveType = item.primitiveType;
 
-                var results = new List<object>();
-                int successCount = 0;
-                int failCount = 0;
-
-                foreach (var item in itemList)
+                // Support "Empty", "", or null to create an empty GameObject
+                if (string.IsNullOrEmpty(primitiveType) ||
+                    primitiveType.Equals("Empty", System.StringComparison.OrdinalIgnoreCase) ||
+                    primitiveType.Equals("None", System.StringComparison.OrdinalIgnoreCase))
                 {
-                    try
-                    {
-                        GameObject go;
-                        string primitiveType = item.primitiveType;
-
-                        // Support "Empty", "", or null to create an empty GameObject
-                        if (string.IsNullOrEmpty(primitiveType) ||
-                            primitiveType.Equals("Empty", System.StringComparison.OrdinalIgnoreCase) ||
-                            primitiveType.Equals("None", System.StringComparison.OrdinalIgnoreCase))
-                        {
-                            go = new GameObject(item.name);
-                            primitiveType = null; // 标准化为 null
-                        }
-                        else if (System.Enum.TryParse<PrimitiveType>(primitiveType, true, out var pt))
-                        {
-                            go = GameObject.CreatePrimitive(pt);
-                            go.name = item.name;
-                        }
-                        else
-                        {
-                            results.Add(new { name = item.name, success = false, error = $"Unknown primitive type: {primitiveType}" });
-                            failCount++;
-                            continue;
-                        }
-
-                        go.transform.position = new Vector3(item.x, item.y, item.z);
-                        if (item.rotX != 0 || item.rotY != 0 || item.rotZ != 0)
-                            go.transform.eulerAngles = new Vector3(item.rotX, item.rotY, item.rotZ);
-                        if (item.scaleX != 1 || item.scaleY != 1 || item.scaleZ != 1)
-                            go.transform.localScale = new Vector3(item.scaleX, item.scaleY, item.scaleZ);
-
-                        Undo.RegisterCreatedObjectUndo(go, "Batch Create " + item.name);
-                        WorkflowManager.SnapshotCreatedGameObject(go, primitiveType);
-
-                        results.Add(new
-                        {
-                            success = true,
-                            name = go.name,
-                            instanceId = go.GetInstanceID(),
-                            path = GameObjectFinder.GetPath(go),
-                            position = new { x = item.x, y = item.y, z = item.z }
-                        });
-                        successCount++;
-                    }
-                    catch (System.Exception ex)
-                    {
-                        results.Add(new { name = item.name, success = false, error = ex.Message });
-                        failCount++;
-                    }
+                    go = new GameObject(item.name);
+                    primitiveType = null; // 标准化为 null
                 }
+                else if (System.Enum.TryParse<PrimitiveType>(primitiveType, true, out var pt))
+                {
+                    go = GameObject.CreatePrimitive(pt);
+                    go.name = item.name;
+                }
+                else
+                {
+                    throw new System.Exception($"Unknown primitive type: {primitiveType}");
+                }
+
+                go.transform.position = new Vector3(item.x, item.y, item.z);
+                if (item.rotX != 0 || item.rotY != 0 || item.rotZ != 0)
+                    go.transform.eulerAngles = new Vector3(item.rotX, item.rotY, item.rotZ);
+                if (item.scaleX != 1 || item.scaleY != 1 || item.scaleZ != 1)
+                    go.transform.localScale = new Vector3(item.scaleX, item.scaleY, item.scaleZ);
+
+                Undo.RegisterCreatedObjectUndo(go, "Batch Create " + item.name);
+                WorkflowManager.SnapshotCreatedGameObject(go, primitiveType);
 
                 return new
                 {
-                    success = failCount == 0,
-                    totalItems = itemList.Count,
-                    successCount,
-                    failCount,
-                    results
+                    success = true,
+                    name = go.name,
+                    instanceId = go.GetInstanceID(),
+                    path = GameObjectFinder.GetPath(go),
+                    position = new { x = item.x, y = item.y, z = item.z }
                 };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+            }, item => item.name);
         }
 
         private class BatchCreateItem
@@ -172,66 +134,21 @@ namespace UnitySkills
         [UnitySkill("gameobject_rename_batch", "Rename multiple GameObjects in one call (Efficient). items: JSON array of {name, instanceId, path, newName}. Returns array with oldName, newName for each.")]
         public static object GameObjectRenameBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required. Example: [{\"instanceId\":12345,\"newName\":\"Cube_01\"}]" };
-
-            try
+            return BatchExecutor.Execute<BatchRenameItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchRenameItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                if (string.IsNullOrEmpty(item.newName))
+                    throw new System.Exception("newName is required");
 
-                var results = new List<object>();
-                int successCount = 0;
-                int failCount = 0;
+                var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
+                if (error != null) throw new System.Exception("Object not found");
 
-                foreach (var item in itemList)
-                {
-                    try
-                    {
-                        if (string.IsNullOrEmpty(item.newName))
-                        {
-                            results.Add(new { target = item.name ?? item.path ?? item.instanceId.ToString(), success = false, error = "newName is required" });
-                            failCount++;
-                            continue;
-                        }
+                var oldName = go.name;
+                WorkflowManager.SnapshotObject(go);
+                Undo.RecordObject(go, "Batch Rename " + go.name);
+                go.name = item.newName;
 
-                        var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
-                        if (error != null)
-                        {
-                            results.Add(new { target = item.name ?? item.path ?? item.instanceId.ToString(), success = false, error = "Object not found" });
-                            failCount++;
-                            continue;
-                        }
-
-                        var oldName = go.name;
-                        WorkflowManager.SnapshotObject(go);
-                        Undo.RecordObject(go, "Batch Rename " + go.name);
-                        go.name = item.newName;
-
-                        results.Add(new { success = true, oldName, newName = go.name, instanceId = go.GetInstanceID() });
-                        successCount++;
-                    }
-                    catch (System.Exception ex)
-                    {
-                        results.Add(new { target = item.name ?? item.path, success = false, error = ex.Message });
-                        failCount++;
-                    }
-                }
-
-                return new
-                {
-                    success = failCount == 0,
-                    totalItems = itemList.Count,
-                    successCount,
-                    failCount,
-                    results
-                };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+                return new { success = true, oldName, newName = go.name, instanceId = go.GetInstanceID() };
+            }, item => item.name ?? item.path ?? item.instanceId.ToString());
         }
 
         private class BatchRenameItem
@@ -257,8 +174,7 @@ namespace UnitySkills
         [UnitySkill("gameobject_delete_batch", "Delete multiple GameObjects. items: JSON array of strings (names) or objects {name, instanceId, path}")]
         public static object GameObjectDeleteBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required. Example: [\"Cube1\", \"Cube2\"] or [{\"name\":\"Cube1\"}, {\"name\":\"Cube2\"}]" };
+            if (Validate.RequiredJsonArray(items, "items") is object err) return err;
 
             try
             {
@@ -547,116 +463,75 @@ namespace UnitySkills
         [UnitySkill("gameobject_set_transform_batch", "Set transform properties for multiple objects (Efficient). items: JSON array of objects with optional fields (name, posX, rotX, scaleX, etc.)")]
         public static object GameObjectSetTransformBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required. Example: [{\"name\":\"Cube1\",\"posX\":10},{\"name\":\"Cube2\",\"posY\":5}]" };
-
-            try
+            return BatchExecutor.Execute<BatchTransformItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchTransformItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
+                if (error != null) throw new System.Exception("Object not found");
 
-                var results = new List<object>();
-                int successCount = 0;
-                int failCount = 0;
+                WorkflowManager.SnapshotObject(go.transform);
+                Undo.RecordObject(go.transform, "Batch Set Transform");
 
-                foreach (var item in itemList)
+                var rt = go.GetComponent<RectTransform>();
+                bool isUI = rt != null;
+
+                // World position
+                if (item.posX.HasValue || item.posY.HasValue || item.posZ.HasValue)
                 {
-                    try
-                    {
-                        var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
-                        if (error != null)
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = "Object not found" });
-                            failCount++;
-                            continue;
-                        }
+                    var pos = go.transform.position;
+                    go.transform.position = new Vector3(
+                        item.posX ?? pos.x,
+                        item.posY ?? pos.y,
+                        item.posZ ?? pos.z);
+                }
 
-                        WorkflowManager.SnapshotObject(go.transform);
-                        Undo.RecordObject(go.transform, "Batch Set Transform");
+                // Local position
+                if (item.localPosX.HasValue || item.localPosY.HasValue || item.localPosZ.HasValue)
+                {
+                    var pos = go.transform.localPosition;
+                    go.transform.localPosition = new Vector3(
+                        item.localPosX ?? pos.x,
+                        item.localPosY ?? pos.y,
+                        item.localPosZ ?? pos.z);
+                }
 
-                        var rt = go.GetComponent<RectTransform>();
-                        bool isUI = rt != null;
+                // Rotation
+                if (item.rotX.HasValue || item.rotY.HasValue || item.rotZ.HasValue)
+                {
+                    var rot = go.transform.eulerAngles;
+                    go.transform.eulerAngles = new Vector3(
+                        item.rotX ?? rot.x,
+                        item.rotY ?? rot.y,
+                        item.rotZ ?? rot.z);
+                }
 
-                        // World position
-                        if (item.posX.HasValue || item.posY.HasValue || item.posZ.HasValue)
-                        {
-                            var pos = go.transform.position;
-                            go.transform.position = new Vector3(
-                                item.posX ?? pos.x,
-                                item.posY ?? pos.y,
-                                item.posZ ?? pos.z);
-                        }
+                // Scale
+                if (item.scaleX.HasValue || item.scaleY.HasValue || item.scaleZ.HasValue)
+                {
+                    var scale = go.transform.localScale;
+                    go.transform.localScale = new Vector3(
+                        item.scaleX ?? scale.x,
+                        item.scaleY ?? scale.y,
+                        item.scaleZ ?? scale.z);
+                }
 
-                        // Local position
-                        if (item.localPosX.HasValue || item.localPosY.HasValue || item.localPosZ.HasValue)
-                        {
-                            var pos = go.transform.localPosition;
-                            go.transform.localPosition = new Vector3(
-                                item.localPosX ?? pos.x,
-                                item.localPosY ?? pos.y,
-                                item.localPosZ ?? pos.z);
-                        }
+                // UI Specifics
+                if (isUI)
+                {
+                    if (item.width.HasValue)
+                        rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, item.width.Value);
+                    if (item.height.HasValue)
+                        rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, item.height.Value);
 
-                        // Rotation
-                        if (item.rotX.HasValue || item.rotY.HasValue || item.rotZ.HasValue)
-                        {
-                            var rot = go.transform.eulerAngles;
-                            go.transform.eulerAngles = new Vector3(
-                                item.rotX ?? rot.x,
-                                item.rotY ?? rot.y,
-                                item.rotZ ?? rot.z);
-                        }
-
-                        // Scale
-                        if (item.scaleX.HasValue || item.scaleY.HasValue || item.scaleZ.HasValue)
-                        {
-                            var scale = go.transform.localScale;
-                            go.transform.localScale = new Vector3(
-                                item.scaleX ?? scale.x,
-                                item.scaleY ?? scale.y,
-                                item.scaleZ ?? scale.z);
-                        }
-
-                        // UI Specifics
-                        if (isUI)
-                        {
-                            if (item.width.HasValue) 
-                                rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, item.width.Value);
-                            if (item.height.HasValue) 
-                                rt.SetSizeWithCurrentAnchors(RectTransform.Axis.Vertical, item.height.Value);
-                            
-                            // Add other UI properties as needed (keeping batch item lightweight for now)
-                        }
-
-                        results.Add(new
-                        {
-                            success = true,
-                            name = go.name,
-                            pos = new { x = go.transform.position.x, y = go.transform.position.y, z = go.transform.position.z }
-                        });
-                        successCount++;
-                    }
-                    catch (System.Exception ex)
-                    {
-                        results.Add(new { target = item.name ?? item.path, success = false, error = ex.Message });
-                        failCount++;
-                    }
+                    // Add other UI properties as needed (keeping batch item lightweight for now)
                 }
 
                 return new
                 {
-                    success = failCount == 0,
-                    totalItems = itemList.Count,
-                    successCount,
-                    failCount,
-                    results
+                    success = true,
+                    name = go.name,
+                    pos = new { x = go.transform.position.x, y = go.transform.position.y, z = go.transform.position.z }
                 };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+            }, item => item.name ?? item.path);
         }
 
         private class BatchTransformItem
@@ -709,66 +584,25 @@ namespace UnitySkills
         [UnitySkill("gameobject_duplicate_batch", "Duplicate multiple GameObjects in one call (Efficient). items: JSON array of {name, instanceId, path}. Returns array with originalName, copyName, copyInstanceId for each.")]
         public static object GameObjectDuplicateBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required. Example: [{\"name\":\"Cube1\"},{\"instanceId\":12345}]" };
-
-            try
+            return BatchExecutor.Execute<BatchDuplicateItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchDuplicateItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
+                if (error != null) throw new System.Exception("Object not found");
 
-                var results = new List<object>();
-                int successCount = 0;
-                int failCount = 0;
-
-                foreach (var item in itemList)
-                {
-                    try
-                    {
-                        var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
-                        if (error != null)
-                        {
-                            results.Add(new { target = item.name ?? item.path ?? item.instanceId.ToString(), success = false, error = "Object not found" });
-                            failCount++;
-                            continue;
-                        }
-
-                        var copy = Object.Instantiate(go, go.transform.parent);
-                        copy.name = go.name + "_Copy";
-                        Undo.RegisterCreatedObjectUndo(copy, "Batch Duplicate " + go.name);
-                        WorkflowManager.SnapshotObject(copy, SnapshotType.Created);
-
-                        results.Add(new
-                        {
-                            success = true,
-                            originalName = go.name,
-                            copyName = copy.name,
-                            copyInstanceId = copy.GetInstanceID(),
-                            copyPath = GameObjectFinder.GetPath(copy)
-                        });
-                        successCount++;
-                    }
-                    catch (System.Exception ex)
-                    {
-                        results.Add(new { target = item.name ?? item.path, success = false, error = ex.Message });
-                        failCount++;
-                    }
-                }
+                var copy = Object.Instantiate(go, go.transform.parent);
+                copy.name = go.name + "_Copy";
+                Undo.RegisterCreatedObjectUndo(copy, "Batch Duplicate " + go.name);
+                WorkflowManager.SnapshotObject(copy, SnapshotType.Created);
 
                 return new
                 {
-                    success = failCount == 0,
-                    totalItems = itemList.Count,
-                    successCount,
-                    failCount,
-                    results
+                    success = true,
+                    originalName = go.name,
+                    copyName = copy.name,
+                    copyInstanceId = copy.GetInstanceID(),
+                    copyPath = GameObjectFinder.GetPath(copy)
                 };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+            }, item => item.name ?? item.path ?? item.instanceId.ToString());
         }
 
         private class BatchDuplicateItem
@@ -854,57 +688,16 @@ namespace UnitySkills
         [UnitySkill("gameobject_set_active_batch", "Enable or disable multiple GameObjects. items: JSON array of {name, active}")]
         public static object GameObjectSetActiveBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required. Example: [{\"name\":\"Cube1\",\"active\":true},{\"name\":\"Cube2\",\"active\":false}]" };
-
-            try
+            return BatchExecutor.Execute<BatchSetActiveItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchSetActiveItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
+                if (error != null) throw new System.Exception("Object not found");
 
-                var results = new List<object>();
-                int successCount = 0;
-                int failCount = 0;
-
-                foreach (var item in itemList)
-                {
-                    try
-                    {
-                        var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
-                        if (error != null)
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = "Object not found" });
-                            failCount++;
-                            continue;
-                        }
-
-                        WorkflowManager.SnapshotObject(go);
-                        Undo.RecordObject(go, "Batch Set Active");
-                        go.SetActive(item.active);
-                        results.Add(new { target = go.name, success = true, active = item.active });
-                        successCount++;
-                    }
-                    catch (System.Exception ex)
-                    {
-                        results.Add(new { target = item.name ?? item.path, success = false, error = ex.Message });
-                        failCount++;
-                    }
-                }
-
-                return new
-                {
-                    success = failCount == 0,
-                    totalItems = itemList.Count,
-                    successCount,
-                    failCount,
-                    results
-                };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+                WorkflowManager.SnapshotObject(go);
+                Undo.RecordObject(go, "Batch Set Active");
+                go.SetActive(item.active);
+                return new { target = go.name, success = true, active = item.active };
+            }, item => item.name ?? item.path);
         }
 
         public class BatchSetActiveItem
@@ -918,75 +711,30 @@ namespace UnitySkills
         [UnitySkill("gameobject_set_layer_batch", "Set layer for multiple GameObjects. items: JSON array of {name, layer, recursive}")]
         public static object GameObjectSetLayerBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required." };
-
-            try
+            return BatchExecutor.Execute<BatchSetLayerItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchSetLayerItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
+                if (error != null) throw new System.Exception("Object not found");
 
-                var results = new List<object>();
-                int successCount = 0;
-                int failCount = 0;
+                int layerId = LayerMask.NameToLayer(item.layer);
+                if (layerId == -1)
+                    throw new System.Exception($"Layer not found: {item.layer}");
 
-                foreach (var item in itemList)
+                WorkflowManager.SnapshotObject(go);
+                Undo.RecordObject(go, "Batch Set Layer");
+                go.layer = layerId;
+
+                if (item.recursive)
                 {
-                    try
+                    foreach (Transform child in go.GetComponentsInChildren<Transform>(true))
                     {
-                        var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
-                        if (error != null)
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = "Object not found" });
-                            failCount++;
-                            continue;
-                        }
-
-                        int layerId = LayerMask.NameToLayer(item.layer);
-                        if (layerId == -1)
-                        {
-                             results.Add(new { target = go.name, success = false, error = $"Layer not found: {item.layer}" });
-                             failCount++;
-                             continue;
-                        }
-
-                        WorkflowManager.SnapshotObject(go);
-                        Undo.RecordObject(go, "Batch Set Layer");
-                        go.layer = layerId;
-
-                        if (item.recursive)
-                        {
-                            foreach (Transform child in go.GetComponentsInChildren<Transform>(true))
-                            {
-                                Undo.RecordObject(child.gameObject, "Batch Set Layer Recursive");
-                                child.gameObject.layer = layerId;
-                            }
-                        }
-
-                        results.Add(new { target = go.name, success = true, layer = item.layer });
-                        successCount++;
-                    }
-                    catch (System.Exception ex)
-                    {
-                        results.Add(new { target = item.name ?? item.path, success = false, error = ex.Message });
-                        failCount++;
+                        Undo.RecordObject(child.gameObject, "Batch Set Layer Recursive");
+                        child.gameObject.layer = layerId;
                     }
                 }
 
-                return new
-                {
-                    success = failCount == 0,
-                    totalItems = itemList.Count,
-                    successCount,
-                    failCount,
-                    results
-                };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+                return new { target = go.name, success = true, layer = item.layer };
+            }, item => item.name ?? item.path);
         }
 
         private class BatchSetLayerItem
@@ -1001,65 +749,16 @@ namespace UnitySkills
         [UnitySkill("gameobject_set_tag_batch", "Set tag for multiple GameObjects. items: JSON array of {name, tag}")]
         public static object GameObjectSetTagBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required." };
-
-            try
+            return BatchExecutor.Execute<BatchSetTagItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchSetTagItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
+                if (error != null) throw new System.Exception("Object not found");
 
-                var results = new List<object>();
-                int successCount = 0;
-                int failCount = 0;
-
-                foreach (var item in itemList)
-                {
-                    try
-                    {
-                        var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
-                        if (error != null)
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = "Object not found" });
-                            failCount++;
-                            continue;
-                        }
-
-                        WorkflowManager.SnapshotObject(go);
-                        Undo.RecordObject(go, "Batch Set Tag");
-                        try
-                        {
-                            go.tag = item.tag;
-                            results.Add(new { target = go.name, success = true, tag = item.tag });
-                            successCount++;
-                        }
-                        catch
-                        {
-                             results.Add(new { target = go.name, success = false, error = $"Tag not defined in Unity: {item.tag}" });
-                             failCount++;
-                        }
-                    }
-                    catch (System.Exception ex)
-                    {
-                        results.Add(new { target = item.name ?? item.path, success = false, error = ex.Message });
-                        failCount++;
-                    }
-                }
-
-                return new
-                {
-                    success = failCount == 0,
-                    totalItems = itemList.Count,
-                    successCount,
-                    failCount,
-                    results
-                };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+                WorkflowManager.SnapshotObject(go);
+                Undo.RecordObject(go, "Batch Set Tag");
+                go.tag = item.tag;
+                return new { target = go.name, success = true, tag = item.tag };
+            }, item => item.name ?? item.path);
         }
 
         private class BatchSetTagItem
@@ -1073,73 +772,29 @@ namespace UnitySkills
         [UnitySkill("gameobject_set_parent_batch", "Set parent for multiple GameObjects. items: JSON array of {childName, parentName, ...}")]
         public static object GameObjectSetParentBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required." };
-
-            try
+            return BatchExecutor.Execute<BatchSetParentItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchSetParentItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                var (child, childError) = GameObjectFinder.FindOrError(item.childName, item.childInstanceId, item.childPath);
+                if (childError != null) throw new System.Exception("Child object not found");
 
-                var results = new List<object>();
-                int successCount = 0;
-                int failCount = 0;
-
-                foreach (var item in itemList)
+                Transform parent = null;
+                if (!string.IsNullOrEmpty(item.parentName) || item.parentInstanceId != 0 || !string.IsNullOrEmpty(item.parentPath))
                 {
-                    try
-                    {
-                        var (child, childError) = GameObjectFinder.FindOrError(item.childName, item.childInstanceId, item.childPath);
-                        if (childError != null)
-                        {
-                             results.Add(new { target = item.childName ?? item.childPath, success = false, error = "Child object not found" });
-                             failCount++;
-                             continue;
-                        }
-
-                        Transform parent = null;
-                        if (!string.IsNullOrEmpty(item.parentName) || item.parentInstanceId != 0 || !string.IsNullOrEmpty(item.parentPath))
-                        {
-                            var (parentGo, parentError) = GameObjectFinder.FindOrError(item.parentName, item.parentInstanceId, item.parentPath);
-                            if (parentError != null)
-                            {
-                                 results.Add(new { target = item.childName, success = false, error = $"Parent not found: {item.parentName ?? item.parentPath}" });
-                                 failCount++;
-                                 continue;
-                            }
-                            parent = parentGo.transform;
-                        }
-
-                        WorkflowManager.SnapshotObject(child.transform);
-                        Undo.SetTransformParent(child.transform, parent, "Batch Set Parent");
-                        results.Add(new { 
-                            target = child.name, 
-                            success = true, 
-                            parent = parent?.name ?? "(root)" 
-                        });
-                        successCount++;
-                    }
-                    catch (System.Exception ex)
-                    {
-                        results.Add(new { target = item.childName ?? item.childPath, success = false, error = ex.Message });
-                        failCount++;
-                    }
+                    var (parentGo, parentError) = GameObjectFinder.FindOrError(item.parentName, item.parentInstanceId, item.parentPath);
+                    if (parentError != null)
+                        throw new System.Exception($"Parent not found: {item.parentName ?? item.parentPath}");
+                    parent = parentGo.transform;
                 }
 
+                WorkflowManager.SnapshotObject(child.transform);
+                Undo.SetTransformParent(child.transform, parent, "Batch Set Parent");
                 return new
                 {
-                    success = failCount == 0,
-                    totalItems = itemList.Count,
-                    successCount,
-                    failCount,
-                    results
+                    target = child.name,
+                    success = true,
+                    parent = parent?.name ?? "(root)"
                 };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+            }, item => item.childName ?? item.childPath);
         }
 
         private class BatchSetParentItem

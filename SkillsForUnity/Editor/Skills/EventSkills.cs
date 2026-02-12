@@ -217,8 +217,7 @@ namespace UnitySkills
 
             if (unityEvent == null) return new { error = "UnityEvent not found" };
 
-            if (index < 0 || index >= unityEvent.GetPersistentEventCount())
-                return new { error = $"Index {index} out of range (count: {unityEvent.GetPersistentEventCount()})" };
+            if (Validate.InRange(index, 0, unityEvent.GetPersistentEventCount() - 1, "index") is object rangeErr) return rangeErr;
 
             WorkflowManager.SnapshotObject(component);
             Undo.RecordObject(component, "Remove Event Listener");

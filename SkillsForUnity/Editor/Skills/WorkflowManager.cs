@@ -13,13 +13,6 @@ namespace UnitySkills
         private static WorkflowTask _currentTask;
         private static string _currentSessionId;
 
-        // Log prefix constants with colors (Unity rich text)
-        private const string LOG_PREFIX = "<color=#4A9EFF>[UnitySkills]</color>";
-        private const string LOG_SUCCESS = "<color=#5EE05E>[UnitySkills]</color>";
-        private const string LOG_WARNING = "<color=#FFB347>[UnitySkills]</color>";
-        private const string LOG_ERROR = "<color=#FF6B6B>[UnitySkills]</color>";
-        private const string LOG_WORKFLOW = "<color=#E091FF>[UnitySkills]</color>";
-
         // Path to store the history file (Library folder persists but is local)
         private static string HistoryFilePath => Path.Combine(Application.dataPath, "../Library/UnitySkills/workflow_history.json");
 
@@ -64,7 +57,7 @@ namespace UnitySkills
                 }
                 catch (Exception e)
                 {
-                    Debug.LogError($"{LOG_ERROR} Failed to load workflow history: {e.Message}");
+                    Debug.LogError($"{SkillsLogger.PREFIX_ERROR} Failed to load workflow history: {e.Message}");
                     _history = new WorkflowHistoryData();
                 }
             }
@@ -87,7 +80,7 @@ namespace UnitySkills
             }
             catch (Exception e)
             {
-                Debug.LogError($"{LOG_ERROR} Failed to save workflow history: {e.Message}");
+                Debug.LogError($"{SkillsLogger.PREFIX_ERROR} Failed to save workflow history: {e.Message}");
             }
         }
 
@@ -185,7 +178,7 @@ namespace UnitySkills
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { SkillsLogger.LogVerbose($"Snapshot serialization failed for {obj.name}: {ex.Message}"); }
 
             _currentTask.snapshots.Add(new ObjectSnapshot
             {
@@ -312,7 +305,7 @@ namespace UnitySkills
                         json = EditorJsonUtility.ToJson(comp)
                     });
                 }
-                catch { }
+                catch { /* Some components may not be serializable, skip safely */ }
             }
 
             _currentTask.snapshots.Add(snapshot);
@@ -377,24 +370,7 @@ namespace UnitySkills
                         // Save transform and components for GameObjects
                         if (createdObj is GameObject go)
                         {
-                            var t = go.transform;
-                            redoSnapshot.posX = t.position.x; redoSnapshot.posY = t.position.y; redoSnapshot.posZ = t.position.z;
-                            redoSnapshot.rotX = t.rotation.x; redoSnapshot.rotY = t.rotation.y; redoSnapshot.rotZ = t.rotation.z; redoSnapshot.rotW = t.rotation.w;
-                            redoSnapshot.scaleX = t.localScale.x; redoSnapshot.scaleY = t.localScale.y; redoSnapshot.scaleZ = t.localScale.z;
-
-                            foreach (var comp in go.GetComponents<Component>())
-                            {
-                                if (comp == null || comp is Transform) continue;
-                                try
-                                {
-                                    redoSnapshot.components.Add(new ComponentData
-                                    {
-                                        typeName = comp.GetType().AssemblyQualifiedName,
-                                        json = EditorJsonUtility.ToJson(comp)
-                                    });
-                                }
-                                catch { }
-                            }
+                            redoSnapshot = CaptureGameObjectState(go, redoSnapshot);
                         }
 
                         redoTask.snapshots.Add(redoSnapshot);
@@ -453,45 +429,7 @@ namespace UnitySkills
                 else
                 {
                     // This was an existing object that was modified
-                    if (!GlobalObjectId.TryParse(snapshot.globalObjectId, out GlobalObjectId gid))
-                        continue;
-
-                    var obj = GlobalObjectId.GlobalObjectIdentifierToObjectSlow(gid);
-                    if (obj == null) continue;
-
-                    // Capture current state for redo (including asset bytes)
-                    string currentAssetBytes = "";
-                    if (!string.IsNullOrEmpty(snapshot.assetPath) && !snapshot.assetPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
-                    {
-                        string fullPath = Path.Combine(Application.dataPath, "..", snapshot.assetPath);
-                        if (File.Exists(fullPath))
-                            currentAssetBytes = Convert.ToBase64String(File.ReadAllBytes(fullPath));
-                    }
-
-                    redoTask.snapshots.Add(new ObjectSnapshot
-                    {
-                        globalObjectId = snapshot.globalObjectId,
-                        originalJson = EditorJsonUtility.ToJson(obj),
-                        objectName = snapshot.objectName,
-                        typeName = snapshot.typeName,
-                        type = SnapshotType.Modified,
-                        assetPath = snapshot.assetPath,
-                        assetBytesBase64 = currentAssetBytes
-                    });
-
-                    // Restore from asset bytes backup if available
-                    if (!string.IsNullOrEmpty(snapshot.assetBytesBase64) && !string.IsNullOrEmpty(snapshot.assetPath))
-                    {
-                        string fullPath = Path.Combine(Application.dataPath, "..", snapshot.assetPath);
-                        File.WriteAllBytes(fullPath, Convert.FromBase64String(snapshot.assetBytesBase64));
-                        AssetDatabase.ImportAsset(snapshot.assetPath);
-                    }
-                    else
-                    {
-                        Undo.RecordObject(obj, "Undo Workflow Modification");
-                        EditorJsonUtility.FromJsonOverwrite(snapshot.originalJson, obj);
-                        EditorUtility.SetDirty(obj);
-                    }
+                    RestoreModifiedSnapshot(snapshot, redoTask, "Undo Workflow Modification");
                 }
             }
 
@@ -569,83 +507,19 @@ namespace UnitySkills
                     }
                     else if (snapshot.typeName == "GameObject")
                     {
-                        // Re-create GameObject using stored primitiveType
-                        GameObject newGo = null;
-
-                        if (!string.IsNullOrEmpty(snapshot.primitiveType) &&
-                            Enum.TryParse<PrimitiveType>(snapshot.primitiveType, out var pt))
-                        {
-                            newGo = GameObject.CreatePrimitive(pt);
-                        }
-                        else
-                        {
-                            newGo = new GameObject();
-                        }
-
-                        newGo.name = snapshot.objectName;
-
-                        // Restore transform from stored data
-                        newGo.transform.position = new Vector3(snapshot.posX, snapshot.posY, snapshot.posZ);
-                        newGo.transform.rotation = new Quaternion(snapshot.rotX, snapshot.rotY, snapshot.rotZ, snapshot.rotW);
-                        newGo.transform.localScale = new Vector3(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
-
-                        // Restore all components
-                        if (snapshot.components != null)
-                        {
-                            foreach (var compData in snapshot.components)
-                            {
-                                if (string.IsNullOrEmpty(compData.typeName)) continue;
-                                var compType = Type.GetType(compData.typeName);
-                                if (compType == null) compType = ComponentSkills.FindComponentType(compData.typeName);
-                                if (compType == null) continue;
-
-                                // Skip if component already exists (e.g., MeshRenderer on primitives)
-                                var existing = newGo.GetComponent(compType);
-                                if (existing != null)
-                                {
-                                    if (!string.IsNullOrEmpty(compData.json))
-                                        EditorJsonUtility.FromJsonOverwrite(compData.json, existing);
-                                }
-                                else
-                                {
-                                    var comp = newGo.AddComponent(compType);
-                                    if (comp != null && !string.IsNullOrEmpty(compData.json))
-                                        EditorJsonUtility.FromJsonOverwrite(compData.json, comp);
-                                }
-                            }
-                        }
-
-                        Undo.RegisterCreatedObjectUndo(newGo, "Redo Create " + snapshot.objectName);
+                        // Re-create GameObject using stored primitiveType, transform, and components
+                        var newGo = RecreateGameObject(snapshot);
 
                         // Record for future undo
-                        var t = newGo.transform;
-                        var newSnapshot = new ObjectSnapshot
+                        var newSnapshot = CaptureGameObjectState(newGo, new ObjectSnapshot
                         {
                             globalObjectId = GlobalObjectId.GetGlobalObjectIdSlow(newGo).ToString(),
                             originalJson = EditorJsonUtility.ToJson(newGo),
                             objectName = newGo.name,
                             typeName = "GameObject",
                             type = SnapshotType.Created,
-                            primitiveType = snapshot.primitiveType,
-                            posX = t.position.x, posY = t.position.y, posZ = t.position.z,
-                            rotX = t.rotation.x, rotY = t.rotation.y, rotZ = t.rotation.z, rotW = t.rotation.w,
-                            scaleX = t.localScale.x, scaleY = t.localScale.y, scaleZ = t.localScale.z,
-                            components = new List<ComponentData>()
-                        };
-
-                        foreach (var comp in newGo.GetComponents<Component>())
-                        {
-                            if (comp == null || comp is Transform) continue;
-                            try
-                            {
-                                newSnapshot.components.Add(new ComponentData
-                                {
-                                    typeName = comp.GetType().AssemblyQualifiedName,
-                                    json = EditorJsonUtility.ToJson(comp)
-                                });
-                            }
-                            catch { }
-                        }
+                            primitiveType = snapshot.primitiveType
+                        });
 
                         newTask.snapshots.Add(newSnapshot);
                     }
@@ -676,51 +550,13 @@ namespace UnitySkills
                     }
                     else
                     {
-                        Debug.LogWarning($"{LOG_WARNING} Cannot recreate object: {snapshot.objectName} (type: {snapshot.typeName})");
+                        Debug.LogWarning($"{SkillsLogger.PREFIX_WARNING} Cannot recreate object: {snapshot.objectName} (type: {snapshot.typeName})");
                     }
                 }
                 else
                 {
                     // Restore modified object to its post-modification state
-                    if (!GlobalObjectId.TryParse(snapshot.globalObjectId, out GlobalObjectId gid))
-                        continue;
-
-                    var obj = GlobalObjectId.GlobalObjectIdentifierToObjectSlow(gid);
-                    if (obj == null) continue;
-
-                    // Save current state for future undo (including asset bytes)
-                    string currentAssetBytes = "";
-                    if (!string.IsNullOrEmpty(snapshot.assetPath) && !snapshot.assetPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
-                    {
-                        string fullPath = Path.Combine(Application.dataPath, "..", snapshot.assetPath);
-                        if (File.Exists(fullPath))
-                            currentAssetBytes = Convert.ToBase64String(File.ReadAllBytes(fullPath));
-                    }
-
-                    newTask.snapshots.Add(new ObjectSnapshot
-                    {
-                        globalObjectId = snapshot.globalObjectId,
-                        originalJson = EditorJsonUtility.ToJson(obj),
-                        objectName = snapshot.objectName,
-                        typeName = snapshot.typeName,
-                        type = SnapshotType.Modified,
-                        assetPath = snapshot.assetPath,
-                        assetBytesBase64 = currentAssetBytes
-                    });
-
-                    // Restore from asset bytes backup if available
-                    if (!string.IsNullOrEmpty(snapshot.assetBytesBase64) && !string.IsNullOrEmpty(snapshot.assetPath))
-                    {
-                        string fullPath = Path.Combine(Application.dataPath, "..", snapshot.assetPath);
-                        File.WriteAllBytes(fullPath, Convert.FromBase64String(snapshot.assetBytesBase64));
-                        AssetDatabase.ImportAsset(snapshot.assetPath);
-                    }
-                    else
-                    {
-                        Undo.RecordObject(obj, "Redo Workflow Modification");
-                        EditorJsonUtility.FromJsonOverwrite(snapshot.originalJson, obj);
-                        EditorUtility.SetDirty(obj);
-                    }
+                    RestoreModifiedSnapshot(snapshot, newTask, "Redo Workflow Modification");
                 }
             }
 
@@ -788,7 +624,7 @@ namespace UnitySkills
             BeginTask(sessionTag ?? "Session", $"Session started at {DateTime.Now:HH:mm:ss}");
             _currentTask.sessionId = _currentSessionId;
 
-            Debug.Log($"{LOG_WORKFLOW} Session started: <b>{_currentSessionId}</b>");
+            Debug.Log($"{SkillsLogger.PREFIX_WORKFLOW} Session started: <b>{_currentSessionId}</b>");
             return _currentSessionId;
         }
 
@@ -806,7 +642,7 @@ namespace UnitySkills
                 EndTask();
             }
 
-            Debug.Log($"{LOG_WORKFLOW} Session ended: <b>{_currentSessionId}</b>");
+            Debug.Log($"{SkillsLogger.PREFIX_WORKFLOW} Session ended: <b>{_currentSessionId}</b>");
             _currentSessionId = null;
         }
 
@@ -825,7 +661,7 @@ namespace UnitySkills
 
             if (sessionTasks.Count == 0)
             {
-                Debug.LogWarning($"{LOG_WARNING} No tasks found for session: {sessionId}");
+                Debug.LogWarning($"{SkillsLogger.PREFIX_WARNING} No tasks found for session: {sessionId}");
                 return false;
             }
 
@@ -868,7 +704,7 @@ namespace UnitySkills
             _history.tasks.RemoveAll(t => t.sessionId == sessionId);
             SaveHistory();
 
-            Debug.Log($"{LOG_SUCCESS} Session undone: <b>{sessionId}</b>, {undoneCount} changes reverted");
+            Debug.Log($"{SkillsLogger.PREFIX_SUCCESS} Session undone: <b>{sessionId}</b>, {undoneCount} changes reverted");
             return true;
         }
 
@@ -917,7 +753,7 @@ namespace UnitySkills
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"{LOG_WARNING} Failed to undo snapshot {snapshot.objectName}: {ex.Message}");
+                Debug.LogWarning($"{SkillsLogger.PREFIX_WARNING} Failed to undo snapshot {snapshot.objectName}: {ex.Message}");
                 return false;
             }
         }
@@ -987,6 +823,153 @@ namespace UnitySkills
             EditorJsonUtility.FromJsonOverwrite(snapshot.originalJson, obj);
             EditorUtility.SetDirty(obj);
             return true;
+        }
+
+        /// <summary>
+        /// Captures transform and component data from a live GameObject into a new ObjectSnapshot,
+        /// copying base fields from the provided baseSnapshot.
+        /// </summary>
+        private static ObjectSnapshot CaptureGameObjectState(GameObject go, ObjectSnapshot baseSnapshot)
+        {
+            var t = go.transform;
+            var result = new ObjectSnapshot
+            {
+                globalObjectId = baseSnapshot.globalObjectId,
+                originalJson = baseSnapshot.originalJson,
+                objectName = baseSnapshot.objectName,
+                typeName = baseSnapshot.typeName,
+                type = baseSnapshot.type,
+                componentTypeName = baseSnapshot.componentTypeName,
+                parentGameObjectId = baseSnapshot.parentGameObjectId,
+                assetPath = baseSnapshot.assetPath,
+                assetBytesBase64 = baseSnapshot.assetBytesBase64,
+                primitiveType = baseSnapshot.primitiveType,
+                posX = t.position.x, posY = t.position.y, posZ = t.position.z,
+                rotX = t.rotation.x, rotY = t.rotation.y, rotZ = t.rotation.z, rotW = t.rotation.w,
+                scaleX = t.localScale.x, scaleY = t.localScale.y, scaleZ = t.localScale.z,
+                components = new List<ComponentData>()
+            };
+
+            foreach (var comp in go.GetComponents<Component>())
+            {
+                if (comp == null || comp is Transform) continue;
+                try
+                {
+                    result.components.Add(new ComponentData
+                    {
+                        typeName = comp.GetType().AssemblyQualifiedName,
+                        json = EditorJsonUtility.ToJson(comp)
+                    });
+                }
+                catch { /* Some components may not be serializable, skip safely */ }
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Captures the current state of a modified object into targetTask, then restores
+        /// the snapshot data (via asset-bytes file write or JSON overlay).
+        /// </summary>
+        private static bool RestoreModifiedSnapshot(ObjectSnapshot snapshot, WorkflowTask targetTask, string undoLabel)
+        {
+            if (!GlobalObjectId.TryParse(snapshot.globalObjectId, out GlobalObjectId gid))
+                return false;
+
+            var obj = GlobalObjectId.GlobalObjectIdentifierToObjectSlow(gid);
+            if (obj == null) return false;
+
+            // Capture current state for the target task (including asset bytes)
+            string currentAssetBytes = "";
+            if (!string.IsNullOrEmpty(snapshot.assetPath) && !snapshot.assetPath.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+            {
+                string fullPath = Path.Combine(Application.dataPath, "..", snapshot.assetPath);
+                if (File.Exists(fullPath))
+                    currentAssetBytes = Convert.ToBase64String(File.ReadAllBytes(fullPath));
+            }
+
+            targetTask.snapshots.Add(new ObjectSnapshot
+            {
+                globalObjectId = snapshot.globalObjectId,
+                originalJson = EditorJsonUtility.ToJson(obj),
+                objectName = snapshot.objectName,
+                typeName = snapshot.typeName,
+                type = SnapshotType.Modified,
+                assetPath = snapshot.assetPath,
+                assetBytesBase64 = currentAssetBytes
+            });
+
+            // Restore from asset bytes backup if available
+            if (!string.IsNullOrEmpty(snapshot.assetBytesBase64) && !string.IsNullOrEmpty(snapshot.assetPath))
+            {
+                string fullPath = Path.Combine(Application.dataPath, "..", snapshot.assetPath);
+                File.WriteAllBytes(fullPath, Convert.FromBase64String(snapshot.assetBytesBase64));
+                AssetDatabase.ImportAsset(snapshot.assetPath);
+            }
+            else
+            {
+                Undo.RecordObject(obj, undoLabel);
+                EditorJsonUtility.FromJsonOverwrite(snapshot.originalJson, obj);
+                EditorUtility.SetDirty(obj);
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Recreates a GameObject from snapshot data (primitiveType, transform, components).
+        /// Registers the new object with Unity's Undo system.
+        /// </summary>
+        private static GameObject RecreateGameObject(ObjectSnapshot snapshot)
+        {
+            GameObject newGo;
+
+            if (!string.IsNullOrEmpty(snapshot.primitiveType) &&
+                Enum.TryParse<PrimitiveType>(snapshot.primitiveType, out var pt))
+            {
+                newGo = GameObject.CreatePrimitive(pt);
+            }
+            else
+            {
+                newGo = new GameObject();
+            }
+
+            newGo.name = snapshot.objectName;
+
+            // Restore transform from stored data
+            newGo.transform.position = new Vector3(snapshot.posX, snapshot.posY, snapshot.posZ);
+            newGo.transform.rotation = new Quaternion(snapshot.rotX, snapshot.rotY, snapshot.rotZ, snapshot.rotW);
+            newGo.transform.localScale = new Vector3(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
+
+            // Restore all components
+            if (snapshot.components != null)
+            {
+                foreach (var compData in snapshot.components)
+                {
+                    if (string.IsNullOrEmpty(compData.typeName)) continue;
+                    var compType = Type.GetType(compData.typeName);
+                    if (compType == null) compType = ComponentSkills.FindComponentType(compData.typeName);
+                    if (compType == null) continue;
+
+                    // Skip if component already exists (e.g., MeshRenderer on primitives)
+                    var existing = newGo.GetComponent(compType);
+                    if (existing != null)
+                    {
+                        if (!string.IsNullOrEmpty(compData.json))
+                            EditorJsonUtility.FromJsonOverwrite(compData.json, existing);
+                    }
+                    else
+                    {
+                        var comp = newGo.AddComponent(compType);
+                        if (comp != null && !string.IsNullOrEmpty(compData.json))
+                            EditorJsonUtility.FromJsonOverwrite(compData.json, comp);
+                    }
+                }
+            }
+
+            Undo.RegisterCreatedObjectUndo(newGo, "Redo Create " + snapshot.objectName);
+
+            return newGo;
         }
 
         #endregion

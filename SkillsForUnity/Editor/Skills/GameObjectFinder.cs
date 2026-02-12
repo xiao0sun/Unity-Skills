@@ -18,6 +18,41 @@ namespace UnitySkills
             string.IsNullOrEmpty(value) ? new { error = $"{paramName} is required" } : null;
 
         /// <summary>
+        /// Check if a JSON array parameter is provided and non-empty.
+        /// Usage: if (Validate.RequiredJsonArray(items, "items") is object err) return err;
+        /// </summary>
+        public static object RequiredJsonArray(string jsonArray, string paramName)
+        {
+            if (string.IsNullOrEmpty(jsonArray))
+                return new { error = $"{paramName} is required" };
+            var trimmed = jsonArray.Trim();
+            if (trimmed == "[]" || trimmed == "null")
+                return new { error = $"{paramName} must be a non-empty array" };
+            return null;
+        }
+
+        /// <summary>
+        /// Validate that a numeric value is within range (inclusive).
+        /// Usage: if (Validate.InRange(count, 1, 100, "count") is object err) return err;
+        /// </summary>
+        public static object InRange(float value, float min, float max, string paramName)
+        {
+            if (value < min || value > max)
+                return new { error = $"{paramName} must be between {min} and {max}, got {value}" };
+            return null;
+        }
+
+        /// <summary>
+        /// Validate that an integer value is within range (inclusive).
+        /// </summary>
+        public static object InRange(int value, int min, int max, string paramName)
+        {
+            if (value < min || value > max)
+                return new { error = $"{paramName} must be between {min} and {max}, got {value}" };
+            return null;
+        }
+
+        /// <summary>
         /// Validate asset path for safety. Prevents path traversal and restricts to Assets/Packages.
         /// Usage: if (Validate.SafePath(path, "path") is object err) return err;
         /// </summary>
@@ -56,11 +91,30 @@ namespace UnitySkills
     /// </summary>
     public static class GameObjectFinder
     {
+        // Frame-level cache for GetAllSceneObjects - valid only within a single request cycle
+        private static List<GameObject> _cachedSceneObjects;
+        private static int _cacheFrame = -1;
+
         /// <summary>
-        /// Efficiently iterate all GameObjects in scene using root traversal (faster than FindObjectsOfType)
+        /// Invalidate the scene objects cache. Should be called after each request cycle.
+        /// </summary>
+        public static void InvalidateCache()
+        {
+            _cachedSceneObjects = null;
+            _cacheFrame = -1;
+        }
+
+        /// <summary>
+        /// Efficiently iterate all GameObjects in scene using root traversal (faster than FindObjectsOfType).
+        /// Results are cached per-frame to avoid repeated traversals within the same request.
         /// </summary>
         private static IEnumerable<GameObject> GetAllSceneObjects()
         {
+            int currentFrame = UnityEngine.Time.frameCount;
+            if (_cachedSceneObjects != null && _cacheFrame == currentFrame)
+                return _cachedSceneObjects;
+
+            var result = new List<GameObject>();
             var roots = UnityEngine.SceneManagement.SceneManager.GetActiveScene().GetRootGameObjects();
             var stack = new Stack<Transform>();
             foreach (var root in roots)
@@ -69,10 +123,14 @@ namespace UnitySkills
             while (stack.Count > 0)
             {
                 var t = stack.Pop();
-                yield return t.gameObject;
+                result.Add(t.gameObject);
                 foreach (Transform child in t)
                     stack.Push(child);
             }
+
+            _cachedSceneObjects = result;
+            _cacheFrame = currentFrame;
+            return result;
         }
 
         /// <summary>
@@ -243,7 +301,7 @@ namespace UnitySkills
             if (!string.IsNullOrEmpty(tag))
             {
                 try { results = GameObject.FindGameObjectsWithTag(tag); }
-                catch { results = new GameObject[0]; }
+                catch { results = new GameObject[0]; } // Tag may not exist
             }
             else if (includeInactive)
             {
@@ -366,7 +424,7 @@ namespace UnitySkills
             if (go != null) return go;
 
             // Try as tag
-            try { go = GameObject.FindGameObjectWithTag(query); if (go != null) return go; } catch { }
+            try { go = GameObject.FindGameObjectWithTag(query); if (go != null) return go; } catch { /* Tag may not exist */ }
 
             // Try finding "Main Camera" variations
             if (query.Equals("camera", System.StringComparison.OrdinalIgnoreCase) ||
@@ -384,7 +442,7 @@ namespace UnitySkills
             // Try finding "Player" variations
             if (query.IndexOf("player", System.StringComparison.OrdinalIgnoreCase) >= 0)
             {
-                try { go = GameObject.FindGameObjectWithTag("Player"); if (go != null) return go; } catch { }
+                try { go = GameObject.FindGameObjectWithTag("Player"); if (go != null) return go; } catch { /* Tag may not exist */ }
             }
 
             // Try case-insensitive contains

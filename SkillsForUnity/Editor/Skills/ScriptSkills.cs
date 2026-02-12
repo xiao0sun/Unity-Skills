@@ -82,59 +82,14 @@ public class {CLASS} : MonoBehaviour
         [UnitySkill("script_create_batch", "Create multiple scripts (Efficient). items: JSON array of {scriptName, folder, template, namespace}")]
         public static object ScriptCreateBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required." };
-
-            try
+            return BatchExecutor.Execute<BatchScriptItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<System.Collections.Generic.List<BatchScriptItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
-
-                var results = new System.Collections.Generic.List<object>();
-                int successCount = 0;
-                int failCount = 0;
-
-                foreach (var item in itemList)
-                {
-                    try
-                    {
-                        var result = ScriptCreate(item.scriptName, item.folder ?? "Assets/Scripts", item.template, item.namespaceName);
-                        
-                        // Check if result is error anonymously
-                        var json = Newtonsoft.Json.JsonConvert.SerializeObject(result);
-                        if (json.Contains("\"error\""))
-                        {
-                            results.Add(new { target = item.scriptName, success = false, error = json });
-                            failCount++;
-                        }
-                        else
-                        {
-                            results.Add(result);
-                            successCount++;
-                        }
-                    }
-                    catch (System.Exception ex)
-                    {
-                        results.Add(new { target = item.scriptName, success = false, error = ex.Message });
-                        failCount++;
-                    }
-                }
-
-                return new
-                {
-                    success = failCount == 0,
-                    totalItems = itemList.Count,
-                    successCount,
-                    failCount,
-                    results,
-                    message = "Scripts created. Expect Domain Reload."
-                };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+                var result = ScriptCreate(item.scriptName, item.folder ?? "Assets/Scripts", item.template, item.namespaceName);
+                var json = Newtonsoft.Json.JsonConvert.SerializeObject(result);
+                if (json.Contains("\"error\""))
+                    throw new System.Exception(((dynamic)result).error);
+                return result;
+            }, item => item.scriptName);
         }
 
         private class BatchScriptItem

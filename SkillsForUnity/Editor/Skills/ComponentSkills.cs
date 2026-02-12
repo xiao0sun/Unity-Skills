@@ -94,86 +94,30 @@ namespace UnitySkills
         [UnitySkill("component_add_batch", "Add components to multiple GameObjects. items: JSON array of {name, componentType, path}")]
         public static object ComponentAddBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required. Example: [{\"name\":\"Cube1\",\"componentType\":\"Rigidbody\"}]" };
-
-            try
+            return BatchExecutor.Execute<BatchAddComponentItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchAddComponentItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
+                if (error != null) throw new System.Exception("Object not found");
 
-                var results = new List<object>();
-                int successCount = 0;
-                int failCount = 0;
+                if (string.IsNullOrEmpty(item.componentType))
+                    throw new System.Exception("componentType required");
 
-                foreach (var item in itemList)
-                {
-                    try
-                    {
-                        var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
-                        if (error != null)
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = "Object not found" });
-                            failCount++;
-                            continue;
-                        }
+                var type = FindComponentType(item.componentType);
+                if (type == null)
+                    throw new System.Exception($"Component type not found: {item.componentType}");
 
-                        if (string.IsNullOrEmpty(item.componentType))
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = "componentType required" });
-                            failCount++;
-                            continue;
-                        }
+                // Check if component already exists (for single-instance components)
+                if (go.GetComponent(type) != null && !AllowMultiple(type))
+                    return new { target = go.name, success = true, warning = "Component already exists", component = type.Name };
 
-                        var type = FindComponentType(item.componentType);
-                        if (type == null)
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = $"Component type not found: {item.componentType}" });
-                            failCount++;
-                            continue;
-                        }
+                var comp = Undo.AddComponent(go, type);
 
-                        // Check if component already exists (for single-instance components)
-                        if (go.GetComponent(type) != null && !AllowMultiple(type))
-                        {
-                            results.Add(new { target = go.name, success = true, warning = "Component already exists", component = type.Name });
-                            successCount++; // Count as success but with warning
-                            continue;
-                        }
+                if (WorkflowManager.IsRecording)
+                    WorkflowManager.SnapshotCreatedComponent(comp);
 
-                        var comp = Undo.AddComponent(go, type);
-
-                        // Record created component for workflow undo if recording
-                        if (WorkflowManager.IsRecording)
-                        {
-                            WorkflowManager.SnapshotCreatedComponent(comp);
-                        }
-
-                        EditorUtility.SetDirty(go);
-                        results.Add(new { target = go.name, success = true, component = type.Name });
-                        successCount++;
-                    }
-                    catch (System.Exception ex)
-                    {
-                        results.Add(new { target = item.name ?? item.path, success = false, error = ex.Message });
-                        failCount++;
-                    }
-                }
-
-                return new
-                {
-                    success = failCount == 0,
-                    totalItems = itemList.Count,
-                    successCount,
-                    failCount,
-                    results
-                };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+                EditorUtility.SetDirty(go);
+                return new { target = go.name, success = true, component = type.Name };
+            }, item => item.name ?? item.path);
         }
 
         private class BatchAddComponentItem
@@ -224,91 +168,32 @@ namespace UnitySkills
         [UnitySkill("component_remove_batch", "Remove components from multiple GameObjects. items: JSON array of {name, componentType, path}")]
         public static object ComponentRemoveBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                 return new { error = "items parameter is required." };
-
-            try
+            return BatchExecutor.Execute<BatchRemoveComponentItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchRemoveComponentItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
+                if (error != null) throw new System.Exception("Object not found");
 
-                var results = new List<object>();
-                int successCount = 0;
-                int failCount = 0;
+                if (string.IsNullOrEmpty(item.componentType))
+                    throw new System.Exception("componentType required");
 
-                foreach (var item in itemList)
+                var type = FindComponentType(item.componentType);
+                if (type == null)
+                    throw new System.Exception($"Component type not found: {item.componentType}");
+
+                var components = go.GetComponents(type);
+                if (components.Length == 0)
+                    throw new System.Exception($"Component not found: {item.componentType}");
+
+                Undo.RecordObject(go, "Batch Remove Component");
+                foreach (var c in components)
                 {
-                    try
-                    {
-                        var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
-                        if (error != null)
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = "Object not found" });
-                            failCount++;
-                            continue;
-                        }
-
-                        if (string.IsNullOrEmpty(item.componentType))
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = "componentType required" });
-                            failCount++;
-                            continue;
-                        }
-
-                        var type = FindComponentType(item.componentType);
-                        if (type == null)
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = $"Component type not found: {item.componentType}" });
-                            failCount++;
-                            continue;
-                        }
-
-                        var components = go.GetComponents(type);
-                        if (components.Length == 0)
-                        {
-                            results.Add(new { target = go.name, success = false, error = $"Component not found: {item.componentType}" });
-                            failCount++;
-                            continue;
-                        }
-
-                        // Remove all instances of this type? Or just one?
-                        // Batch operation typically implies removing ALL of that type unless specified otherwise.
-                        // For safety, let's remove the first one mostly, or iterate if needed.
-                        // But ComponentRemove (single) removes specific index.
-                        // Let's implement removing ALL components of that type for the batch operation to be powerful cleaning tool.
-
-                        Undo.RecordObject(go, "Batch Remove Component");
-                        foreach (var c in components)
-                        {
-                            WorkflowManager.SnapshotObject(c);
-                            Undo.DestroyObjectImmediate(c);
-                        }
-                        
-                        EditorUtility.SetDirty(go);
-                        results.Add(new { target = go.name, success = true, removed = type.Name, count = components.Length });
-                        successCount++;
-                    }
-                    catch (System.Exception ex)
-                    {
-                        results.Add(new { target = item.name ?? item.path, success = false, error = ex.Message });
-                        failCount++;
-                    }
+                    WorkflowManager.SnapshotObject(c);
+                    Undo.DestroyObjectImmediate(c);
                 }
 
-                return new
-                {
-                    success = failCount == 0,
-                    totalItems = itemList.Count,
-                    successCount,
-                    failCount,
-                    results
-                };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+                EditorUtility.SetDirty(go);
+                return new { target = go.name, success = true, removed = type.Name, count = components.Length };
+            }, item => item.name ?? item.path);
         }
 
         private class BatchRemoveComponentItem
@@ -443,139 +328,66 @@ namespace UnitySkills
         [UnitySkill("component_set_property_batch", "Set properties on multiple components (Efficient). items: JSON array of {name, componentType, propertyName, value, referencePath, referenceName}")]
         public static object ComponentSetPropertyBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required. Example: [{\"name\":\"Cube1\",\"componentType\":\"Light\",\"propertyName\":\"intensity\",\"value\":5.0}]" };
-
-            try
+            return BatchExecutor.Execute<BatchSetPropertyItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchSetPropertyItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                if (string.IsNullOrEmpty(item.componentType) || string.IsNullOrEmpty(item.propertyName))
+                    throw new System.Exception("componentType and propertyName required");
 
-                var results = new List<object>();
-                int successCount = 0;
-                int failCount = 0;
+                var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
+                if (error != null) throw new System.Exception("Object not found");
 
-                foreach (var item in itemList)
+                var type = FindComponentType(item.componentType);
+                if (type == null)
+                    throw new System.Exception($"Component type not found: {item.componentType}");
+
+                var comp = go.GetComponent(type);
+                if (comp == null)
+                    throw new System.Exception($"Component not found: {item.componentType}");
+
+                // Find property or field
+                var prop = type.GetProperty(item.propertyName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                var field = type.GetField(item.propertyName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+                // Case-insensitive fallback
+                if (prop == null && field == null)
                 {
-                    try
-                    {
-                        if (string.IsNullOrEmpty(item.componentType) || string.IsNullOrEmpty(item.propertyName))
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = "componentType and propertyName required" });
-                            failCount++;
-                            continue;
-                        }
-
-                        var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
-                        if (error != null)
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = "Object not found" });
-                            failCount++;
-                            continue;
-                        }
-
-                        var type = FindComponentType(item.componentType);
-                        if (type == null)
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = $"Component type not found: {item.componentType}" });
-                            failCount++;
-                            continue;
-                        }
-                        
-                        var comp = go.GetComponent(type);
-                        if (comp == null)
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = $"Component not found: {item.componentType}" });
-                            failCount++;
-                            continue;
-                        }
-
-                        // Find property or field
-                        var prop = type.GetProperty(item.propertyName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                        var field = type.GetField(item.propertyName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-                        // Case-insensitive fallback
-                        if (prop == null && field == null)
-                        {
-                            prop = type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                                .FirstOrDefault(p => p.Name.Equals(item.propertyName, System.StringComparison.OrdinalIgnoreCase));
-                            field = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                                .FirstOrDefault(f => f.Name.Equals(item.propertyName, System.StringComparison.OrdinalIgnoreCase));
-                        }
-
-                        if (prop == null && field == null)
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = $"Property/field not found: {item.propertyName}" });
-                            failCount++;
-                            continue;
-                        }
-
-                        WorkflowManager.SnapshotObject(comp);
-                        Undo.RecordObject(comp, "Batch Set Property");
-
-                        var targetType = prop?.PropertyType ?? field.FieldType;
-                        object converted;
-
-                        // Handle reference types
-                        if (!string.IsNullOrEmpty(item.referencePath) || !string.IsNullOrEmpty(item.referenceName))
-                        {
-                            converted = ResolveReference(targetType, item.referencePath, item.referenceName);
-                            if (converted == null)
-                            {
-                                results.Add(new { target = item.name ?? item.path, success = false, error = $"Reference resolution failed for {item.propertyName}" });
-                                failCount++;
-                                continue;
-                            }
-                        }
-                        else
-                        {
-                            // Handle primitive value conversion
-                            var valStr = item.value?.ToString();
-                            try {
-                                converted = ConvertValue(valStr, targetType);
-                            } catch (System.Exception ex) {
-                                results.Add(new { target = item.name ?? item.path, success = false, error = $"Conversion error: {ex.Message}" });
-                                failCount++;
-                                continue;
-                            }
-                        }
-
-                        if (prop != null && prop.CanWrite)
-                            prop.SetValue(comp, converted);
-                        else if (field != null)
-                            field.SetValue(comp, converted);
-                        else
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = $"Property {item.propertyName} is read-only" });
-                            failCount++;
-                            continue;
-                        }
-
-                        EditorUtility.SetDirty(comp);
-                        results.Add(new { target = go.name, success = true, property = item.propertyName });
-                        successCount++;
-                    }
-                    catch (System.Exception ex)
-                    {
-                        results.Add(new { target = item.name ?? item.path, success = false, error = ex.Message });
-                        failCount++;
-                    }
+                    prop = type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                        .FirstOrDefault(p => p.Name.Equals(item.propertyName, System.StringComparison.OrdinalIgnoreCase));
+                    field = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                        .FirstOrDefault(f => f.Name.Equals(item.propertyName, System.StringComparison.OrdinalIgnoreCase));
                 }
 
-                return new
+                if (prop == null && field == null)
+                    throw new System.Exception($"Property/field not found: {item.propertyName}");
+
+                WorkflowManager.SnapshotObject(comp);
+                Undo.RecordObject(comp, "Batch Set Property");
+
+                var targetType = prop?.PropertyType ?? field.FieldType;
+                object converted;
+
+                if (!string.IsNullOrEmpty(item.referencePath) || !string.IsNullOrEmpty(item.referenceName))
                 {
-                    success = failCount == 0,
-                    totalItems = itemList.Count,
-                    successCount,
-                    failCount,
-                    results
-                };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+                    converted = ResolveReference(targetType, item.referencePath, item.referenceName);
+                    if (converted == null)
+                        throw new System.Exception($"Reference resolution failed for {item.propertyName}");
+                }
+                else
+                {
+                    var valStr = item.value?.ToString();
+                    converted = ConvertValue(valStr, targetType);
+                }
+
+                if (prop != null && prop.CanWrite)
+                    prop.SetValue(comp, converted);
+                else if (field != null)
+                    field.SetValue(comp, converted);
+                else
+                    throw new System.Exception($"Property {item.propertyName} is read-only");
+
+                EditorUtility.SetDirty(comp);
+                return new { target = go.name, success = true, property = item.propertyName };
+            }, item => item.name ?? item.path);
         }
 
         private class BatchSetPropertyItem

@@ -142,98 +142,39 @@ namespace UnitySkills
         [UnitySkill("audio_set_settings_batch", "Set audio import settings for multiple audio files. items: JSON array of {assetPath, forceToMono, loadType, compressionFormat, quality, ...}")]
         public static object AudioSetSettingsBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required. Example: [{\"assetPath\":\"Assets/Audio/bgm.mp3\",\"loadType\":\"Streaming\"}]" };
-
-            try
+            return BatchExecutor.Execute<BatchAudioItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchAudioItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                var importer = AssetImporter.GetAtPath(item.assetPath) as AudioImporter;
+                if (importer == null)
+                    throw new System.Exception("Not an audio file");
 
-                var results = new List<object>();
-                int successCount = 0;
-                int failCount = 0;
+                if (item.forceToMono.HasValue)
+                    importer.forceToMono = item.forceToMono.Value;
+                if (item.loadInBackground.HasValue)
+                    importer.loadInBackground = item.loadInBackground.Value;
 
-                AssetDatabase.StartAssetEditing();
+                var ss = importer.defaultSampleSettings;
+                bool ssChanged = false;
 
-                try
-                {
-                    foreach (var item in itemList)
-                    {
-                        try
-                        {
-                            var importer = AssetImporter.GetAtPath(item.assetPath) as AudioImporter;
-                            if (importer == null)
-                            {
-                                results.Add(new { path = item.assetPath, success = false, error = "Not an audio file" });
-                                failCount++;
-                                continue;
-                            }
+                if (!string.IsNullOrEmpty(item.loadType) &&
+                    System.Enum.TryParse<AudioClipLoadType>(item.loadType, true, out var lt))
+                { ss.loadType = lt; ssChanged = true; }
 
-                            // Apply basic settings
-                            if (item.forceToMono.HasValue)
-                                importer.forceToMono = item.forceToMono.Value;
-                            if (item.loadInBackground.HasValue)
-                                importer.loadInBackground = item.loadInBackground.Value;
+                if (!string.IsNullOrEmpty(item.compressionFormat) &&
+                    System.Enum.TryParse<AudioCompressionFormat>(item.compressionFormat, true, out var cf))
+                { ss.compressionFormat = cf; ssChanged = true; }
 
-                            // Apply sample settings
-                            var ss = importer.defaultSampleSettings;
-                            bool ssChanged = false;
+                if (item.quality.HasValue)
+                { ss.quality = Mathf.Clamp01(item.quality.Value); ssChanged = true; }
 
-                            if (!string.IsNullOrEmpty(item.loadType) &&
-                                System.Enum.TryParse<AudioClipLoadType>(item.loadType, true, out var lt))
-                            {
-                                ss.loadType = lt;
-                                ssChanged = true;
-                            }
+                if (ssChanged)
+                    importer.defaultSampleSettings = ss;
 
-                            if (!string.IsNullOrEmpty(item.compressionFormat) &&
-                                System.Enum.TryParse<AudioCompressionFormat>(item.compressionFormat, true, out var cf))
-                            {
-                                ss.compressionFormat = cf;
-                                ssChanged = true;
-                            }
-
-                            if (item.quality.HasValue)
-                            {
-                                ss.quality = Mathf.Clamp01(item.quality.Value);
-                                ssChanged = true;
-                            }
-
-                            if (ssChanged)
-                                importer.defaultSampleSettings = ss;
-
-                            importer.SaveAndReimport();
-                            results.Add(new { path = item.assetPath, success = true });
-                            successCount++;
-                        }
-                        catch (System.Exception ex)
-                        {
-                            results.Add(new { path = item.assetPath, success = false, error = ex.Message });
-                            failCount++;
-                        }
-                    }
-                }
-                finally
-                {
-                    AssetDatabase.StopAssetEditing();
-                    AssetDatabase.Refresh();
-                }
-
-                return new
-                {
-                    success = failCount == 0,
-                    totalItems = itemList.Count,
-                    successCount,
-                    failCount,
-                    results
-                };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+                importer.SaveAndReimport();
+                return new { path = item.assetPath, success = true };
+            }, item => item.assetPath,
+            setup: () => AssetDatabase.StartAssetEditing(),
+            teardown: () => { AssetDatabase.StopAssetEditing(); AssetDatabase.Refresh(); });
         }
 
         private class BatchAudioItem

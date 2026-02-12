@@ -628,8 +628,8 @@ namespace UnitySkills
                         return foundGo.GetComponent(destType);
                     }
                 }
-                if (destType.IsEnum) { try { return System.Enum.Parse(destType, val.ToString(), true); } catch { } }
-                try { return JToken.FromObject(val).ToObject(destType); } catch {}
+                if (destType.IsEnum) { try { return System.Enum.Parse(destType, val.ToString(), true); } catch { /* Enum parse fallthrough */ } }
+                try { return JToken.FromObject(val).ToObject(destType); } catch { /* JSON conversion fallthrough */ }
                 try { return System.Convert.ChangeType(val, destType); } catch { return null; }
             }
 
@@ -639,7 +639,7 @@ namespace UnitySkills
                 try {
                     object safeValue = SafeConvert(value, field.FieldType);
                     if (safeValue != null) { field.SetValue(target, safeValue); return true; }
-                } catch { }
+                } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[UnitySkills] Failed to set field '{name}': {ex.Message}"); }
             }
 
             var prop = type.GetProperty(name, flags);
@@ -648,7 +648,8 @@ namespace UnitySkills
                 try {
                     object safeValue = SafeConvert(value, prop.PropertyType);
                     if (safeValue != null) { prop.SetValue(target, safeValue); return true; }
-                } catch { }
+                } catch (Exception ex) { UnityEngine.Debug.LogWarning($"[UnitySkills] Failed to set property '{name}': {ex.Message}"); }
+            }
             }
             return false;
         }

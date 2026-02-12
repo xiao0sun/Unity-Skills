@@ -27,13 +27,6 @@ namespace UnitySkills
     [InitializeOnLoad]
     public static class SkillsHttpServer
     {
-        // Log prefix constants with colors (Unity rich text)
-        private const string LOG_PREFIX = "<color=#4A9EFF>[UnitySkills]</color>";
-        private const string LOG_SUCCESS = "<color=#5EE05E>[UnitySkills]</color>";
-        private const string LOG_WARNING = "<color=#FFB347>[UnitySkills]</color>";
-        private const string LOG_ERROR = "<color=#FF6B6B>[UnitySkills]</color>";
-        private const string LOG_SERVER = "<color=#9B7EFF>[UnitySkills]</color>";
-        private const string LOG_SKILL = "<color=#5EC8E0>[UnitySkills]</color>";
         private static HttpListener _listener;
         private static Thread _listenerThread;
         private static Thread _keepAliveThread;
@@ -54,7 +47,9 @@ namespace UnitySkills
         
         // Keep-alive interval (ms)
         private const int KeepAliveIntervalMs = 50;
-        // Heartbeat interval for registry (ms)
+        // Request processing timeout (ms)
+        private const int RequestTimeoutMs = 60000;
+        // Heartbeat interval for registry (seconds)
         private const double HeartbeatInterval = 10.0;
         private static double _lastHeartbeatTime = 0;
 
@@ -137,6 +132,22 @@ namespace UnitySkills
         // Request ID counter
         private static long _requestIdCounter = 0;
 
+        // Agent detection table - keyword to agent ID mapping
+        private static readonly (string keyword, string agentId)[] _agentKeywords = new[]
+        {
+            ("claude", "ClaudeCode"), ("anthropic", "ClaudeCode"),
+            ("codex", "Codex"), ("openai", "Codex"),
+            ("gemini", "Gemini"), ("google", "Gemini"),
+            ("cursor", "Cursor"),
+            ("trae", "Trae"), ("bytedance", "Trae"),
+            ("antigravity", "Antigravity"),
+            ("windsurf", "Windsurf"), ("codeium", "Windsurf"),
+            ("cline", "Cline"), ("roo", "Cline"),
+            ("amazon", "AmazonQ"), ("aws", "AmazonQ"),
+            ("python-requests", "Python"), ("python", "Python"),
+            ("curl", "curl"),
+        };
+
         /// <summary>
         /// Detect AI Agent from User-Agent or X-Agent-Id header
         /// </summary>
@@ -147,53 +158,15 @@ namespace UnitySkills
             if (!string.IsNullOrEmpty(explicitId))
                 return explicitId;
 
-            // Priority 2: Detect from User-Agent
+            // Priority 2: Detect from User-Agent via table lookup
             var ua = request.UserAgent ?? "";
             var uaLower = ua.ToLowerInvariant();
 
-            // Claude Code / Anthropic
-            if (uaLower.Contains("claude") || uaLower.Contains("anthropic"))
-                return "ClaudeCode";
-
-            // OpenAI Codex / ChatGPT
-            if (uaLower.Contains("codex") || uaLower.Contains("openai"))
-                return "Codex";
-
-            // Google Gemini
-            if (uaLower.Contains("gemini") || uaLower.Contains("google"))
-                return "Gemini";
-
-            // Cursor
-            if (uaLower.Contains("cursor"))
-                return "Cursor";
-
-            // Trae (ByteDance)
-            if (uaLower.Contains("trae") || uaLower.Contains("bytedance"))
-                return "Trae";
-
-            // Antigravity
-            if (uaLower.Contains("antigravity"))
-                return "Antigravity";
-
-            // Windsurf / Codeium
-            if (uaLower.Contains("windsurf") || uaLower.Contains("codeium"))
-                return "Windsurf";
-
-            // Cline / Roo
-            if (uaLower.Contains("cline") || uaLower.Contains("roo"))
-                return "Cline";
-
-            // Amazon Q
-            if (uaLower.Contains("amazon") || uaLower.Contains("aws"))
-                return "AmazonQ";
-
-            // Python requests (likely our unity_skills.py or scripts)
-            if (uaLower.Contains("python-requests") || uaLower.Contains("python"))
-                return "Python";
-
-            // curl
-            if (uaLower.Contains("curl"))
-                return "curl";
+            foreach (var (keyword, agentId) in _agentKeywords)
+            {
+                if (uaLower.Contains(keyword))
+                    return agentId;
+            }
 
             // Unknown
             return string.IsNullOrEmpty(ua) ? "Unknown" : $"Unknown({ua.Substring(0, Math.Min(20, ua.Length))})";
@@ -422,8 +395,8 @@ namespace UnitySkills
             // Unregister from global registry
             RegistryService.Unregister();
 
-            try { _listener?.Stop(); } catch { }
-            try { _listener?.Close(); } catch { }
+            try { _listener?.Stop(); } catch { /* Best-effort cleanup on shutdown */ }
+            try { _listener?.Close(); } catch { /* Best-effort cleanup on shutdown */ }
 
             // Signal all pending jobs to complete with error
             lock (_queueLock)
@@ -552,14 +525,14 @@ namespace UnitySkills
         {
             try
             {
-                // Wait up to 60 seconds for main thread to process
-                bool completed = job.CompletionSignal.Wait(60000);
+                // Wait for main thread to process (with timeout)
+                bool completed = job.CompletionSignal.Wait(RequestTimeoutMs);
                 
                 if (!completed)
                 {
                     job.StatusCode = 504;
                     job.ResponseJson = JsonConvert.SerializeObject(new {
-                        error = "Gateway Timeout: Main thread did not respond within 60 seconds",
+                        error = $"Gateway Timeout: Main thread did not respond within {RequestTimeoutMs / 1000} seconds",
                         suggestion = "Unity Editor may be paused or showing a modal dialog"
                     }, _jsonSettings);
                 }
@@ -611,10 +584,10 @@ namespace UnitySkills
                     response.OutputStream.Write(buffer, 0, buffer.Length);
                 }
             }
-            catch { /* Ignore write errors */ }
+            catch { /* Ignore write errors - client may have disconnected */ }
             finally
             {
-                try { response?.Close(); } catch { }
+                try { response?.Close(); } catch { /* Best-effort cleanup */ }
             }
         }
 
@@ -659,6 +632,7 @@ namespace UnitySkills
                     job.IsProcessed = true;
                     job.CompletionSignal?.Set();
                     Interlocked.Increment(ref _totalRequestsProcessed);
+                    GameObjectFinder.InvalidateCache();
                 }
                 
                 processed++;
@@ -698,7 +672,7 @@ namespace UnitySkills
                 job.ResponseJson = JsonConvert.SerializeObject(new {
                     status = "ok",
                     service = "UnitySkills",
-                    version = "1.4.4",
+                    version = SkillsLogger.Version,
                     unityVersion = Application.unityVersion,
                     instanceId = RegistryService.InstanceId,
                     projectName = RegistryService.ProjectName,

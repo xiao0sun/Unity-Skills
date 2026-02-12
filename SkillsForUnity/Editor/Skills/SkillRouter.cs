@@ -13,9 +13,10 @@ namespace UnitySkills
     /// </summary>
     public static class SkillRouter
     {
-        private static Dictionary<string, SkillInfo> _skills;
-        private static bool _initialized;
+        private static volatile Dictionary<string, SkillInfo> _skills;
+        private static volatile bool _initialized;
         private static string _cachedManifest;
+        private static readonly object _initLock = new object();
 
         // Skills that trigger auto-workflow recording (modification operations)
         private static readonly HashSet<string> _workflowTrackedSkills = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -58,32 +59,39 @@ namespace UnitySkills
         public static void Initialize()
         {
             if (_initialized) return;
-            _skills = new Dictionary<string, SkillInfo>(StringComparer.OrdinalIgnoreCase);
-
-            var allTypes = AppDomain.CurrentDomain.GetAssemblies()
-                .Where(a => !a.IsDynamic)
-                .SelectMany(a => { try { return a.GetTypes(); } catch { return new Type[0]; } });
-
-            foreach (var type in allTypes)
+            lock (_initLock)
             {
-                foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                if (_initialized) return;
+
+                var skills = new Dictionary<string, SkillInfo>(StringComparer.OrdinalIgnoreCase);
+
+                var allTypes = AppDomain.CurrentDomain.GetAssemblies()
+                    .Where(a => !a.IsDynamic)
+                    .SelectMany(a => { try { return a.GetTypes(); } catch { return new Type[0]; } });
+
+                foreach (var type in allTypes)
                 {
-                    var attr = method.GetCustomAttribute<UnitySkillAttribute>();
-                    if (attr != null)
+                    foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Static))
                     {
-                        var name = attr.Name ?? ToSnakeCase(method.Name);
-                        _skills[name] = new SkillInfo
+                        var attr = method.GetCustomAttribute<UnitySkillAttribute>();
+                        if (attr != null)
                         {
-                            Name = name,
-                            Description = attr.Description ?? "",
-                            Method = method,
-                            Parameters = method.GetParameters()
-                        };
+                            var name = attr.Name ?? ToSnakeCase(method.Name);
+                            skills[name] = new SkillInfo
+                            {
+                                Name = name,
+                                Description = attr.Description ?? "",
+                                Method = method,
+                                Parameters = method.GetParameters()
+                            };
+                        }
                     }
                 }
+
+                _skills = skills; // Atomic assignment of fully-built dictionary
+                _initialized = true;
+                SkillsLogger.Log($"Discovered {_skills.Count} skills");
             }
-            _initialized = true;
-            SkillsLogger.Log($"Discovered {_skills.Count} skills");
         }
 
         public static string GetManifest()
@@ -93,7 +101,7 @@ namespace UnitySkills
 
             var manifest = new
             {
-                version = "1.4.4",
+                version = SkillsLogger.Version,
                 unityVersion = Application.unityVersion,
                 totalSkills = _skills.Count,
                 skills = _skills.Values.Select(s => new
@@ -280,9 +288,12 @@ namespace UnitySkills
 
         public static void Refresh()
         {
-            _initialized = false;
-            _skills = null;
-            _cachedManifest = null;
+            lock (_initLock)
+            {
+                _initialized = false;
+                _skills = null;
+                _cachedManifest = null;
+            }
             Initialize();
         }
 

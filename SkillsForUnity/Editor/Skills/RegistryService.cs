@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
+using System.Text;
 using UnityEngine;
 using UnityEditor;
 using Newtonsoft.Json;
@@ -27,9 +29,9 @@ namespace UnitySkills
             ProjectName = Application.productName;
             ProjectPath = Directory.GetParent(Application.dataPath).FullName;
             
-            // Generate stable Instance ID based on path hash to identify this specific project instance
-            // We use a short hash of the path to keep it readable but unique
-            var pathHash = Math.Abs(ProjectPath.GetHashCode()).ToString("X");
+            // Generate stable Instance ID based on SHA256 hash to identify this specific project instance
+            // SHA256 is deterministic across processes/runtimes unlike GetHashCode()
+            var pathHash = ComputeStableHash(ProjectPath);
             // Sanitize project name
             var cleanName = System.Text.RegularExpressions.Regex.Replace(ProjectName, "[^a-zA-Z0-9]", "");
             InstanceId = $"{cleanName}_{pathHash}";
@@ -47,29 +49,29 @@ namespace UnitySkills
         {
             try
             {
-                var registry = LoadRegistry();
-                var info = new InstanceInfo
+                AtomicReadModifyWrite(registry =>
                 {
-                    id = InstanceId,
-                    name = ProjectName,
-                    path = ProjectPath,
-                    port = port,
-                    pid = System.Diagnostics.Process.GetCurrentProcess().Id,
-                    last_active = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                    unityVersion = Application.unityVersion
-                };
+                    var info = new InstanceInfo
+                    {
+                        id = InstanceId,
+                        name = ProjectName,
+                        path = ProjectPath,
+                        port = port,
+                        pid = System.Diagnostics.Process.GetCurrentProcess().Id,
+                        last_active = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                        unityVersion = Application.unityVersion
+                    };
 
-                // Remove entry if it exists (update it)
-                registry[ProjectPath] = info;
-                
-                // Also clean up stale entries (older than 1 minute)
-                // This is a simple form of garbage collection for crashed instances
-                var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                var keysToRemove = registry.Where(k => now - k.Value.last_active > 60 && k.Value.pid != info.pid).Select(k => k.Key).ToList();
-                foreach (var key in keysToRemove)
-                    registry.Remove(key);
+                    registry[ProjectPath] = info;
 
-                SaveRegistry(registry);
+                    // Clean up stale entries (older than 60 seconds)
+                    var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                    var keysToRemove = registry
+                        .Where(k => now - k.Value.last_active > 60 && k.Value.pid != info.pid)
+                        .Select(k => k.Key).ToList();
+                    foreach (var key in keysToRemove)
+                        registry.Remove(key);
+                });
                 SkillsLogger.LogVerbose($"Registered instance '{InstanceId}' on port {port}");
             }
             catch (Exception ex)
@@ -84,53 +86,100 @@ namespace UnitySkills
             {
                 if (!File.Exists(RegistryFile)) return;
 
-                var registry = LoadRegistry();
-                if (registry.ContainsKey(ProjectPath))
+                AtomicReadModifyWrite(registry =>
                 {
                     registry.Remove(ProjectPath);
-                    SaveRegistry(registry);
-                    // Debug.Log($"[UnitySkills] Unregistered instance '{InstanceId}'");
-                }
+                });
             }
             catch (Exception ex)
             {
                 SkillsLogger.LogWarning($"Failed to unregister: {ex.Message}");
             }
         }
-        
+
         public static void Heartbeat(int port)
         {
-             // For now, just re-register which updates the timestamp
+             // Re-register which updates the timestamp
              Register(port);
         }
 
-        private static Dictionary<string, InstanceInfo> LoadRegistry()
+        /// <summary>
+        /// Atomic read-modify-write with cross-process file locking.
+        /// Uses FileStream(FileShare.None) for mutual exclusion and .tmp file for atomic writes.
+        /// </summary>
+        private static void AtomicReadModifyWrite(Action<Dictionary<string, InstanceInfo>> modifier)
         {
-            if (!File.Exists(RegistryFile))
-                return new Dictionary<string, InstanceInfo>();
+            const int maxRetries = 5;
+            const int retryDelayMs = 100;
 
-            try
+            for (int attempt = 0; attempt < maxRetries; attempt++)
             {
-                var json = File.ReadAllText(RegistryFile);
-                return JsonConvert.DeserializeObject<Dictionary<string, InstanceInfo>>(json) 
-                       ?? new Dictionary<string, InstanceInfo>();
+                FileStream lockStream = null;
+                try
+                {
+                    // Acquire exclusive lock on the registry file
+                    lockStream = new FileStream(
+                        RegistryFile,
+                        FileMode.OpenOrCreate,
+                        FileAccess.ReadWrite,
+                        FileShare.None);
+
+                    // Read current content
+                    var registry = new Dictionary<string, InstanceInfo>();
+                    if (lockStream.Length > 0)
+                    {
+                        using (var reader = new StreamReader(lockStream, Encoding.UTF8, true, 4096, leaveOpen: true))
+                        {
+                            var json = reader.ReadToEnd();
+                            registry = JsonConvert.DeserializeObject<Dictionary<string, InstanceInfo>>(json)
+                                       ?? new Dictionary<string, InstanceInfo>();
+                        }
+                    }
+
+                    // Apply modification
+                    modifier(registry);
+
+                    // Write to .tmp file first for atomic replacement
+                    var tmpFile = RegistryFile + ".tmp";
+                    var newJson = JsonConvert.SerializeObject(registry, Formatting.Indented);
+                    File.WriteAllText(tmpFile, newJson, Encoding.UTF8);
+
+                    // Truncate and overwrite the locked file
+                    lockStream.SetLength(0);
+                    lockStream.Seek(0, SeekOrigin.Begin);
+                    var bytes = Encoding.UTF8.GetBytes(newJson);
+                    lockStream.Write(bytes, 0, bytes.Length);
+                    lockStream.Flush();
+
+                    // Clean up tmp file
+                    try { File.Delete(tmpFile); } catch { }
+
+                    return; // Success
+                }
+                catch (IOException) when (attempt < maxRetries - 1)
+                {
+                    // File locked by another process, retry
+                    System.Threading.Thread.Sleep(retryDelayMs * (attempt + 1));
+                }
+                finally
+                {
+                    lockStream?.Dispose();
+                }
             }
-            catch
-            {
-                return new Dictionary<string, InstanceInfo>();
-            }
+
+            throw new IOException($"Failed to acquire lock on registry file after {maxRetries} attempts");
         }
 
-        private static void SaveRegistry(Dictionary<string, InstanceInfo> registry)
+        /// <summary>
+        /// Computes a stable hash string from input using SHA256 (first 4 bytes).
+        /// Unlike GetHashCode(), this is deterministic across processes and runtimes.
+        /// </summary>
+        private static string ComputeStableHash(string input)
         {
-            try
+            using (var sha = SHA256.Create())
             {
-                var json = JsonConvert.SerializeObject(registry, Formatting.Indented);
-                File.WriteAllText(RegistryFile, json);
-            }
-            catch (Exception ex)
-            {
-                SkillsLogger.LogError($"Could not save registry: {ex.Message}");
+                var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(input));
+                return BitConverter.ToString(bytes, 0, 4).Replace("-", "");
             }
         }
 

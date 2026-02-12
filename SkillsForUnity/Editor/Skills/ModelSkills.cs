@@ -236,97 +236,40 @@ namespace UnitySkills
         [UnitySkill("model_set_settings_batch", "Set model import settings for multiple 3D models. items: JSON array of {assetPath, meshCompression, animationType, ...}")]
         public static object ModelSetSettingsBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required. Example: [{\"assetPath\":\"Assets/Models/char.fbx\",\"meshCompression\":\"Medium\"}]" };
-
-            try
+            return BatchExecutor.Execute<BatchModelItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchModelItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                var importer = AssetImporter.GetAtPath(item.assetPath) as ModelImporter;
+                if (importer == null)
+                    throw new System.Exception("Not a model file");
 
-                var results = new List<object>();
-                int successCount = 0;
-                int failCount = 0;
+                var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(item.assetPath);
+                if (asset != null) WorkflowManager.SnapshotObject(asset);
 
-                AssetDatabase.StartAssetEditing();
+                if (item.globalScale.HasValue) importer.globalScale = item.globalScale.Value;
+                if (item.importBlendShapes.HasValue) importer.importBlendShapes = item.importBlendShapes.Value;
+                if (item.importCameras.HasValue) importer.importCameras = item.importCameras.Value;
+                if (item.importLights.HasValue) importer.importLights = item.importLights.Value;
+                if (item.isReadable.HasValue) importer.isReadable = item.isReadable.Value;
+                if (item.generateSecondaryUV.HasValue) importer.generateSecondaryUV = item.generateSecondaryUV.Value;
+                if (item.importAnimation.HasValue) importer.importAnimation = item.importAnimation.Value;
 
-                try
-                {
-                    foreach (var item in itemList)
-                    {
-                        try
-                        {
-                            var importer = AssetImporter.GetAtPath(item.assetPath) as ModelImporter;
-                            if (importer == null)
-                            {
-                                results.Add(new { path = item.assetPath, success = false, error = "Not a model file" });
-                                failCount++;
-                                continue;
-                            }
+                if (!string.IsNullOrEmpty(item.meshCompression) &&
+                    System.Enum.TryParse<ModelImporterMeshCompression>(item.meshCompression, true, out var mc))
+                    importer.meshCompression = mc;
 
-                            // 修改前记录资产状态
-                            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(item.assetPath);
-                            if (asset != null) WorkflowManager.SnapshotObject(asset);
+                if (!string.IsNullOrEmpty(item.animationType) &&
+                    System.Enum.TryParse<ModelImporterAnimationType>(item.animationType, true, out var at))
+                    importer.animationType = at;
 
-                            // Apply settings
-                            if (item.globalScale.HasValue)
-                                importer.globalScale = item.globalScale.Value;
-                            if (item.importBlendShapes.HasValue)
-                                importer.importBlendShapes = item.importBlendShapes.Value;
-                            if (item.importCameras.HasValue)
-                                importer.importCameras = item.importCameras.Value;
-                            if (item.importLights.HasValue)
-                                importer.importLights = item.importLights.Value;
-                            if (item.isReadable.HasValue)
-                                importer.isReadable = item.isReadable.Value;
-                            if (item.generateSecondaryUV.HasValue)
-                                importer.generateSecondaryUV = item.generateSecondaryUV.Value;
-                            if (item.importAnimation.HasValue)
-                                importer.importAnimation = item.importAnimation.Value;
+                if (!string.IsNullOrEmpty(item.materialImportMode) &&
+                    System.Enum.TryParse<ModelImporterMaterialImportMode>(item.materialImportMode, true, out var mim))
+                    importer.materialImportMode = mim;
 
-                            if (!string.IsNullOrEmpty(item.meshCompression) &&
-                                System.Enum.TryParse<ModelImporterMeshCompression>(item.meshCompression, true, out var mc))
-                                importer.meshCompression = mc;
-
-                            if (!string.IsNullOrEmpty(item.animationType) &&
-                                System.Enum.TryParse<ModelImporterAnimationType>(item.animationType, true, out var at))
-                                importer.animationType = at;
-
-                            if (!string.IsNullOrEmpty(item.materialImportMode) &&
-                                System.Enum.TryParse<ModelImporterMaterialImportMode>(item.materialImportMode, true, out var mim))
-                                importer.materialImportMode = mim;
-
-                            importer.SaveAndReimport();
-                            results.Add(new { path = item.assetPath, success = true });
-                            successCount++;
-                        }
-                        catch (System.Exception ex)
-                        {
-                            results.Add(new { path = item.assetPath, success = false, error = ex.Message });
-                            failCount++;
-                        }
-                    }
-                }
-                finally
-                {
-                    AssetDatabase.StopAssetEditing();
-                    AssetDatabase.Refresh();
-                }
-
-                return new
-                {
-                    success = failCount == 0,
-                    totalItems = itemList.Count,
-                    successCount,
-                    failCount,
-                    results
-                };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+                importer.SaveAndReimport();
+                return new { path = item.assetPath, success = true };
+            }, item => item.assetPath,
+            setup: () => AssetDatabase.StartAssetEditing(),
+            teardown: () => { AssetDatabase.StopAssetEditing(); AssetDatabase.Refresh(); });
         }
 
         private class BatchModelItem

@@ -51,98 +51,53 @@ namespace UnitySkills
         [UnitySkill("prefab_instantiate_batch", "Instantiate multiple prefabs (Efficient). items: JSON array of {prefabPath, x, y, z, name, rotX, rotY, rotZ, scaleX, scaleY, scaleZ}")]
         public static object PrefabInstantiateBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required. Example: [{\"prefabPath\":\"Assets/Cube.prefab\",\"x\":0,\"y\":0,\"z\":0}]" };
+            // Cache loaded prefabs to avoid repeated AssetDatabase calls
+            var prefabCache = new System.Collections.Generic.Dictionary<string, GameObject>();
 
-            try
+            return BatchExecutor.Execute<BatchInstantiateItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<System.Collections.Generic.List<BatchInstantiateItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                if (string.IsNullOrEmpty(item.prefabPath))
+                    throw new System.Exception("prefabPath required");
 
-                var results = new System.Collections.Generic.List<object>();
-                int successCount = 0;
-                int failCount = 0;
-
-                // Cache loaded prefabs to avoid repeated AssetDatabase calls
-                var prefabCache = new System.Collections.Generic.Dictionary<string, GameObject>();
-
-                foreach (var item in itemList)
+                if (!prefabCache.TryGetValue(item.prefabPath, out var prefab))
                 {
-                    try
+                    prefab = AssetDatabase.LoadAssetAtPath<GameObject>(item.prefabPath);
+                    if (prefab == null)
                     {
-                        if (string.IsNullOrEmpty(item.prefabPath))
-                        {
-                            results.Add(new { success = false, error = "prefabPath required" });
-                            failCount++;
-                            continue;
-                        }
-
-                        if (!prefabCache.TryGetValue(item.prefabPath, out var prefab))
-                        {
-                            prefab = AssetDatabase.LoadAssetAtPath<GameObject>(item.prefabPath);
-                            if (prefab == null)
-                            {
-                                // Try finding by name if path fails
-                                var guids = AssetDatabase.FindAssets(item.prefabPath + " t:Prefab");
-                                if (guids.Length > 0)
-                                    prefab = AssetDatabase.LoadAssetAtPath<GameObject>(AssetDatabase.GUIDToAssetPath(guids[0]));
-                            }
-                            
-                            if (prefab != null)
-                                prefabCache[item.prefabPath] = prefab;
-                        }
-
-                        if (prefab == null)
-                        {
-                            results.Add(new { target = item.name ?? "unnamed", success = false, error = $"Prefab not found: {item.prefabPath}" });
-                            failCount++;
-                            continue;
-                        }
-
-                        var instance = PrefabUtility.InstantiatePrefab(prefab) as GameObject;
-                        instance.transform.position = new Vector3(item.x, item.y, item.z);
-                        
-                        // Optional rotation and scale
-                        if (item.rotX != 0 || item.rotY != 0 || item.rotZ != 0)
-                            instance.transform.eulerAngles = new Vector3(item.rotX, item.rotY, item.rotZ);
-                        
-                        if (item.scaleX != 1 || item.scaleY != 1 || item.scaleZ != 1)
-                            instance.transform.localScale = new Vector3(item.scaleX, item.scaleY, item.scaleZ);
-                        
-                        if (!string.IsNullOrEmpty(item.name))
-                            instance.name = item.name;
-
-                        Undo.RegisterCreatedObjectUndo(instance, "Batch Instantiate Prefab");
-                        WorkflowManager.SnapshotObject(instance, SnapshotType.Created);
-                        results.Add(new { 
-                            success = true, 
-                            name = instance.name, 
-                            instanceId = instance.GetInstanceID(),
-                            position = new { x = item.x, y = item.y, z = item.z }
-                        });
-                        successCount++;
+                        var guids = AssetDatabase.FindAssets(item.prefabPath + " t:Prefab");
+                        if (guids.Length > 0)
+                            prefab = AssetDatabase.LoadAssetAtPath<GameObject>(AssetDatabase.GUIDToAssetPath(guids[0]));
                     }
-                    catch (System.Exception ex)
-                    {
-                        results.Add(new { target = item.name ?? "unnamed", success = false, error = ex.Message });
-                        failCount++;
-                    }
+
+                    if (prefab != null)
+                        prefabCache[item.prefabPath] = prefab;
                 }
 
+                if (prefab == null)
+                    throw new System.Exception($"Prefab not found: {item.prefabPath}");
+
+                var instance = PrefabUtility.InstantiatePrefab(prefab) as GameObject;
+                instance.transform.position = new Vector3(item.x, item.y, item.z);
+
+                if (item.rotX != 0 || item.rotY != 0 || item.rotZ != 0)
+                    instance.transform.eulerAngles = new Vector3(item.rotX, item.rotY, item.rotZ);
+
+                if (item.scaleX != 1 || item.scaleY != 1 || item.scaleZ != 1)
+                    instance.transform.localScale = new Vector3(item.scaleX, item.scaleY, item.scaleZ);
+
+                if (!string.IsNullOrEmpty(item.name))
+                    instance.name = item.name;
+
+                Undo.RegisterCreatedObjectUndo(instance, "Batch Instantiate Prefab");
+                WorkflowManager.SnapshotObject(instance, SnapshotType.Created);
                 return new
                 {
-                    success = failCount == 0,
-                    totalItems = itemList.Count,
-                    successCount,
-                    failCount,
-                    results
+                    success = true,
+                    name = instance.name,
+                    instanceId = instance.GetInstanceID(),
+                    position = new { x = item.x, y = item.y, z = item.z }
                 };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+            }, item => item.prefabPath);
         }
 
         private class BatchInstantiateItem

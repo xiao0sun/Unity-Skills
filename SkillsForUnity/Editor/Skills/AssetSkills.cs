@@ -68,46 +68,23 @@ namespace UnitySkills
         [UnitySkill("asset_import_batch", "Import multiple assets. items: JSON array of {sourcePath, destinationPath}")]
         public static object AssetImportBatch(string items)
         {
-            if (string.IsNullOrEmpty(items)) return new { error = "items parameter is required." };
-            try {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<System.Collections.Generic.List<BatchImportItem>>(items);
-                if (itemList == null || itemList.Count == 0) return new { error = "items empty" };
-                
-                var results = new System.Collections.Generic.List<object>();
-                int successCount = 0;
-                
-                AssetDatabase.StartAssetEditing();
-                try {
-                    foreach (var item in itemList) {
-                        try {
-                            // 安全校验
-                            if (Validate.SafePath(item.destinationPath, "destinationPath") is object dstErr) {
-                                results.Add(new { target = item.destinationPath, success = false, error = ((dynamic)dstErr).error });
-                                continue;
-                            }
-                            if (!File.Exists(item.sourcePath)) {
-                                results.Add(new { target = item.sourcePath, success = false, error = "File not found" });
-                                continue;
-                            }
-                            var dir = Path.GetDirectoryName(item.destinationPath);
-                            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                            File.Copy(item.sourcePath, item.destinationPath, true);
-                            AssetDatabase.ImportAsset(item.destinationPath);
-                            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(item.destinationPath);
-                            if (asset != null) WorkflowManager.SnapshotCreatedAsset(asset);
-                            results.Add(new { target = item.destinationPath, success = true });
-                            successCount++;
-                        } catch (System.Exception ex) {
-                            results.Add(new { target = item.sourcePath, success = false, error = ex.Message });
-                        }
-                    }
-                } finally {
-                    AssetDatabase.StopAssetEditing();
-                }
-                AssetDatabase.Refresh();
-                
-                return new { success = true, total = itemList.Count, successCount, results };
-            } catch (System.Exception ex) { return new { error = ex.Message }; }
+            return BatchExecutor.Execute<BatchImportItem>(items, item =>
+            {
+                if (Validate.SafePath(item.destinationPath, "destinationPath") is object dstErr)
+                    throw new System.Exception(((dynamic)dstErr).error);
+                if (!File.Exists(item.sourcePath))
+                    throw new System.Exception("File not found");
+
+                var dir = Path.GetDirectoryName(item.destinationPath);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                File.Copy(item.sourcePath, item.destinationPath, true);
+                AssetDatabase.ImportAsset(item.destinationPath);
+                var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(item.destinationPath);
+                if (asset != null) WorkflowManager.SnapshotCreatedAsset(asset);
+                return new { target = item.destinationPath, success = true };
+            }, item => item.destinationPath ?? item.sourcePath,
+            setup: () => AssetDatabase.StartAssetEditing(),
+            teardown: () => { AssetDatabase.StopAssetEditing(); AssetDatabase.Refresh(); });
         }
 
         private class BatchImportItem { public string sourcePath; public string destinationPath; }
@@ -115,42 +92,19 @@ namespace UnitySkills
         [UnitySkill("asset_delete_batch", "Delete multiple assets. items: JSON array of {path}")]
         public static object AssetDeleteBatch(string items)
         {
-            if (string.IsNullOrEmpty(items)) return new { error = "items parameter is required." };
-            try {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<System.Collections.Generic.List<BatchDeleteItem>>(items);
-                if (itemList == null || itemList.Count == 0) return new { error = "items empty" };
-                
-                var results = new System.Collections.Generic.List<object>();
-                int successCount = 0;
-                
-                AssetDatabase.StartAssetEditing();
-                try {
-                    foreach (var item in itemList) {
-                        try {
-                            // 安全校验
-                            if (Validate.SafePath(item.path, "path", isDelete: true) is object pathErr) {
-                                results.Add(new { target = item.path, success = false, error = ((dynamic)pathErr).error });
-                                continue;
-                            }
-                            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(item.path);
-                            if (asset != null) WorkflowManager.SnapshotObject(asset);
-                            if (AssetDatabase.DeleteAsset(item.path)) {
-                                results.Add(new { target = item.path, success = true });
-                                successCount++;
-                            } else {
-                                results.Add(new { target = item.path, success = false, error = "Delete failed" });
-                            }
-                        } catch (System.Exception ex) {
-                            results.Add(new { target = item.path, success = false, error = ex.Message });
-                        }
-                    }
-                } finally {
-                    AssetDatabase.StopAssetEditing();
-                }
-                AssetDatabase.Refresh();
-                
-                return new { success = true, total = itemList.Count, successCount, results };
-            } catch (System.Exception ex) { return new { error = ex.Message }; }
+            return BatchExecutor.Execute<BatchDeleteItem>(items, item =>
+            {
+                if (Validate.SafePath(item.path, "path", isDelete: true) is object pathErr)
+                    throw new System.Exception(((dynamic)pathErr).error);
+
+                var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(item.path);
+                if (asset != null) WorkflowManager.SnapshotObject(asset);
+                if (!AssetDatabase.DeleteAsset(item.path))
+                    throw new System.Exception("Delete failed");
+                return new { target = item.path, success = true };
+            }, item => item.path,
+            setup: () => AssetDatabase.StartAssetEditing(),
+            teardown: () => { AssetDatabase.StopAssetEditing(); AssetDatabase.Refresh(); });
         }
 
         private class BatchDeleteItem { public string path; }

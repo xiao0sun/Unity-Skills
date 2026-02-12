@@ -192,32 +192,14 @@ namespace UnitySkills
         [UnitySkill("material_create_batch", "Create multiple materials (Efficient). items: JSON array of {name, shaderName?, savePath?}")]
         public static object MaterialCreateBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required." };
-
-            try
+            return BatchExecutor.Execute<BatchMaterialCreateItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchMaterialCreateItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items is empty or invalid JSON" };
-
-                var results = new List<object>();
-                int successCount = 0, failCount = 0;
-
-                foreach (var item in itemList)
-                {
-                    try
-                    {
-                        var result = MaterialCreate(item.name, item.shaderName, item.savePath);
-                        var json = Newtonsoft.Json.JsonConvert.SerializeObject(result);
-                        if (json.Contains("\"error\"")) { failCount++; results.Add(new { target = item.name, success = false, result }); }
-                        else { successCount++; results.Add(result); }
-                    }
-                    catch (System.Exception ex) { results.Add(new { target = item.name, success = false, error = ex.Message }); failCount++; }
-                }
-                return new { success = failCount == 0, totalItems = itemList.Count, successCount, failCount, results };
-            }
-            catch (System.Exception ex) { return new { error = $"JSON parse failed: {ex.Message}" }; }
+                var result = MaterialCreate(item.name, item.shaderName, item.savePath);
+                var json = Newtonsoft.Json.JsonConvert.SerializeObject(result);
+                if (json.Contains("\"error\""))
+                    throw new System.Exception(((dynamic)result).error);
+                return result;
+            }, item => item.name);
         }
 
         private class BatchMaterialCreateItem { public string name { get; set; } public string shaderName { get; set; } public string savePath { get; set; } }
@@ -225,32 +207,14 @@ namespace UnitySkills
         [UnitySkill("material_assign_batch", "Assign materials to multiple objects (Efficient). items: JSON array of {name, materialPath}")]
         public static object MaterialAssignBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required." };
-
-            try
+            return BatchExecutor.Execute<BatchMaterialAssignItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchMaterialAssignItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items is empty or invalid JSON" };
-
-                var results = new List<object>();
-                int successCount = 0, failCount = 0;
-
-                foreach (var item in itemList)
-                {
-                    try
-                    {
-                        var result = MaterialAssign(name: item.name, instanceId: item.instanceId, path: item.path, materialPath: item.materialPath);
-                        var json = Newtonsoft.Json.JsonConvert.SerializeObject(result);
-                        if (json.Contains("\"error\"")) { failCount++; results.Add(new { target = item.name ?? item.path, success = false, result }); }
-                        else { successCount++; results.Add(result); }
-                    }
-                    catch (System.Exception ex) { results.Add(new { target = item.name ?? item.path, success = false, error = ex.Message }); failCount++; }
-                }
-                return new { success = failCount == 0, totalItems = itemList.Count, successCount, failCount, results };
-            }
-            catch (System.Exception ex) { return new { error = $"JSON parse failed: {ex.Message}" }; }
+                var result = MaterialAssign(name: item.name, instanceId: item.instanceId, path: item.path, materialPath: item.materialPath);
+                var json = Newtonsoft.Json.JsonConvert.SerializeObject(result);
+                if (json.Contains("\"error\""))
+                    throw new System.Exception(((dynamic)result).error);
+                return result;
+            }, item => item.name ?? item.path);
         }
 
         private class BatchMaterialAssignItem { public string name { get; set; } public int instanceId { get; set; } public string path { get; set; } public string materialPath { get; set; } }
@@ -367,85 +331,38 @@ namespace UnitySkills
         [UnitySkill("material_set_colors_batch", "Set colors on multiple GameObjects in a single call. items is a JSON array like [{name:'Obj1',r:1,g:0,b:0},{name:'Obj2',r:0,g:1,b:0}]. Much more efficient than calling material_set_color multiple times.")]
         public static object MaterialSetColorsBatch(string items = null, string propertyName = null)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required. Example: [{\"name\":\"Cube1\",\"r\":1,\"g\":0,\"b\":0},{\"name\":\"Cube2\",\"r\":0,\"g\":1,\"b\":0}]" };
-
             // Auto-detect color property if not specified
             if (string.IsNullOrEmpty(propertyName))
                 propertyName = ProjectSkills.GetColorPropertyName();
 
-            try
+            return BatchExecutor.Execute<BatchColorItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchColorItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                var (material, go, error) = FindMaterial(item.name, item.instanceId, item.path);
+                if (error != null) throw new System.Exception("Material not found");
 
-                var results = new List<object>();
-                int successCount = 0;
-                int failCount = 0;
+                var color = new Color(item.r, item.g, item.b, item.a);
 
-                foreach (var item in itemList)
+                WorkflowManager.SnapshotObject(material);
+                Undo.RecordObject(material, "Batch Set Color");
+
+                bool colorSet = false;
+                var propertiesToTry = new[] { propertyName, "_BaseColor", "_Color" };
+                foreach (var prop in propertiesToTry)
                 {
-                    try
+                    if (material.HasProperty(prop))
                     {
-                        var (material, go, error) = FindMaterial(item.name, item.instanceId, item.path);
-                        if (error != null)
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = "Material not found" });
-                            failCount++;
-                            continue;
-                        }
-
-                        var color = new Color(item.r, item.g, item.b, item.a);
-
-                        WorkflowManager.SnapshotObject(material);
-                        Undo.RecordObject(material, "Batch Set Color");
-
-                        bool colorSet = false;
-                        var propertiesToTry = new[] { propertyName, "_BaseColor", "_Color" };
-                        foreach (var prop in propertiesToTry)
-                        {
-                            if (material.HasProperty(prop))
-                            {
-                                material.SetColor(prop, color);
-                                colorSet = true;
-                                break;
-                            }
-                        }
-
-                        if (colorSet)
-                        {
-                            if (go == null) EditorUtility.SetDirty(material);
-                            results.Add(new { target = go?.name ?? item.path, success = true });
-                            successCount++;
-                        }
-                        else
-                        {
-                            results.Add(new { target = item.name ?? item.path, success = false, error = "No color property found" });
-                            failCount++;
-                        }
-                    }
-                    catch (System.Exception ex)
-                    {
-                        results.Add(new { target = item.name ?? item.path, success = false, error = ex.Message });
-                        failCount++;
+                        material.SetColor(prop, color);
+                        colorSet = true;
+                        break;
                     }
                 }
 
-                return new
-                {
-                    success = failCount == 0,
-                    totalItems = itemList.Count,
-                    successCount,
-                    failCount,
-                    propertyUsed = propertyName,
-                    results
-                };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}", example = "[{\"name\":\"Cube\",\"r\":1,\"g\":0,\"b\":0}]" };
-            }
+                if (!colorSet)
+                    throw new System.Exception("No color property found");
+
+                if (go == null) EditorUtility.SetDirty(material);
+                return new { target = go?.name ?? item.path, success = true };
+            }, item => item.name ?? item.path);
         }
 
         private class BatchColorItem
@@ -521,33 +438,15 @@ namespace UnitySkills
         [UnitySkill("material_set_emission_batch", "Set emission on multiple objects (Efficient). items: JSON array of {name, r, g, b, intensity?, enableEmission?}")]
         public static object MaterialSetEmissionBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required." };
-
-            try
+            return BatchExecutor.Execute<BatchEmissionItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchEmissionItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items is empty or invalid JSON" };
-
-                var results = new List<object>();
-                int successCount = 0, failCount = 0;
-
-                foreach (var item in itemList)
-                {
-                    try
-                    {
-                        var result = MaterialSetEmission(name: item.name, instanceId: item.instanceId, path: item.path,
-                            r: item.r, g: item.g, b: item.b, intensity: item.intensity > 0 ? item.intensity : 1f, enableEmission: item.enableEmission);
-                        var json = Newtonsoft.Json.JsonConvert.SerializeObject(result);
-                        if (json.Contains("\"error\"")) { failCount++; results.Add(new { target = item.name ?? item.path, success = false, result }); }
-                        else { successCount++; results.Add(result); }
-                    }
-                    catch (System.Exception ex) { results.Add(new { target = item.name ?? item.path, success = false, error = ex.Message }); failCount++; }
-                }
-                return new { success = failCount == 0, totalItems = itemList.Count, successCount, failCount, results };
-            }
-            catch (System.Exception ex) { return new { error = $"JSON parse failed: {ex.Message}" }; }
+                var result = MaterialSetEmission(name: item.name, instanceId: item.instanceId, path: item.path,
+                    r: item.r, g: item.g, b: item.b, intensity: item.intensity > 0 ? item.intensity : 1f, enableEmission: item.enableEmission);
+                var json = Newtonsoft.Json.JsonConvert.SerializeObject(result);
+                if (json.Contains("\"error\""))
+                    throw new System.Exception(((dynamic)result).error);
+                return result;
+            }, item => item.name ?? item.path);
         }
 
         private class BatchEmissionItem { public string name { get; set; } public int instanceId { get; set; } public string path { get; set; } public float r { get; set; } public float g { get; set; } public float b { get; set; } public float intensity { get; set; } = 1f; public bool enableEmission { get; set; } = true; }

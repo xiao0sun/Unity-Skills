@@ -183,102 +183,43 @@ namespace UnitySkills
         [UnitySkill("texture_set_settings_batch", "Set texture import settings for multiple images. items: JSON array of {assetPath, textureType, maxSize, filterMode, ...}")]
         public static object TextureSetSettingsBatch(string items)
         {
-            if (string.IsNullOrEmpty(items))
-                return new { error = "items parameter is required. Example: [{\"assetPath\":\"Assets/Textures/a.png\",\"textureType\":\"Sprite\"}]" };
-
-            try
+            return BatchExecutor.Execute<BatchTextureItem>(items, item =>
             {
-                var itemList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchTextureItem>>(items);
-                if (itemList == null || itemList.Count == 0)
-                    return new { error = "items parameter is empty or invalid JSON" };
+                var importer = AssetImporter.GetAtPath(item.assetPath) as TextureImporter;
+                if (importer == null)
+                    throw new System.Exception("Not a texture");
 
-                var results = new List<object>();
-                int successCount = 0;
-                int failCount = 0;
+                var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(item.assetPath);
+                if (asset != null) WorkflowManager.SnapshotObject(asset);
 
-                // Start asset editing batch for performance
-                AssetDatabase.StartAssetEditing();
+                if (!string.IsNullOrEmpty(item.textureType) &&
+                    System.Enum.TryParse<TextureImporterType>(item.textureType.Replace(" ", ""), true, out var tt))
+                    importer.textureType = tt;
 
-                try
+                if (!string.IsNullOrEmpty(item.filterMode) &&
+                    System.Enum.TryParse<FilterMode>(item.filterMode, true, out var fm))
+                    importer.filterMode = fm;
+
+                if (item.mipmapEnabled.HasValue) importer.mipmapEnabled = item.mipmapEnabled.Value;
+                if (item.sRGB.HasValue) importer.sRGBTexture = item.sRGB.Value;
+                if (item.readable.HasValue) importer.isReadable = item.readable.Value;
+                if (item.spritePixelsPerUnit.HasValue) importer.spritePixelsPerUnit = item.spritePixelsPerUnit.Value;
+
+                if (item.maxSize.HasValue || !string.IsNullOrEmpty(item.compression))
                 {
-                    foreach (var item in itemList)
-                    {
-                        try
-                        {
-                            var importer = AssetImporter.GetAtPath(item.assetPath) as TextureImporter;
-                            if (importer == null)
-                            {
-                                results.Add(new { path = item.assetPath, success = false, error = "Not a texture" });
-                                failCount++;
-                                continue;
-                            }
-
-                            // 修改前记录资产状态
-                            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(item.assetPath);
-                            if (asset != null) WorkflowManager.SnapshotObject(asset);
-
-                            // Apply settings
-                            if (!string.IsNullOrEmpty(item.textureType) &&
-                                System.Enum.TryParse<TextureImporterType>(item.textureType.Replace(" ", ""), true, out var tt))
-                                importer.textureType = tt;
-
-                            if (!string.IsNullOrEmpty(item.filterMode) &&
-                                System.Enum.TryParse<FilterMode>(item.filterMode, true, out var fm))
-                                importer.filterMode = fm;
-
-                            if (item.mipmapEnabled.HasValue)
-                                importer.mipmapEnabled = item.mipmapEnabled.Value;
-
-                            if (item.sRGB.HasValue)
-                                importer.sRGBTexture = item.sRGB.Value;
-
-                            if (item.readable.HasValue)
-                                importer.isReadable = item.readable.Value;
-
-                            if (item.spritePixelsPerUnit.HasValue)
-                                importer.spritePixelsPerUnit = item.spritePixelsPerUnit.Value;
-
-                            // Platform settings
-                            if (item.maxSize.HasValue || !string.IsNullOrEmpty(item.compression))
-                            {
-                                var ps = importer.GetDefaultPlatformTextureSettings();
-                                if (item.maxSize.HasValue) ps.maxTextureSize = item.maxSize.Value;
-                                if (!string.IsNullOrEmpty(item.compression) &&
-                                    System.Enum.TryParse<TextureImporterCompression>(item.compression, true, out var tc))
-                                    ps.textureCompression = tc;
-                                importer.SetPlatformTextureSettings(ps);
-                            }
-
-                            importer.SaveAndReimport();
-                            results.Add(new { path = item.assetPath, success = true });
-                            successCount++;
-                        }
-                        catch (System.Exception ex)
-                        {
-                            results.Add(new { path = item.assetPath, success = false, error = ex.Message });
-                            failCount++;
-                        }
-                    }
-                }
-                finally
-                {
-                    AssetDatabase.StopAssetEditing();
-                    AssetDatabase.Refresh();
+                    var ps = importer.GetDefaultPlatformTextureSettings();
+                    if (item.maxSize.HasValue) ps.maxTextureSize = item.maxSize.Value;
+                    if (!string.IsNullOrEmpty(item.compression) &&
+                        System.Enum.TryParse<TextureImporterCompression>(item.compression, true, out var tc))
+                        ps.textureCompression = tc;
+                    importer.SetPlatformTextureSettings(ps);
                 }
 
-                return new
-                {
-                    success = failCount == 0,
-                    totalItems = itemList.Count,
-                    successCount,
-                    failCount,
-                    results
-                };
-            }
-            catch (System.Exception ex)
-            {
-                return new { error = $"Failed to parse items JSON: {ex.Message}" };
-            }
+                importer.SaveAndReimport();
+                return new { path = item.assetPath, success = true };
+            }, item => item.assetPath,
+            setup: () => AssetDatabase.StartAssetEditing(),
+            teardown: () => { AssetDatabase.StopAssetEditing(); AssetDatabase.Refresh(); });
         }
 
         private class BatchTextureItem
