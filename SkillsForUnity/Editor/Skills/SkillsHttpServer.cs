@@ -49,6 +49,8 @@ namespace UnitySkills
         private const int KeepAliveIntervalMs = 50;
         // Request processing timeout (ms)
         private const int RequestTimeoutMs = 60000;
+        // Maximum allowed POST body size
+        private const int MaxBodySizeBytes = 10 * 1024 * 1024; // 10MB
         // Heartbeat interval for registry (seconds)
         private const double HeartbeatInterval = 10.0;
         private static double _lastHeartbeatTime = 0;
@@ -473,39 +475,75 @@ namespace UnitySkills
                     
                     if (request.HttpMethod == "POST" && request.ContentLength64 > 0)
                     {
+                        if (request.ContentLength64 > MaxBodySizeBytes)
+                        {
+                            // Reject oversized request immediately
+                            var rejectJob = new RequestJob
+                            {
+                                Context = context,
+                                HttpMethod = request.HttpMethod,
+                                Path = request.Url.AbsolutePath,
+                                Body = "",
+                                EnqueueTimeTicks = DateTime.UtcNow.Ticks,
+                                RequestId = $"req_{Interlocked.Increment(ref _requestIdCounter):X8}",
+                                AgentId = DetectAgent(request),
+                                StatusCode = 413,
+                                ResponseJson = JsonConvert.SerializeObject(new {
+                                    error = "Request body too large",
+                                    maxSizeBytes = MaxBodySizeBytes,
+                                    receivedBytes = request.ContentLength64
+                                }, _jsonSettings),
+                                IsProcessed = true,
+                                CompletionSignal = new ManualResetEventSlim(true) // Already signaled
+                            };
+                            ThreadPool.QueueUserWorkItem(_ => WaitAndRespond(rejectJob));
+                            continue;
+                        }
+
                         using (var reader = new System.IO.StreamReader(request.InputStream, Encoding.UTF8))
                         {
                             body = reader.ReadToEnd();
                         }
                     }
                     
-                    // Create job with raw data only - use DateTime (thread-safe) instead of Unity time
-                    var job = new RequestJob
+                    ManualResetEventSlim signal = null;
+                    try
                     {
-                        Context = context,
-                        HttpMethod = request.HttpMethod,
-                        Path = request.Url.AbsolutePath,
-                        Body = body,
-                        EnqueueTimeTicks = DateTime.UtcNow.Ticks,
-                        RequestId = $"req_{Interlocked.Increment(ref _requestIdCounter):X8}",
-                        AgentId = DetectAgent(request),
-                        StatusCode = 200,
-                        ResponseJson = null,
-                        IsProcessed = false,
-                        CompletionSignal = new ManualResetEventSlim(false)
-                    };
-                    
-                    Interlocked.Increment(ref _totalRequestsReceived);
-                    
-                    // Enqueue for main thread processing
-                    lock (_queueLock)
-                    {
-                        _jobQueue.Enqueue(job);
+                        signal = new ManualResetEventSlim(false);
+
+                        // Create job with raw data only - use DateTime (thread-safe) instead of Unity time
+                        var job = new RequestJob
+                        {
+                            Context = context,
+                            HttpMethod = request.HttpMethod,
+                            Path = request.Url.AbsolutePath,
+                            Body = body,
+                            EnqueueTimeTicks = DateTime.UtcNow.Ticks,
+                            RequestId = $"req_{Interlocked.Increment(ref _requestIdCounter):X8}",
+                            AgentId = DetectAgent(request),
+                            StatusCode = 200,
+                            ResponseJson = null,
+                            IsProcessed = false,
+                            CompletionSignal = signal
+                        };
+
+                        Interlocked.Increment(ref _totalRequestsReceived);
+
+                        // Enqueue for main thread processing
+                        lock (_queueLock)
+                        {
+                            _jobQueue.Enqueue(job);
+                        }
+
+                        // Wait for main thread to process (with timeout)
+                        // This is thread-safe - just waiting on a signal
+                        ThreadPool.QueueUserWorkItem(_ => WaitAndRespond(job));
+                        signal = null; // Ownership transferred to WaitAndRespond
                     }
-                    
-                    // Wait for main thread to process (with timeout)
-                    // This is thread-safe - just waiting on a signal
-                    ThreadPool.QueueUserWorkItem(_ => WaitAndRespond(job));
+                    finally
+                    {
+                        signal?.Dispose(); // Only disposes if WaitAndRespond was never queued
+                    }
                 }
                 catch (HttpListenerException) { /* Expected when stopping */ }
                 catch (ObjectDisposedException) { /* Expected when stopping */ }
