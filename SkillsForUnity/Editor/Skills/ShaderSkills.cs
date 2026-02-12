@@ -13,6 +13,8 @@ namespace UnitySkills
         [UnitySkill("shader_create", "Create a new shader file")]
         public static object ShaderCreate(string shaderName, string savePath, string template = null)
         {
+            if (!string.IsNullOrEmpty(savePath) && Validate.SafePath(savePath, "savePath") is object pathErr) return pathErr;
+
             if (File.Exists(savePath))
                 return new { error = $"File already exists: {savePath}" };
 
@@ -169,6 +171,8 @@ namespace UnitySkills
         {
             if (!File.Exists(shaderPath))
                 return new { error = $"Shader not found: {shaderPath}" };
+
+            if (Validate.SafePath(shaderPath, "shaderPath", isDelete: true) is object pathErr) return pathErr;
 
             AssetDatabase.DeleteAsset(shaderPath);
             return new { success = true, deleted = shaderPath };

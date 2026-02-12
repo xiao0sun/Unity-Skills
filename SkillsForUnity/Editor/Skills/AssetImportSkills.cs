@@ -15,6 +15,7 @@ namespace UnitySkills
         {
             if (string.IsNullOrEmpty(assetPath))
                 return new { success = false, error = "assetPath is required" };
+            if (Validate.SafePath(assetPath, "assetPath") is object pathErr) return pathErr;
 
             if (!System.IO.File.Exists(assetPath) && !System.IO.Directory.Exists(assetPath))
             {

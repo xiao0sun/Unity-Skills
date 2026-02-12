@@ -12,6 +12,8 @@ namespace UnitySkills
         [UnitySkill("prefab_create", "Create a prefab from a GameObject")]
         public static object PrefabCreate(string gameObjectName, string savePath)
         {
+            if (Validate.SafePath(savePath, "savePath") is object pathErr) return pathErr;
+
             var go = GameObject.Find(gameObjectName);
             if (go == null)
                 return new { error = $"GameObject not found: {gameObjectName}" };

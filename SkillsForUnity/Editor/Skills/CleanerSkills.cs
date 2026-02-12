@@ -251,6 +251,12 @@ namespace UnitySkills
                 int deletedCount = 0;
                 foreach (var path in pending.Paths)
                 {
+                    if (Validate.SafePath(path, "path", isDelete: true) is object pathErr)
+                    {
+                        deletedResults.Add(new { path, deleted = false });
+                        continue;
+                    }
+
                     var existed = File.Exists(path) || Directory.Exists(path);
                     if (existed)
                     {

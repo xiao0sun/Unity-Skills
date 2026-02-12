@@ -102,6 +102,8 @@ namespace UnitySkills
         [UnitySkill("material_create", "Create a new material (auto-detects render pipeline if shader not specified). savePath can be a folder or full path.")]
         public static object MaterialCreate(string name, string shaderName = null, string savePath = null)
         {
+            if (!string.IsNullOrEmpty(savePath) && Validate.SafePath(savePath, "savePath") is object pathErr) return pathErr;
+
             // Auto-detect shader based on render pipeline if not specified
             if (string.IsNullOrEmpty(shaderName))
             {
@@ -224,7 +226,9 @@ namespace UnitySkills
         {
             if (Validate.Required(sourcePath, "sourcePath") is object err) return err;
             if (Validate.Required(newName, "newName") is object err2) return err2;
-                
+            if (Validate.SafePath(sourcePath, "sourcePath") is object srcErr) return srcErr;
+            if (!string.IsNullOrEmpty(savePath) && Validate.SafePath(savePath, "savePath") is object saveErr) return saveErr;
+
             var sourceMaterial = AssetDatabase.LoadAssetAtPath<Material>(sourcePath);
             if (sourceMaterial == null)
                 return new { error = $"Source material not found: {sourcePath}" };

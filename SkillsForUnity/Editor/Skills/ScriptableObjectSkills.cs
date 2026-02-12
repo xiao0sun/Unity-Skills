@@ -14,6 +14,8 @@ namespace UnitySkills
         [UnitySkill("scriptableobject_create", "Create a new ScriptableObject asset")]
         public static object ScriptableObjectCreate(string typeName, string savePath)
         {
+            if (Validate.SafePath(savePath, "savePath") is object pathErr) return pathErr;
+
             var type = FindScriptableObjectType(typeName);
             if (type == null)
                 return new { error = $"ScriptableObject type not found: {typeName}" };
@@ -121,6 +123,8 @@ namespace UnitySkills
         [UnitySkill("scriptableobject_duplicate", "Duplicate a ScriptableObject asset")]
         public static object ScriptableObjectDuplicate(string assetPath)
         {
+            if (Validate.SafePath(assetPath, "assetPath") is object pathErr) return pathErr;
+
             var asset = AssetDatabase.LoadAssetAtPath<ScriptableObject>(assetPath);
             if (asset == null)
                 return new { error = $"ScriptableObject not found: {assetPath}" };

@@ -190,6 +190,8 @@ namespace UnitySkills
         [UnitySkill("asset_create_folder", "Create a new folder in Assets")]
         public static object AssetCreateFolder(string folderPath)
         {
+            if (Validate.SafePath(folderPath, "folderPath") is object pathErr) return pathErr;
+
             if (Directory.Exists(folderPath))
                 return new { error = "Folder already exists" };
 

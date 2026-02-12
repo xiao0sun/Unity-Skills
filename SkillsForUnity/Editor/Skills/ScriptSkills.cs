@@ -14,6 +14,8 @@ namespace UnitySkills
         [UnitySkill("script_create", "Create a new C# script. Optional: namespace")]
         public static object ScriptCreate(string scriptName, string folder = "Assets/Scripts", string template = null, string namespaceName = null)
         {
+            if (!string.IsNullOrEmpty(folder) && Validate.SafePath(folder, "folder") is object folderErr) return folderErr;
+
             if (!Directory.Exists(folder))
                 Directory.CreateDirectory(folder);
 
@@ -118,6 +120,8 @@ public class {CLASS} : MonoBehaviour
             if (!File.Exists(scriptPath))
                 return new { error = $"Script not found: {scriptPath}" };
 
+            if (Validate.SafePath(scriptPath, "scriptPath", isDelete: true) is object pathErr) return pathErr;
+
             // 删除前记录脚本元数据
             var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(scriptPath);
             if (asset != null) WorkflowManager.SnapshotObject(asset);
@@ -165,6 +169,8 @@ public class {CLASS} : MonoBehaviour
         {
             if (!File.Exists(scriptPath))
                 return new { error = $"Script not found: {scriptPath}" };
+
+            if (Validate.SafePath(scriptPath, "scriptPath") is object pathErr) return pathErr;
 
             // 修改前记录脚本元数据
             var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(scriptPath);

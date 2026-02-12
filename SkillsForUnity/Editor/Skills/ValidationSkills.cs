@@ -184,6 +184,8 @@ namespace UnitySkills
         [UnitySkill("validate_cleanup_empty_folders", "Find and optionally delete empty folders")]
         public static object ValidateCleanupEmptyFolders(string rootPath = "Assets", bool dryRun = true)
         {
+            if (Validate.SafePath(rootPath, "rootPath") is object pathErr) return pathErr;
+
             var emptyFolders = new List<string>();
             FindEmptyFolders(rootPath, emptyFolders);
 

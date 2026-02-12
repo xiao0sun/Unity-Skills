@@ -16,6 +16,7 @@ namespace UnitySkills
         public static object SceneCreate(string scenePath)
         {
             if (Validate.Required(scenePath, "scenePath") is object err) return err;
+            if (Validate.SafePath(scenePath, "scenePath") is object pathErr) return pathErr;
 
             var dir = Path.GetDirectoryName(scenePath);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
@@ -43,6 +44,8 @@ namespace UnitySkills
         [UnitySkill("scene_save", "Save the current scene")]
         public static object SceneSave(string scenePath = null)
         {
+            if (!string.IsNullOrEmpty(scenePath) && Validate.SafePath(scenePath, "scenePath") is object pathErr) return pathErr;
+
             var scene = SceneManager.GetActiveScene();
             var path = scenePath ?? scene.path;
 
