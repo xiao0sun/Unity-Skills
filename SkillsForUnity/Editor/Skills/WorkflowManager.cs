@@ -13,9 +13,6 @@ namespace UnitySkills
         private static WorkflowTask _currentTask;
         private static string _currentSessionId;
 
-        // Maximum asset file size for Base64 backup (files larger than this are skipped)
-        private const long MaxAssetBackupBytes = 10 * 1024 * 1024; // 10MB
-
         // Path to store the history file (Library folder persists but is local)
         private static string HistoryFilePath => Path.Combine(Application.dataPath, "../Library/UnitySkills/workflow_history.json");
 
@@ -177,11 +174,7 @@ namespace UnitySkills
                     string fullPath = Path.Combine(Application.dataPath, "..", assetPath);
                     if (File.Exists(fullPath))
                     {
-                        var fileInfo = new FileInfo(fullPath);
-                        if (fileInfo.Length <= MaxAssetBackupBytes)
-                            assetBytesBase64 = Convert.ToBase64String(File.ReadAllBytes(fullPath));
-                        else
-                            SkillsLogger.LogVerbose($"Skipping Base64 backup for {assetPath} ({fileInfo.Length / (1024*1024)}MB exceeds limit)");
+                        assetBytesBase64 = Convert.ToBase64String(File.ReadAllBytes(fullPath));
                     }
                 }
             }
@@ -255,11 +248,7 @@ namespace UnitySkills
                 string fullPath = Path.Combine(Application.dataPath, "..", assetPath);
                 if (File.Exists(fullPath))
                 {
-                    var fileInfo = new FileInfo(fullPath);
-                    if (fileInfo.Length <= MaxAssetBackupBytes)
-                        assetBytesBase64 = Convert.ToBase64String(File.ReadAllBytes(fullPath));
-                    else
-                        SkillsLogger.LogVerbose($"Skipping Base64 backup for {assetPath} ({fileInfo.Length / (1024*1024)}MB exceeds limit)");
+                    assetBytesBase64 = Convert.ToBase64String(File.ReadAllBytes(fullPath));
                 }
             }
 
@@ -425,9 +414,7 @@ namespace UnitySkills
                             var lastSnapshot = redoTask.snapshots.LastOrDefault();
                             if (lastSnapshot != null && string.IsNullOrEmpty(lastSnapshot.assetBytesBase64))
                             {
-                                var fileInfo = new FileInfo(fullPath);
-                                if (fileInfo.Length <= MaxAssetBackupBytes)
-                                    lastSnapshot.assetBytesBase64 = Convert.ToBase64String(File.ReadAllBytes(fullPath));
+                                lastSnapshot.assetBytesBase64 = Convert.ToBase64String(File.ReadAllBytes(fullPath));
                             }
                         }
                         AssetDatabase.DeleteAsset(snapshot.assetPath);
@@ -899,9 +886,7 @@ namespace UnitySkills
                 string fullPath = Path.Combine(Application.dataPath, "..", snapshot.assetPath);
                 if (File.Exists(fullPath))
                 {
-                    var fileInfo = new FileInfo(fullPath);
-                    if (fileInfo.Length <= MaxAssetBackupBytes)
-                        currentAssetBytes = Convert.ToBase64String(File.ReadAllBytes(fullPath));
+                    currentAssetBytes = Convert.ToBase64String(File.ReadAllBytes(fullPath));
                 }
             }
 

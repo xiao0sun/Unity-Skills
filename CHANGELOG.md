@@ -2,6 +2,27 @@
 
 All notable changes to **UnitySkills** will be documented in this file.
 
+## [1.5.0] - 2026-02-12
+
+### Security
+- **POST Body 大小限制**: HTTP 服务器拒绝超过 10MB 的请求体，返回 413 状态码（`SkillsHttpServer.cs`）
+- **ManualResetEventSlim 泄漏修复**: 使用 try/finally 模式确保信号量在 ThreadPool 入队失败时仍被释放（`SkillsHttpServer.cs`）
+- **路径遍历防护**: 15 个方法补齐 `Validate.SafePath()` 校验，涵盖 Script/Shader/Material/ScriptableObject/Prefab/Scene/Asset/Cleaner/Validation 共 10 个 Skill 文件
+
+### Changed
+- **统一返回值格式**: 10 个方法补齐 `success = true/false` 字段（`SampleSkills.cs`、`OptimizationSkills.cs`、`ValidationSkills.cs`）
+- **GameObjectFinder 迁移**: 29 处原始 `GameObject.Find` 调用迁移到 `GameObjectFinder.FindOrError`，提供更好的错误提示（含建议的相似名称），涉及 PrefabSkills/EventSkills/TimelineSkills/CameraSkills/EditorSkills/UISkills/WorkflowSkills/ComponentSkills/SampleSkills 共 9 个文件
+- **PhysicsSetGravity Undo 支持**: 通过 `DynamicsManager.asset` 注册 Undo，重力修改可撤销（`PhysicsSkills.cs`）
+- **SkillRouter 消除双重序列化**: 替换 `JObject.FromObject(result)` 为反射检测错误字段，避免不必要的 JSON 中间转换（`SkillRouter.cs`）
+- **区域无关数值解析**: ComponentSkills 和 ScriptableObjectSkills 中 7 处 `float.Parse`/`double.Parse` 添加 `CultureInfo.InvariantCulture`，修复非英文区域的小数点解析问题
+- **文件重命名**: `NextGenSkills.cs` → `PerceptionSkills.cs`，文件名与类名保持一致
+- **SampleSkills 文档标注**: 明确标记为便捷别名，指向 GameObjectSkills/SceneSkills 的完整实现
+
+### Performance
+- **反射成员缓存**: ComponentSkills 新增 `_memberCache` 字典和 `FindMember()` 辅助方法，属性/字段查找结果被缓存，批量操作性能显著提升（`ComponentSkills.cs`）
+
+---
+
 ## [1.4.4] - 2026-02-11
 
 ### Added

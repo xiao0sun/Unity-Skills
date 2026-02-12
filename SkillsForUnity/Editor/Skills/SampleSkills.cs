@@ -4,7 +4,8 @@ using UnityEditor;
 namespace UnitySkills
 {
     /// <summary>
-    /// Sample skills for testing the REST API.
+    /// Sample/convenience skills - simplified API for common operations.
+    /// For full-featured equivalents, see GameObjectSkills and SceneSkills.
     /// </summary>
     public static class SampleSkills
     {
@@ -33,8 +34,8 @@ namespace UnitySkills
         [UnitySkill("delete_object", "Delete a GameObject by name")]
         public static object DeleteObject(string objectName)
         {
-            var obj = GameObject.Find(objectName);
-            if (obj == null) return new { success = false, message = $"Not found: {objectName}" };
+            var (obj, err) = GameObjectFinder.Find(objectName);
+            if (err != null) return err;
             WorkflowManager.SnapshotObject(obj);
             Undo.DestroyObjectImmediate(obj);
             return new { success = true, deleted = objectName, message = $"Deleted {objectName}" };
@@ -57,8 +58,8 @@ namespace UnitySkills
         [UnitySkill("set_object_position", "Set position of a GameObject")]
         public static object SetObjectPosition(string objectName, float x, float y, float z)
         {
-            var obj = GameObject.Find(objectName);
-            if (obj == null) return new { success = false, message = $"Not found: {objectName}" };
+            var (obj, err) = GameObjectFinder.Find(objectName);
+            if (err != null) return err;
             Undo.RecordObject(obj.transform, "Set Position");
             obj.transform.position = new Vector3(x, y, z);
             return new { success = true, name = objectName, position = new { x, y, z }, message = $"Set {objectName} position to ({x},{y},{z})" };
@@ -67,8 +68,8 @@ namespace UnitySkills
         [UnitySkill("set_object_rotation", "Set rotation of a GameObject (Euler angles)")]
         public static object SetObjectRotation(string objectName, float x, float y, float z)
         {
-            var obj = GameObject.Find(objectName);
-            if (obj == null) return new { success = false, message = $"Not found: {objectName}" };
+            var (obj, err) = GameObjectFinder.Find(objectName);
+            if (err != null) return err;
             Undo.RecordObject(obj.transform, "Set Rotation");
             obj.transform.rotation = Quaternion.Euler(x, y, z);
             return new { success = true, name = objectName, rotation = new { x, y, z }, message = $"Set {objectName} rotation to ({x},{y},{z})" };
@@ -77,8 +78,8 @@ namespace UnitySkills
         [UnitySkill("set_object_scale", "Set scale of a GameObject")]
         public static object SetObjectScale(string objectName, float x, float y, float z)
         {
-            var obj = GameObject.Find(objectName);
-            if (obj == null) return new { success = false, message = $"Not found: {objectName}" };
+            var (obj, err) = GameObjectFinder.Find(objectName);
+            if (err != null) return err;
             Undo.RecordObject(obj.transform, "Set Scale");
             obj.transform.localScale = new Vector3(x, y, z);
             return new { success = true, name = objectName, scale = new { x, y, z }, message = $"Set {objectName} scale to ({x},{y},{z})" };

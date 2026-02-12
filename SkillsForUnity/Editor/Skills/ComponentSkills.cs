@@ -16,6 +16,10 @@ namespace UnitySkills
     {
         // Cache for component type lookups to improve performance
         private static readonly Dictionary<string, System.Type> _typeCache = new Dictionary<string, System.Type>();
+
+        // Cache for property/field lookups to avoid repeated reflection
+        private static readonly Dictionary<string, (PropertyInfo prop, FieldInfo field)> _memberCache =
+            new Dictionary<string, (PropertyInfo, FieldInfo)>();
         
         // Common third-party namespaces to search
         private static readonly string[] ExtendedNamespaces = new[]
@@ -261,18 +265,8 @@ namespace UnitySkills
             if (comp == null)
                 return new { error = $"Component not found: {componentType}" };
 
-            // Find property or field (including private with SerializeField)
-            var prop = type.GetProperty(propertyName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            var field = type.GetField(propertyName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-            if (prop == null && field == null)
-            {
-                // Try case-insensitive search
-                prop = type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                    .FirstOrDefault(p => p.Name.Equals(propertyName, System.StringComparison.OrdinalIgnoreCase));
-                field = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                    .FirstOrDefault(f => f.Name.Equals(propertyName, System.StringComparison.OrdinalIgnoreCase));
-            }
+            // Find property or field (with caching)
+            var (prop, field) = FindMember(type, propertyName);
 
             if (prop == null && field == null)
                 return new {
@@ -345,18 +339,8 @@ namespace UnitySkills
                 if (comp == null)
                     throw new System.Exception($"Component not found: {item.componentType}");
 
-                // Find property or field
-                var prop = type.GetProperty(item.propertyName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-                var field = type.GetField(item.propertyName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-
-                // Case-insensitive fallback
-                if (prop == null && field == null)
-                {
-                    prop = type.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                        .FirstOrDefault(p => p.Name.Equals(item.propertyName, System.StringComparison.OrdinalIgnoreCase));
-                    field = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-                        .FirstOrDefault(f => f.Name.Equals(item.propertyName, System.StringComparison.OrdinalIgnoreCase));
-                }
+                // Find property or field (with caching)
+                var (prop, field) = FindMember(type, item.propertyName);
 
                 if (prop == null && field == null)
                     throw new System.Exception($"Property/field not found: {item.propertyName}");
@@ -821,6 +805,33 @@ namespace UnitySkills
             if (val is Color c) return $"({c.r}, {c.g}, {c.b}, {c.a})";
             if (val is UnityEngine.Object obj) return obj.name;
             return val.ToString();
+        }
+
+        /// <summary>
+        /// Find a property or field by name with caching. Tries exact match first, then case-insensitive.
+        /// </summary>
+        private static (PropertyInfo prop, FieldInfo field) FindMember(System.Type type, string memberName)
+        {
+            var cacheKey = $"{type.FullName}:{memberName}";
+            if (_memberCache.TryGetValue(cacheKey, out var cached))
+                return cached;
+
+            const BindingFlags flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+            var prop = type.GetProperty(memberName, flags);
+            var field = type.GetField(memberName, flags);
+
+            if (prop == null && field == null)
+            {
+                // Case-insensitive fallback
+                prop = type.GetProperties(flags)
+                    .FirstOrDefault(p => p.Name.Equals(memberName, System.StringComparison.OrdinalIgnoreCase));
+                field = type.GetFields(flags)
+                    .FirstOrDefault(f => f.Name.Equals(memberName, System.StringComparison.OrdinalIgnoreCase));
+            }
+
+            var result = (prop, field);
+            _memberCache[cacheKey] = result;
+            return result;
         }
 
         private static string[] GetAvailableProperties(System.Type type)
