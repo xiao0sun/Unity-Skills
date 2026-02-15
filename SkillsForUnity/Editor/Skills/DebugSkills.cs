@@ -125,5 +125,66 @@ namespace UnitySkills
                 editorSkin = EditorGUIUtility.isProSkin ? "Dark" : "Light"
             };
         }
+
+        [UnitySkill("debug_get_stack_trace", "Get stack trace for a log entry by index")]
+        public static object DebugGetStackTrace(int entryIndex)
+        {
+            var assembly = System.Reflection.Assembly.GetAssembly(typeof(SceneView));
+            var logEntriesType = assembly.GetType("UnityEditor.LogEntries");
+            var logEntryType = assembly.GetType("UnityEditor.LogEntry");
+            var startMethod = logEntriesType.GetMethod("StartGettingEntries");
+            var endMethod = logEntriesType.GetMethod("EndGettingEntries");
+            var getEntryMethod = logEntriesType.GetMethod("GetEntryInternal");
+            var getCountMethod = logEntriesType.GetMethod("GetCount");
+            startMethod.Invoke(null, null);
+            int count = (int)getCountMethod.Invoke(null, null);
+            if (entryIndex < 0 || entryIndex >= count) { endMethod.Invoke(null, null); return new { error = $"Index {entryIndex} out of range (0-{count - 1})" }; }
+            var entry = System.Activator.CreateInstance(logEntryType);
+            getEntryMethod.Invoke(null, new object[] { entryIndex, entry });
+            var msg = (string)logEntryType.GetField("message").GetValue(entry);
+            endMethod.Invoke(null, null);
+            // message field contains the stack trace after the first line
+            var lines = msg.Split('\n');
+            return new { index = entryIndex, message = lines[0], stackTrace = string.Join("\n", lines.Skip(1)) };
+        }
+
+        [UnitySkill("debug_get_assembly_info", "Get project assembly information")]
+        public static object DebugGetAssemblyInfo()
+        {
+            var assemblies = CompilationPipeline.GetAssemblies(AssembliesType.Player)
+                .Select(a => new { name = a.name, sourceFiles = a.sourceFiles.Length, defines = a.defines.Length })
+                .ToArray();
+            return new { success = true, count = assemblies.Length, assemblies };
+        }
+
+        [UnitySkill("debug_get_defines", "Get scripting define symbols for current platform")]
+        public static object DebugGetDefines()
+        {
+            var group = EditorUserBuildSettings.selectedBuildTargetGroup;
+            var defines = PlayerSettings.GetScriptingDefineSymbolsForGroup(group);
+            return new { success = true, buildTargetGroup = group.ToString(), defines };
+        }
+
+        [UnitySkill("debug_set_defines", "Set scripting define symbols for current platform")]
+        public static object DebugSetDefines(string defines)
+        {
+            var group = EditorUserBuildSettings.selectedBuildTargetGroup;
+            PlayerSettings.SetScriptingDefineSymbolsForGroup(group, defines);
+            return new { success = true, buildTargetGroup = group.ToString(), defines };
+        }
+
+        [UnitySkill("debug_get_memory_info", "Get memory usage information")]
+        public static object DebugGetMemoryInfo()
+        {
+            return new
+            {
+                success = true,
+                totalAllocatedMB = UnityEngine.Profiling.Profiler.GetTotalAllocatedMemoryLong() / (1024.0 * 1024.0),
+                totalReservedMB = UnityEngine.Profiling.Profiler.GetTotalReservedMemoryLong() / (1024.0 * 1024.0),
+                totalUnusedReservedMB = UnityEngine.Profiling.Profiler.GetTotalUnusedReservedMemoryLong() / (1024.0 * 1024.0),
+                monoUsedSizeMB = UnityEngine.Profiling.Profiler.GetMonoUsedSizeLong() / (1024.0 * 1024.0),
+                monoHeapSizeMB = UnityEngine.Profiling.Profiler.GetMonoHeapSizeLong() / (1024.0 * 1024.0)
+            };
+        }
     }
 }

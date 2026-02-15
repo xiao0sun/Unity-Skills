@@ -174,5 +174,108 @@ namespace UnitySkills
                 return test.Children.Sum(c => CountTests(c));
             }
         }
+
+        [UnitySkill("test_run_by_name", "Run specific tests by class or method name")]
+        public static object TestRunByName(string testName, string testMode = "EditMode")
+        {
+            if (_api == null) _api = ScriptableObject.CreateInstance<TestRunnerApi>();
+            var mode = testMode.ToLower() == "playmode" ? TestMode.PlayMode : TestMode.EditMode;
+            var jobId = System.Guid.NewGuid().ToString("N").Substring(0, 8);
+            var runInfo = new TestRunInfo { JobId = jobId, StartTime = System.DateTime.Now };
+            _runningTests[jobId] = runInfo;
+            _api.RegisterCallbacks(new TestCallbacks(runInfo));
+            _api.Execute(new ExecutionSettings(new Filter { testMode = mode, testNames = new[] { testName } }));
+            return new { success = true, jobId, testName, testMode };
+        }
+
+        [UnitySkill("test_get_last_result", "Get the most recent test run result")]
+        public static object TestGetLastResult()
+        {
+            if (_runningTests.Count == 0) return new { error = "No test runs found" };
+            var last = _runningTests.Values.OrderByDescending(r => r.StartTime).First();
+            return new { jobId = last.JobId, status = last.Status, total = last.TotalTests, passed = last.PassedTests, failed = last.FailedTests, failedNames = last.FailedTestNames.ToArray() };
+        }
+
+        [UnitySkill("test_list_categories", "List test categories")]
+        public static object TestListCategories(string testMode = "EditMode")
+        {
+            if (_api == null) _api = ScriptableObject.CreateInstance<TestRunnerApi>();
+            var mode = testMode.ToLower() == "playmode" ? TestMode.PlayMode : TestMode.EditMode;
+            var categories = new HashSet<string>();
+            _api.RetrieveTestList(mode, (testRoot) => CollectCategories(testRoot, categories));
+            return new { success = true, count = categories.Count, categories = categories.OrderBy(c => c).ToArray() };
+        }
+
+        private static void CollectCategories(ITestAdaptor test, HashSet<string> categories)
+        {
+            if (test.Categories != null)
+                foreach (var cat in test.Categories) categories.Add(cat);
+            if (test.HasChildren)
+                foreach (var child in test.Children) CollectCategories(child, categories);
+        }
+
+        [UnitySkill("test_create_editmode", "Create an EditMode test script template")]
+        public static object TestCreateEditMode(string testName, string folder = "Assets/Tests/Editor")
+        {
+            if (!System.IO.Directory.Exists(folder)) System.IO.Directory.CreateDirectory(folder);
+            var path = System.IO.Path.Combine(folder, testName + ".cs");
+            if (System.IO.File.Exists(path)) return new { error = $"File already exists: {path}" };
+            var content = $@"using NUnit.Framework;
+using UnityEngine;
+
+[TestFixture]
+public class {testName}
+{{
+    [Test]
+    public void SampleTest()
+    {{
+        Assert.Pass();
+    }}
+}}
+";
+            System.IO.File.WriteAllText(path, content);
+            AssetDatabase.ImportAsset(path);
+            return new { success = true, path, testName };
+        }
+
+        [UnitySkill("test_create_playmode", "Create a PlayMode test script template")]
+        public static object TestCreatePlayMode(string testName, string folder = "Assets/Tests/Runtime")
+        {
+            if (!System.IO.Directory.Exists(folder)) System.IO.Directory.CreateDirectory(folder);
+            var path = System.IO.Path.Combine(folder, testName + ".cs");
+            if (System.IO.File.Exists(path)) return new { error = $"File already exists: {path}" };
+            var content = $@"using System.Collections;
+using NUnit.Framework;
+using UnityEngine;
+using UnityEngine.TestTools;
+
+public class {testName}
+{{
+    [UnityTest]
+    public IEnumerator SamplePlayModeTest()
+    {{
+        yield return null;
+        Assert.Pass();
+    }}
+}}
+";
+            System.IO.File.WriteAllText(path, content);
+            AssetDatabase.ImportAsset(path);
+            return new { success = true, path, testName };
+        }
+
+        [UnitySkill("test_get_summary", "Get aggregated test summary across all runs")]
+        public static object TestGetSummary()
+        {
+            var runs = _runningTests.Values.ToList();
+            return new
+            {
+                success = true, totalRuns = runs.Count,
+                completedRuns = runs.Count(r => r.Status == "completed"),
+                totalPassed = runs.Sum(r => r.PassedTests),
+                totalFailed = runs.Sum(r => r.FailedTests),
+                allFailedTests = runs.SelectMany(r => r.FailedTestNames).Distinct().ToArray()
+            };
+        }
     }
 }

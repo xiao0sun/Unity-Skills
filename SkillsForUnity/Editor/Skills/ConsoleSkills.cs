@@ -106,5 +106,67 @@ namespace UnitySkills
             if (_logs.Count > 1000)
                 _logs.RemoveAt(0);
         }
+
+        [UnitySkill("console_set_pause_on_error", "Enable or disable Error Pause in Play mode")]
+        public static object ConsoleSetPauseOnError(bool enabled = true)
+        {
+            var consoleType = System.Type.GetType("UnityEditor.ConsoleWindow, UnityEditor");
+            if (consoleType == null) return new { error = "ConsoleWindow not found" };
+            var flagField = consoleType.GetField("s_ConsoleFlags", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            if (flagField == null) { EditorPrefs.SetBool("DeveloperMode_ErrorPause", enabled); return new { success = true, enabled, note = "Set via EditorPrefs" }; }
+            int flags = (int)flagField.GetValue(null);
+            flags = enabled ? flags | 256 : flags & ~256;
+            flagField.SetValue(null, flags);
+            return new { success = true, enabled };
+        }
+
+        [UnitySkill("console_export", "Export captured logs to a file")]
+        public static object ConsoleExport(string savePath = "Assets/console_log.txt")
+        {
+            if (Validate.SafePath(savePath, "savePath") is object pathErr) return pathErr;
+            var dir = System.IO.Path.GetDirectoryName(savePath);
+            if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
+            var lines = _logs.Select(l => $"[{l.time:HH:mm:ss.fff}] [{l.type}] {l.message}");
+            System.IO.File.WriteAllLines(savePath, lines);
+            return new { success = true, path = savePath, count = _logs.Count };
+        }
+
+        [UnitySkill("console_get_stats", "Get log statistics (count by type)")]
+        public static object ConsoleGetStats()
+        {
+            return new
+            {
+                success = true, total = _logs.Count,
+                logs = _logs.Count(l => l.type == LogType.Log),
+                warnings = _logs.Count(l => l.type == LogType.Warning),
+                errors = _logs.Count(l => l.type == LogType.Error),
+                exceptions = _logs.Count(l => l.type == LogType.Exception),
+                asserts = _logs.Count(l => l.type == LogType.Assert)
+            };
+        }
+
+        [UnitySkill("console_set_collapse", "Set console log collapse mode")]
+        public static object ConsoleSetCollapse(bool enabled)
+        {
+            return SetConsoleFlag(32, enabled, "Collapse");
+        }
+
+        [UnitySkill("console_set_clear_on_play", "Set clear on play mode")]
+        public static object ConsoleSetClearOnPlay(bool enabled)
+        {
+            return SetConsoleFlag(16, enabled, "ClearOnPlay");
+        }
+
+        private static object SetConsoleFlag(int flag, bool enabled, string name)
+        {
+            var consoleType = System.Type.GetType("UnityEditor.ConsoleWindow, UnityEditor");
+            if (consoleType == null) return new { error = "ConsoleWindow not found" };
+            var flagField = consoleType.GetField("s_ConsoleFlags", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+            if (flagField == null) return new { error = "Console flags not accessible" };
+            int flags = (int)flagField.GetValue(null);
+            flags = enabled ? flags | flag : flags & ~flag;
+            flagField.SetValue(null, flags);
+            return new { success = true, setting = name, enabled };
+        }
     }
 }

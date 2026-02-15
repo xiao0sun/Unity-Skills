@@ -37,9 +37,31 @@ namespace UnitySkills
             "ui_create_image", "ui_create_inputfield", "ui_create_slider", "ui_create_toggle",
             "ui_create_batch", "ui_set_text", "ui_set_anchor", "ui_set_rect",
             "script_create", "script_delete", "script_create_batch",
+            "script_replace", "script_rename", "script_move",
             "terrain_create", "terrain_set_height", "terrain_set_heights_batch", "terrain_paint_texture",
             "asset_import", "asset_delete", "asset_move", "asset_duplicate",
-            "scene_create", "scene_save"
+            "asset_set_labels",
+            "scene_create", "scene_save",
+            "camera_create", "camera_set_properties", "camera_set_culling_mask", "camera_set_orthographic",
+            "physics_create_material", "physics_set_material", "physics_set_layer_collision", "physics_set_gravity",
+            "timeline_create", "timeline_add_audio_track", "timeline_add_animation_track",
+            "timeline_add_activation_track", "timeline_add_control_track", "timeline_add_signal_track",
+            "timeline_remove_track", "timeline_add_clip", "timeline_set_duration", "timeline_set_binding",
+            "texture_set_import_settings", "model_set_import_settings",
+            "audio_set_import_settings", "sprite_set_import_settings",
+            "navmesh_add_agent", "navmesh_set_agent", "navmesh_add_obstacle", "navmesh_set_obstacle",
+            "navmesh_set_area_cost",
+            "shader_create", "shader_delete", "shader_create_urp", "shader_set_global_keyword",
+            "cleaner_delete_assets", "cleaner_delete_empty_folders", "cleaner_fix_missing_scripts",
+            "scriptableobject_create", "scriptableobject_set", "scriptableobject_set_batch",
+            "scriptableobject_delete", "scriptableobject_import_json",
+            "event_add_listener", "event_remove_listener", "event_clear_listeners",
+            "event_set_listener_state", "event_add_listener_batch", "event_copy_listeners",
+            "smart_scene_layout", "smart_reference_bind", "smart_align_to_ground",
+            "smart_distribute", "smart_snap_to_grid", "smart_randomize_transform", "smart_replace_objects",
+            "console_set_pause_on_error", "console_set_collapse", "console_set_clear_on_play",
+            "debug_set_defines",
+            "project_add_tag", "project_set_quality_level"
         };
 
         // JSON 序列化设置，禁用 Unicode 转义确保中文正确显示

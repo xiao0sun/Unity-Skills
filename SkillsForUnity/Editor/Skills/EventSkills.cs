@@ -254,5 +254,121 @@ namespace UnitySkills
 
             return new { success = true, message = "Event invoked" };
         }
+
+        // Helper to find UnityEventBase on a component
+        private static (UnityEventBase evt, Component comp, object error) FindEvent(string objectName, string componentName, string eventName)
+        {
+            var (go, findErr) = GameObjectFinder.FindOrError(name: objectName);
+            if (findErr != null) return (null, null, findErr);
+            var component = go.GetComponent(componentName);
+            if (component == null) return (null, null, new { error = $"Component not found: {componentName}" });
+            var type = component.GetType();
+            var field = type.GetField(eventName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            var property = type.GetProperty(eventName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            UnityEventBase evt = null;
+            if (field != null) evt = field.GetValue(component) as UnityEventBase;
+            else if (property != null) evt = property.GetValue(component) as UnityEventBase;
+            if (evt == null) return (null, null, new { error = $"UnityEvent '{eventName}' not found" });
+            return (evt, component, null);
+        }
+
+        [UnitySkill("event_clear_listeners", "Remove all persistent listeners from a UnityEvent")]
+        public static object EventClearListeners(string objectName, string componentName, string eventName)
+        {
+            var (evt, comp, err) = FindEvent(objectName, componentName, eventName);
+            if (err != null) return err;
+            WorkflowManager.SnapshotObject(comp);
+            Undo.RecordObject(comp, "Clear Listeners");
+            int count = evt.GetPersistentEventCount();
+            for (int i = count - 1; i >= 0; i--)
+                UnityEventTools.RemovePersistentListener(evt, i);
+            return new { success = true, removed = count };
+        }
+
+        [UnitySkill("event_set_listener_state", "Set a listener's call state (Off, RuntimeOnly, EditorAndRuntime)")]
+        public static object EventSetListenerState(string objectName, string componentName, string eventName, int index, string state)
+        {
+            var (evt, comp, err) = FindEvent(objectName, componentName, eventName);
+            if (err != null) return err;
+            if (index < 0 || index >= evt.GetPersistentEventCount()) return new { error = "Index out of range" };
+            if (!System.Enum.TryParse<UnityEventCallState>(state, true, out var callState)) return new { error = $"Invalid state: {state}" };
+            WorkflowManager.SnapshotObject(comp);
+            Undo.RecordObject(comp, "Set Listener State");
+            evt.SetPersistentListenerState(index, callState);
+            return new { success = true, index, state = callState.ToString() };
+        }
+
+        [UnitySkill("event_list_events", "List all UnityEvent fields on a component")]
+        public static object EventListEvents(string objectName, string componentName)
+        {
+            var (go, findErr) = GameObjectFinder.FindOrError(name: objectName);
+            if (findErr != null) return findErr;
+            var component = go.GetComponent(componentName);
+            if (component == null) return new { error = $"Component not found: {componentName}" };
+            var type = component.GetType();
+            var events = type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .Where(f => typeof(UnityEventBase).IsAssignableFrom(f.FieldType))
+                .Select(f => { var e = f.GetValue(component) as UnityEventBase; return new { name = f.Name, type = f.FieldType.Name, listenerCount = e?.GetPersistentEventCount() ?? 0 }; })
+                .ToArray();
+            return new { success = true, component = componentName, count = events.Length, events };
+        }
+
+        [UnitySkill("event_add_listener_batch", "Add multiple listeners at once. items: JSON array of {targetObjectName, targetComponentName, methodName}")]
+        public static object EventAddListenerBatch(string objectName, string componentName, string eventName, string items)
+        {
+            var list = Newtonsoft.Json.JsonConvert.DeserializeObject<List<BatchListenerItem>>(items);
+            if (list == null || list.Count == 0) return new { error = "No items provided" };
+            int added = 0;
+            foreach (var item in list)
+            {
+                var result = EventAddListener(objectName, componentName, eventName, item.targetObjectName, item.targetComponentName, item.methodName);
+                var json = Newtonsoft.Json.JsonConvert.SerializeObject(result);
+                if (!json.Contains("\"error\"")) added++;
+            }
+            return new { success = true, added, total = list.Count };
+        }
+
+        private class BatchListenerItem
+        {
+            public string targetObjectName { get; set; }
+            public string targetComponentName { get; set; }
+            public string methodName { get; set; }
+        }
+
+        [UnitySkill("event_copy_listeners", "Copy listeners from one event to another")]
+        public static object EventCopyListeners(string sourceObject, string sourceComponent, string sourceEvent,
+            string targetObject, string targetComponent, string targetEvent)
+        {
+            var (srcEvt, srcComp, srcErr) = FindEvent(sourceObject, sourceComponent, sourceEvent);
+            if (srcErr != null) return srcErr;
+            var (tgtEvt, tgtComp, tgtErr) = FindEvent(targetObject, targetComponent, targetEvent);
+            if (tgtErr != null) return tgtErr;
+            if (!(tgtEvt is UnityEvent tgtUnityEvent)) return new { error = "Target must be a standard UnityEvent" };
+            WorkflowManager.SnapshotObject(tgtComp);
+            Undo.RecordObject(tgtComp, "Copy Listeners");
+            int copied = 0;
+            for (int i = 0; i < srcEvt.GetPersistentEventCount(); i++)
+            {
+                var target = srcEvt.GetPersistentTarget(i);
+                var method = srcEvt.GetPersistentMethodName(i);
+                if (target == null) continue;
+                var mi = target.GetType().GetMethod(method, BindingFlags.Instance | BindingFlags.Public, null, System.Type.EmptyTypes, null);
+                if (mi != null)
+                {
+                    var del = System.Delegate.CreateDelegate(typeof(UnityAction), target, mi) as UnityAction;
+                    UnityEventTools.AddPersistentListener(tgtUnityEvent, del);
+                    copied++;
+                }
+            }
+            return new { success = true, copied };
+        }
+
+        [UnitySkill("event_get_listener_count", "Get the number of persistent listeners on a UnityEvent")]
+        public static object EventGetListenerCount(string objectName, string componentName, string eventName)
+        {
+            var (evt, comp, err) = FindEvent(objectName, componentName, eventName);
+            if (err != null) return err;
+            return new { success = true, count = evt.GetPersistentEventCount() };
+        }
     }
 }

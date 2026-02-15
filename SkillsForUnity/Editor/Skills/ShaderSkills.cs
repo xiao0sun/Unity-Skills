@@ -177,5 +177,127 @@ namespace UnitySkills
             AssetDatabase.DeleteAsset(shaderPath);
             return new { success = true, deleted = shaderPath };
         }
+
+        [UnitySkill("shader_check_errors", "Check shader for compilation errors")]
+        public static object ShaderCheckErrors(string shaderNameOrPath)
+        {
+            Shader shader = shaderNameOrPath.EndsWith(".shader")
+                ? AssetDatabase.LoadAssetAtPath<Shader>(shaderNameOrPath)
+                : Shader.Find(shaderNameOrPath);
+            if (shader == null) return new { error = $"Shader not found: {shaderNameOrPath}" };
+            int msgCount = ShaderUtil.GetShaderMessageCount(shader);
+            var messages = Enumerable.Range(0, msgCount).Select(i =>
+            {
+                var msg = ShaderUtil.GetShaderMessage(shader, i);
+                return new { message = msg.message, severity = msg.severity.ToString(), line = msg.line, platform = msg.platform.ToString() };
+            }).ToArray();
+            return new { shaderName = shader.name, hasErrors = msgCount > 0, messageCount = msgCount, messages };
+        }
+
+        [UnitySkill("shader_get_keywords", "Get shader keyword list")]
+        public static object ShaderGetKeywords(string shaderNameOrPath)
+        {
+            Shader shader = shaderNameOrPath.EndsWith(".shader")
+                ? AssetDatabase.LoadAssetAtPath<Shader>(shaderNameOrPath)
+                : Shader.Find(shaderNameOrPath);
+            if (shader == null) return new { error = $"Shader not found: {shaderNameOrPath}" };
+            var keywords = shader.keywordSpace.keywords.Select(k => new { name = k.name, type = k.type.ToString() }).ToArray();
+            return new { shaderName = shader.name, keywordCount = keywords.Length, keywords };
+        }
+
+        [UnitySkill("shader_get_variant_count", "Get shader variant count for performance analysis")]
+        public static object ShaderGetVariantCount(string shaderNameOrPath)
+        {
+            Shader shader = shaderNameOrPath.EndsWith(".shader")
+                ? AssetDatabase.LoadAssetAtPath<Shader>(shaderNameOrPath)
+                : Shader.Find(shaderNameOrPath);
+            if (shader == null) return new { error = $"Shader not found: {shaderNameOrPath}" };
+            var data = ShaderUtil.GetShaderData(shader);
+            int totalVariants = 0;
+            int subshaderCount = data.SubshaderCount;
+            for (int s = 0; s < subshaderCount; s++)
+            {
+                var sub = data.GetSubshader(s);
+                for (int p = 0; p < sub.PassCount; p++)
+                    totalVariants += (int)sub.GetPass(p).SourceVariantCount;
+            }
+            return new { shaderName = shader.name, subshaderCount, totalSourceVariants = totalVariants };
+        }
+
+        [UnitySkill("shader_create_urp", "Create a URP shader from template (type: Unlit or Lit)")]
+        public static object ShaderCreateUrp(string shaderName, string savePath, string type = "Unlit")
+        {
+            if (File.Exists(savePath)) return new { error = $"File already exists: {savePath}" };
+            if (Validate.SafePath(savePath, "savePath") is object pathErr2) return pathErr2;
+            var dir = Path.GetDirectoryName(savePath);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+            string content = type.ToLower() == "lit"
+                ? $@"Shader ""{shaderName}""
+{{
+    Properties
+    {{
+        _BaseMap (""Base Map"", 2D) = ""white"" {{}}
+        _BaseColor (""Base Color"", Color) = (1,1,1,1)
+    }}
+    SubShader
+    {{
+        Tags {{ ""RenderType""=""Opaque"" ""RenderPipeline""=""UniversalPipeline"" }}
+        Pass
+        {{
+            Name ""ForwardLit""
+            Tags {{ ""LightMode""=""UniversalForward"" }}
+            HLSLPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include ""Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl""
+            #include ""Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl""
+            struct Attributes {{ float4 positionOS : POSITION; float2 uv : TEXCOORD0; float3 normalOS : NORMAL; }};
+            struct Varyings {{ float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; float3 normalWS : TEXCOORD1; }};
+            TEXTURE2D(_BaseMap); SAMPLER(sampler_BaseMap);
+            CBUFFER_START(UnityPerMaterial) float4 _BaseMap_ST; half4 _BaseColor; CBUFFER_END
+            Varyings vert(Attributes IN) {{ Varyings OUT; OUT.positionCS = TransformObjectToHClip(IN.positionOS.xyz); OUT.uv = TRANSFORM_TEX(IN.uv, _BaseMap); OUT.normalWS = TransformObjectToWorldNormal(IN.normalOS); return OUT; }}
+            half4 frag(Varyings IN) : SV_Target {{ half4 col = SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, IN.uv) * _BaseColor; return col; }}
+            ENDHLSL
+        }}
+    }}
+}}"
+                : $@"Shader ""{shaderName}""
+{{
+    Properties
+    {{
+        _BaseMap (""Base Map"", 2D) = ""white"" {{}}
+        _BaseColor (""Base Color"", Color) = (1,1,1,1)
+    }}
+    SubShader
+    {{
+        Tags {{ ""RenderType""=""Opaque"" ""RenderPipeline""=""UniversalPipeline"" }}
+        Pass
+        {{
+            HLSLPROGRAM
+            #pragma vertex vert
+            #pragma fragment frag
+            #include ""Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl""
+            struct Attributes {{ float4 positionOS : POSITION; float2 uv : TEXCOORD0; }};
+            struct Varyings {{ float4 positionCS : SV_POSITION; float2 uv : TEXCOORD0; }};
+            TEXTURE2D(_BaseMap); SAMPLER(sampler_BaseMap);
+            CBUFFER_START(UnityPerMaterial) float4 _BaseMap_ST; half4 _BaseColor; CBUFFER_END
+            Varyings vert(Attributes IN) {{ Varyings OUT; OUT.positionCS = TransformObjectToHClip(IN.positionOS.xyz); OUT.uv = TRANSFORM_TEX(IN.uv, _BaseMap); return OUT; }}
+            half4 frag(Varyings IN) : SV_Target {{ return SAMPLE_TEXTURE2D(_BaseMap, sampler_BaseMap, IN.uv) * _BaseColor; }}
+            ENDHLSL
+        }}
+    }}
+}}";
+            File.WriteAllText(savePath, content);
+            AssetDatabase.ImportAsset(savePath);
+            return new { success = true, shaderName, path = savePath, type };
+        }
+
+        [UnitySkill("shader_set_global_keyword", "Enable or disable a global shader keyword")]
+        public static object ShaderSetGlobalKeyword(string keyword, bool enabled)
+        {
+            if (enabled) Shader.EnableKeyword(keyword);
+            else Shader.DisableKeyword(keyword);
+            return new { success = true, keyword, enabled };
+        }
     }
 }

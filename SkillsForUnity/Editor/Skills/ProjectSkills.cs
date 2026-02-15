@@ -259,7 +259,7 @@ namespace UnitySkills
         {
             var qualityNames = QualitySettings.names;
             var currentLevel = QualitySettings.GetQualityLevel();
-            
+
             return new
             {
                 success = true,
@@ -273,6 +273,92 @@ namespace UnitySkills
                 lodBias = QualitySettings.lodBias,
                 maximumLODLevel = QualitySettings.maximumLODLevel
             };
+        }
+
+        [UnitySkill("project_get_build_settings", "Get build settings (platform, scenes)")]
+        public static object ProjectGetBuildSettings()
+        {
+            var scenes = EditorBuildSettings.scenes.Select((s, i) => new { index = i, path = s.path, enabled = s.enabled }).ToArray();
+            return new
+            {
+                success = true,
+                activeBuildTarget = EditorUserBuildSettings.activeBuildTarget.ToString(),
+                buildTargetGroup = EditorUserBuildSettings.selectedBuildTargetGroup.ToString(),
+                sceneCount = scenes.Length,
+                scenes
+            };
+        }
+
+        [UnitySkill("project_get_packages", "List installed UPM packages")]
+        public static object ProjectGetPackages()
+        {
+            var manifestPath = "Packages/manifest.json";
+            if (!File.Exists(manifestPath)) return new { error = "manifest.json not found" };
+            var json = File.ReadAllText(manifestPath);
+            return new { success = true, manifest = json };
+        }
+
+        [UnitySkill("project_get_layers", "Get all Layer definitions")]
+        public static object ProjectGetLayers()
+        {
+            var layers = UnityEditorInternal.InternalEditorUtility.layers;
+            return new { success = true, count = layers.Length, layers };
+        }
+
+        [UnitySkill("project_get_tags", "Get all Tag definitions")]
+        public static object ProjectGetTags()
+        {
+            var tags = UnityEditorInternal.InternalEditorUtility.tags;
+            return new { success = true, count = tags.Length, tags };
+        }
+
+        [UnitySkill("project_add_tag", "Add a custom Tag")]
+        public static object ProjectAddTag(string tagName)
+        {
+            var tagManager = new SerializedObject(AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/TagManager.asset")[0]);
+            var tagsProp = tagManager.FindProperty("tags");
+            for (int i = 0; i < tagsProp.arraySize; i++)
+            {
+                if (tagsProp.GetArrayElementAtIndex(i).stringValue == tagName)
+                    return new { error = $"Tag '{tagName}' already exists" };
+            }
+            tagsProp.InsertArrayElementAtIndex(tagsProp.arraySize);
+            tagsProp.GetArrayElementAtIndex(tagsProp.arraySize - 1).stringValue = tagName;
+            tagManager.ApplyModifiedProperties();
+            return new { success = true, tag = tagName };
+        }
+
+        [UnitySkill("project_get_player_settings", "Get Player Settings")]
+        public static object ProjectGetPlayerSettings()
+        {
+            return new
+            {
+                success = true,
+                productName = PlayerSettings.productName,
+                companyName = PlayerSettings.companyName,
+                bundleVersion = PlayerSettings.bundleVersion,
+                defaultScreenWidth = PlayerSettings.defaultScreenWidth,
+                defaultScreenHeight = PlayerSettings.defaultScreenHeight,
+                fullscreen = PlayerSettings.fullScreenMode.ToString(),
+                apiCompatibility = PlayerSettings.GetApiCompatibilityLevel(EditorUserBuildSettings.selectedBuildTargetGroup).ToString(),
+                scriptingBackend = PlayerSettings.GetScriptingBackend(EditorUserBuildSettings.selectedBuildTargetGroup).ToString()
+            };
+        }
+
+        [UnitySkill("project_set_quality_level", "Switch quality level by index or name")]
+        public static object ProjectSetQualityLevel(int level = -1, string levelName = null)
+        {
+            if (!string.IsNullOrEmpty(levelName))
+            {
+                var names = QualitySettings.names;
+                for (int i = 0; i < names.Length; i++)
+                    if (names[i] == levelName) { level = i; break; }
+                if (level < 0) return new { error = $"Quality level '{levelName}' not found" };
+            }
+            if (level < 0 || level >= QualitySettings.names.Length)
+                return new { error = $"Invalid quality level: {level}" };
+            QualitySettings.SetQualityLevel(level, true);
+            return new { success = true, level, name = QualitySettings.names[level] };
         }
     }
 }

@@ -36,7 +36,7 @@
 │             SkillsForUnity (Unity Editor Plugin)             │
 │  ┌─────────────────┐  ┌─────────────┐  ┌─────────────────┐  │
 │  │ SkillsHttpServer│→ │ SkillRouter │→ │[UnitySkill] 方法│  │
-│  │ (Multi-Instance)│  │(Auto-Undo)  │  │  (282 Skills)   │  │
+│  │ (Multi-Instance)│  │(Auto-Undo)  │  │  (378 Skills)   │  │
 │  └─────────────────┘  └─────────────┘  └─────────────────┘  │
 │           ↓                  ↓                              │
 │  ┌─────────────────┐  ┌─────────────────────────────────┐   │
@@ -118,8 +118,8 @@ Unity-Skills/
 │           ├── ScriptSkills.cs         # Script 管理 (6 skills)
 │           ├── ShaderSkills.cs         # Shader 操作 (6 skills)
 │           ├── PerceptionSkills.cs     # Perception 场景理解 (8 skills)
-│           ├── SmartSkills.cs          # AI 推理技能 (3 skills)
-│           └── ... (38 个 *Skills.cs 文件, 共 282 Skills)
+│           ├── SmartSkills.cs          # AI 推理技能 (10 skills)
+│           └── ... (37 个 *Skills.cs 文件, 共 378 Skills)
 │
 ├── unity-skills/                   # 跨平台 AI Skill 模板 (分发给 AI 工具)
 │   ├── SKILL.md                    # 主 Skill 定义 (AI 读取)
@@ -235,7 +235,7 @@ v1.5.0 对全部 38 个 C# 文件 + Python 客户端进行了完整审计，修�
 
 ---
 
-## 📊 Skills 模块汇总 (282)
+## 📊 Skills 模块汇总 (378)
 
 | 模块 | Skills 数量 | 核心功能 |
 |------|:-----------:|----------|
@@ -245,36 +245,34 @@ v1.5.0 对全部 38 个 C# 文件 + Python 客户端进行了完整审计，修�
 | **GameObject** | 18 | 创建/查找/变换同步/批量操作/层级管理 |
 | **UI System** | 16 | Canvas/Button/Text/Slider/锚点/布局 |
 | **Editor** | 12 | 播放模式/选择/撤销重做/上下文获取 |
+| **Timeline** | 12 | 轨道创建/删除/Clip管理/播放控制/绑定/时长设置 |
+| **Physics** | 12 | 射线检测/球形投射/盒形投射/物理材质/层碰撞矩阵 |
 | **Asset** | 11 | 资产导入/搜索/文件夹/GUID管理 |
+| **AssetImport** | 11 | 纹理/模型/音频/Sprite导入设置/标签管理 |
+| **ProjectSkills** | 11 | 渲染管线/构建设置/包管理/Layer/Tag/PlayerSettings |
+| **ShaderSkills** | 11 | Shader创建/URP模板/编译检查/关键字/变体分析 |
+| **Script** | 11 | C#脚本创建/读取/替换/列表/信息/重命名/移动 |
+| **Camera** | 11 | Scene View控制/Game Camera创建/属性/截图/正交切换 |
 | **Terrain** | 10 | 地形创建/高度图/Perlin噪声/纹理绘制 |
+| **NavMesh** | 10 | 烘焙/路径计算/Agent/Obstacle/采样/区域代价 |
+| **Cleaner** | 10 | 未使用资源/重复文件/空文件夹/丢失脚本修复/依赖树 |
+| **ScriptableObject** | 10 | 创建/读写/批量设置/删除/查找/JSON导入导出 |
+| **Console** | 10 | 日志捕获/清理/导出/统计/暂停控制/折叠/播放清除 |
+| **Debug** | 10 | 错误日志/编译检查/堆栈/程序集/定义符号/内存信息 |
+| **Event** | 10 | UnityEvent监听器管理/批量添加/复制/状态控制/列举 |
+| **Smart** | 10 | 场景SQL查询/空间查询/自动布局/对齐地面/网格吸附/随机化/替换 |
+| **Test** | 10 | 测试运行/按名运行/分类/模板创建/汇总统计 |
 | **Scene** | 9 | 多场景加载/卸载/激活/截图 |
-| **Texture/Audio/Model** | 9 | 导入设置/压缩格式/质量优化 |
 | **Prefab** | 8 | 创建/实例化/覆盖应用与恢复/批量实例化 |
 | **Component** | 8 | 添加/移除/属性配置/批量操作 |
 | **Animator** | 8 | 动画控制器/参数/状态机/过渡 |
 | **Sample** | 8 | 示例场景/测试用例生成 |
+| **Perception** | 8 | 场景摘要/层级树/脚本分析/空间查询/材质概览/场景快照/依赖分析/场景报告导出 |
 | **Light** | 7 | 灯光创建/类型配置/强度颜色/批量开关 |
 | **Validation** | 7 | 项目验证/空文件夹清理/引用检测 |
-| **Script** | 6 | C# 脚本创建/编译检查/搜索 |
-| **Shader** | 6 | Shader 查找/创建/属性列举 |
-| **Debug** | 5 | 调试绘图/射线/Gizmos/Scene标注 |
-| **Console** | 5 | 日志捕获/清理/输出监视 |
-| **Cleaner** | 5 | 未使用资源/重复文件/丢失引用检测 |
-| **ScriptableObject** | 5 | 创建SO实例/读写数据/查找 |
-| **Event** | 4 | UnityEvent 监听器管理/调用 |
-| **Project** | 4 | 渲染管线检测/Shader列表/质量设置 |
-| **DebugEnhance** | 4 | 控制台日志增强/错误时暂停 |
-| **Physics** | 4 | 物理材质/射线检测/层设置 |
-| **Camera** | 4 | 相机创建/属性配置/截屏/视角对齐 |
-| **AssetImport** | 4 | 强制重导入/批量修复/刷新 |
-| **Test** | 4 | 断言测试/边界条件/性能测试 |
-| **Perception** | 8 | 场景摘要/层级树/脚本分析/空间查询/材质概览/场景快照/依赖分析/场景报告导出(含C#代码级依赖) [Smart] |
-| **Smart** | 3 | 场景SQL查询/自动布局/引用绑定 |
-| **NavMesh** | 3 | 烘焙设置/代理创建/路径计算 |
-| **Timeline** | 3 | 轨道创建/剪辑添加/绑定 |
+| **Package** | 7 | 包管理/Cinemachine安装/依赖处理 |
 | **Optimization** | 2 | 纹理压缩批量优化/模型网格压缩 |
 | **Profiler** | 1 | 获取性能统计 (FPS/Memory) |
-| **Package** | 7 | 包管理/Cinemachine安装/依赖处理 [v1.4.2] |
 
 > ⚠️ **重要提示**：大部分模块都支持 `*_batch` 批量操作，操作多个物体时应优先使用批量 Skills。
 
