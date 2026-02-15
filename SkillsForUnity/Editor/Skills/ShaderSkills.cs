@@ -186,12 +186,7 @@ namespace UnitySkills
                 : Shader.Find(shaderNameOrPath);
             if (shader == null) return new { error = $"Shader not found: {shaderNameOrPath}" };
             int msgCount = ShaderUtil.GetShaderMessageCount(shader);
-            var messages = Enumerable.Range(0, msgCount).Select(i =>
-            {
-                var msg = ShaderUtil.GetShaderMessage(shader, i);
-                return new { message = msg.message, severity = msg.severity.ToString(), line = msg.line, platform = msg.platform.ToString() };
-            }).ToArray();
-            return new { shaderName = shader.name, hasErrors = msgCount > 0, messageCount = msgCount, messages };
+            return new { shaderName = shader.name, hasErrors = msgCount > 0, messageCount = msgCount };
         }
 
         [UnitySkill("shader_get_keywords", "Get shader keyword list")]
@@ -218,10 +213,9 @@ namespace UnitySkills
             for (int s = 0; s < subshaderCount; s++)
             {
                 var sub = data.GetSubshader(s);
-                for (int p = 0; p < sub.PassCount; p++)
-                    totalVariants += (int)sub.GetPass(p).SourceVariantCount;
+                totalVariants += sub.PassCount;
             }
-            return new { shaderName = shader.name, subshaderCount, totalSourceVariants = totalVariants };
+            return new { shaderName = shader.name, subshaderCount, totalPasses = totalVariants };
         }
 
         [UnitySkill("shader_create_urp", "Create a URP shader from template (type: Unlit or Lit)")]

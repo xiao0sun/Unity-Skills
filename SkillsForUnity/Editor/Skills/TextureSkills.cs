@@ -312,8 +312,8 @@ namespace UnitySkills
                 maxTextureSize = ps.maxTextureSize, format = ps.format.ToString(), compressionQuality = ps.compressionQuality };
         }
 
-        [UnitySkill("texture_set_sprite_settings", "Configure Sprite-specific settings (pixelsPerUnit, meshType, spriteMode)")]
-        public static object TextureSetSpriteSettings(string assetPath, float? pixelsPerUnit = null, string spriteMode = null, string meshType = null)
+        [UnitySkill("texture_set_sprite_settings", "Configure Sprite-specific settings (pixelsPerUnit, spriteMode)")]
+        public static object TextureSetSpriteSettings(string assetPath, float? pixelsPerUnit = null, string spriteMode = null)
         {
             if (Validate.Required(assetPath, "assetPath") is object err) return err;
             var importer = AssetImporter.GetAtPath(assetPath) as TextureImporter;
@@ -325,12 +325,10 @@ namespace UnitySkills
             if (pixelsPerUnit.HasValue) importer.spritePixelsPerUnit = pixelsPerUnit.Value;
             if (!string.IsNullOrEmpty(spriteMode) && System.Enum.TryParse<SpriteImportMode>(spriteMode, true, out var sm))
                 importer.spriteImportMode = sm;
-            if (!string.IsNullOrEmpty(meshType) && System.Enum.TryParse<SpriteMeshType>(meshType, true, out var mt))
-                importer.spriteMeshType = mt;
 
             importer.SaveAndReimport();
             return new { success = true, path = assetPath, pixelsPerUnit = importer.spritePixelsPerUnit,
-                spriteMode = importer.spriteImportMode.ToString(), meshType = importer.spriteMeshType.ToString() };
+                spriteMode = importer.spriteImportMode.ToString() };
         }
 
         [UnitySkill("texture_find_by_size", "Find textures by dimension range (minSize/maxSize in pixels)")]

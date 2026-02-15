@@ -897,7 +897,7 @@ namespace UnitySkills
             var (dstGo, dstErr) = GameObjectFinder.FindOrError(name: targetObject);
             if (dstErr != null) return dstErr;
 
-            var type = ResolveType(componentType);
+            var type = FindComponentType(componentType);
             if (type == null) return new { error = $"Component type not found: {componentType}" };
 
             var srcComp = srcGo.GetComponent(type);
@@ -915,7 +915,7 @@ namespace UnitySkills
             var (go, findErr) = GameObjectFinder.FindOrError(name, instanceId, path);
             if (findErr != null) return findErr;
 
-            var type = ResolveType(componentType);
+            var type = FindComponentType(componentType);
             if (type == null) return new { error = $"Component type not found: {componentType}" };
 
             var comp = go.GetComponent(type);
