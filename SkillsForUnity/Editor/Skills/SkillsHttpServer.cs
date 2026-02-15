@@ -830,6 +830,7 @@ namespace UnitySkills
             int port = _port;
             ThreadPool.QueueUserWorkItem(_ =>
             {
+                // 1. Reachability test
                 var hosts = new[] { "localhost", "127.0.0.1" };
                 foreach (var host in hosts)
                 {
@@ -852,6 +853,28 @@ namespace UnitySkills
                         SkillsLogger.LogError($"[Self-Test] Check firewall/antivirus settings.");
                     }
                 }
+
+                // 2. Port scan: report occupied ports in 8090-8100
+                var occupied = new List<string>();
+                for (int p = 8090; p <= 8100; p++)
+                {
+                    if (p == port) continue; // skip our own port
+                    try
+                    {
+                        var req = (HttpWebRequest)WebRequest.Create($"http://127.0.0.1:{p}/");
+                        req.Timeout = 500;
+                        using (req.GetResponse()) { }
+                        occupied.Add(p.ToString());
+                    }
+                    catch (WebException wex) when (wex.Response != null)
+                    {
+                        // Got an HTTP response (even if error) = port is occupied
+                        occupied.Add(p.ToString());
+                    }
+                    catch { /* Connection refused = port is free */ }
+                }
+                if (occupied.Count > 0)
+                    SkillsLogger.LogWarning($"[Self-Test] Occupied ports (8090-8100): {string.Join(", ", occupied)}");
             });
         }
     }

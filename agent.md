@@ -9,7 +9,7 @@
 | 属性 | 值 |
 |------|-----|
 | **项目名称** | UnitySkills |
-| **版本** | 1.5.0 |
+| **版本** | 1.5.1 |
 | **技术栈** | C# (Unity Editor) + Python (Client) |
 | **Unity 版本** | 2021.3+ |
 | **协议** | MIT |
@@ -69,6 +69,10 @@
     - `workflow_session_*`：会话级（对话级）批量回滚。
     - 历史记录跨 Editor 重启持久保存。
     - **设计决策：Base64 资源备份不限制文件大小**。Unity 项目中纹理、模型等资源可能超过 10MB，为保证完整的撤销/重做能力，WorkflowManager 对所有非脚本资源进行无限制的 Base64 快照备份。这是有意为之的设计，不是安全漏洞。
+
+6.  **IPv4/IPv6 双绑定 & 启动自检** [v1.5.1]:
+    - `HttpListener` 同时绑定 `http://localhost:{port}/` 和 `http://127.0.0.1:{port}/`，解决部分 Windows 系统 `localhost` 仅解析到 IPv6 导致 `127.0.0.1` 不可达的问题。
+    - 启动后自动 Self-Test：通过 `EditorApplication.delayCall` + `ThreadPool` 异步请求两个地址的 `/health` 端点，结果输出到 Console，帮助用户快速定位连接问题。
 
 **Producer-Consumer 模式** (线程安全)：
 - **Producer** (HTTP 线程)：接收 HTTP 请求，入队到 `RequestJob` 队列

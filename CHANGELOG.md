@@ -2,6 +2,14 @@
 
 All notable changes to **UnitySkills** will be documented in this file.
 
+## [1.5.1] - 2026-02-15
+
+### Fixed
+- **IPv4 可达性修复** — `HttpListener` 同时绑定 `localhost` 和 `127.0.0.1`，修复部分 Windows 系统上 `localhost` 仅解析到 IPv6 `::1` 导致 `127.0.0.1` 无法连接的问题
+
+### Added
+- **服务器启动自检 (Self-Test)** — 启动后自动请求 `localhost` 和 `127.0.0.1` 的 `/health` 端点，验证可达性并在 Console 输出结果，帮助用户快速定位连接问题
+
 ## [1.5.0] - 2026-02-13
 
 ### ⭐ Highlight
