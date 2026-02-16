@@ -12,8 +12,13 @@ namespace UnitySkills
     public static class ScriptSkills
     {
         [UnitySkill("script_create", "Create a new C# script. Optional: namespace")]
-        public static object ScriptCreate(string scriptName, string folder = "Assets/Scripts", string template = null, string namespaceName = null)
+        public static object ScriptCreate(string scriptName = null, string name = null, string folder = "Assets/Scripts", string template = null, string namespaceName = null)
         {
+            // Support both 'scriptName' and 'name' parameter
+            scriptName = scriptName ?? name;
+            if (string.IsNullOrEmpty(scriptName))
+                return new { error = "scriptName is required" };
+
             if (!string.IsNullOrEmpty(folder) && Validate.SafePath(folder, "folder") is object folderErr) return folderErr;
 
             if (!Directory.Exists(folder))
@@ -88,17 +93,18 @@ public class {CLASS} : MonoBehaviour
         {
             return BatchExecutor.Execute<BatchScriptItem>(items, item =>
             {
-                var result = ScriptCreate(item.scriptName, item.folder ?? "Assets/Scripts", item.template, item.namespaceName);
+                var result = ScriptCreate(item.scriptName ?? item.name, null, item.folder ?? "Assets/Scripts", item.template, item.namespaceName);
                 var json = Newtonsoft.Json.JsonConvert.SerializeObject(result);
                 if (json.Contains("\"error\""))
                     throw new System.Exception(((dynamic)result).error);
                 return result;
-            }, item => item.scriptName);
+            }, item => item.scriptName ?? item.name);
         }
 
         private class BatchScriptItem
         {
             public string scriptName { get; set; }
+            public string name { get; set; }
             public string folder { get; set; }
             public string template { get; set; }
             public string namespaceName { get; set; }

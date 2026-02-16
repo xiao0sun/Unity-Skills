@@ -236,6 +236,8 @@ v1.5.0 对全部 38 个 C# 文件 + Python 客户端进行了完整审计，修�
 - `ManualResetEventSlim` 通过 ownership transfer 模式管理，WaitAndRespond finally 中 Dispose
 - `get_skills()`/`health()` 使用 `requests.get` 而非 Session 对象，属简单 GET 请求的设计选择
 - Base64 资源备份不限制文件大小，保证完整撤销/重做能力
+- `script_create` 同时接受 `scriptName` 和 `name` 参数（`scriptName` 优先），空值时返回错误而非生成无名文件
+- `light_add_probe_group` 支持 `gridX/gridY/gridZ` + `spacingX/spacingY/spacingZ` 参数，一步创建网格布局光照探针
 
 ---
 
