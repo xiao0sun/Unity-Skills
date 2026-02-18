@@ -2,6 +2,73 @@
 
 All notable changes to **UnitySkills** will be documented in this file.
 
+## [1.5.1] - 2026-02-15
+
+### ⭐ Highlight
+
+- **全模块 10+ Skill 覆盖** — 13 个模块从不足 10 个 Skill 扩展到 10+，新增 57 个 Skill，总计约 430 个。所有模块（SampleSkills 除外）均达到 10+ Skill 覆盖。
+
+### Added
+
+- **服务器启动自检 (Self-Test)** — 启动后自动请求 `localhost` 和 `127.0.0.1` 的 `/health` 端点，验证可达性并在 Console 输出结果，帮助用户快速定位连接问题
+- **端口占用扫描** — 自检时扫描 8090-8100 范围内其他被占用的端口，以警告形式提示用户
+
+#### 新增 Skill（57 个）
+
+- **ProfilerSkills** (+9): `profiler_get_memory`, `profiler_get_runtime_memory`, `profiler_get_texture_memory`, `profiler_get_mesh_memory`, `profiler_get_material_memory`, `profiler_get_audio_memory`, `profiler_get_object_count`, `profiler_get_rendering_stats`, `profiler_get_asset_bundle_stats`
+- **OptimizationSkills** (+8): `optimize_analyze_scene`, `optimize_find_large_assets`, `optimize_set_static_flags`, `optimize_get_static_flags`, `optimize_audio_compression`, `optimize_find_duplicate_materials`, `optimize_analyze_overdraw`, `optimize_set_lod_group`
+- **AudioSkills** (+7): `audio_find_clips`, `audio_get_clip_info`, `audio_add_source`, `audio_get_source_info`, `audio_set_source_properties`, `audio_find_sources_in_scene`, `audio_create_mixer`
+- **ModelSkills** (+7): `model_find_assets`, `model_get_mesh_info`, `model_get_materials_info`, `model_get_animations_info`, `model_set_animation_clips`, `model_get_rig_info`, `model_set_rig`
+- **TextureSkills** (+7): `texture_find_assets`, `texture_get_info`, `texture_set_type`, `texture_set_platform_settings`, `texture_get_platform_settings`, `texture_set_sprite_settings`, `texture_find_by_size`
+- **LightSkills** (+3): `light_add_probe_group`, `light_add_reflection_probe`, `light_get_lightmap_settings`
+- **PackageSkills** (+3): `package_search`, `package_get_dependencies`, `package_get_versions`
+- **ValidationSkills** (+3): `validate_missing_references`, `validate_mesh_collider_convex`, `validate_shader_errors`
+- **ShaderSkills** (+5): `shader_check_errors`, `shader_get_keywords`, `shader_get_variant_count`, `shader_create_urp`, `shader_set_global_keyword`
+- **AnimatorSkills** (+2): `animator_add_state`, `animator_add_transition`
+- **ComponentSkills** (+2): `component_copy`, `component_set_enabled`
+- **PerceptionSkills** (+2): `scene_tag_layer_stats`, `scene_performance_hints`
+- **PrefabSkills** (+2): `prefab_create_variant`, `prefab_find_instances`
+- **SceneSkills** (+1): `scene_find_objects`
+
+### Improved
+- **`profiler_get_runtime_memory`** — 从单对象查询改为按内存占用排序的 Top N 列表，对 AI 更实用
+- **`scene_tag_layer_stats`** — 新增未标记对象计数和空定义层检测
+- **`scene_performance_hints`** — 增强为结构化输出（priority/category/issue/suggestion/fixSkill），新增 LOD、重复材质、粒子系统检查
+
+### Fixed
+- **IPv4 可达性修复** — `HttpListener` 同时绑定 `localhost` 和 `127.0.0.1`，修复部分 Windows 系统上 `localhost` 仅解析到 IPv6 `::1` 导致 `127.0.0.1` 无法连接的问题
+- **截图文件缺少扩展名** — `SceneScreenshot` 当 `filename` 参数不含扩展名时自动补 `.png` 后缀，修复生成的截图文件无法在 Unity 中预览的问题 (`SceneSkills.cs:111`)
+- **本地化补全** — 为 `Localization.cs` 的 `_chinese` 字典补充约 140 条缺失的中文翻译，英文/中文 471 个 key 完全匹配
+- **SkillRouter 更新** — `_workflowTrackedSkills` 新增 17 个写操作 Skill 的追踪
+- **超长任务断连修复** — 修复超过 3 分钟的任务因三层超时叠加（Python 30s / C# 60s / Skill 执行 3min+）导致必然断连的问题：
+  - 请求超时改为用户可配置（默认 60 分钟），Unity 设置面板新增"请求超时"输入框
+  - `/health` 端点暴露 `requestTimeoutMinutes`，Python 客户端初始化时自动同步超时配置
+  - 生成的 AI 代理代码同步使用服务器超时配置，替代硬编码 30 秒
+- **Domain Reload 断连修复** — 修复 Unity 6 上脚本编译后服务器恢复失败的问题：
+  - `OnBeforeAssemblyReload` 主动关闭 HttpListener 并等待线程退出，确保端口立即释放
+  - 持久化运行端口（`PREF_LAST_PORT`），Reload 后优先恢复到同一端口，避免 Auto 模式端口漂移
+  - `CheckAndRestoreServer` 增加秒级延迟重试（1s/2s/4s），替代无效的 `delayCall`（~16ms）
+  - preferred port 被占用时自动降级到端口扫描，而非直接失败
+  - Python 客户端重试增强：3 次重试 + 渐进式退避（2s/4s/6s），总窗口 ~12 秒
+  - 注册表过期阈值从 60 秒提升到 120 秒，避免大项目 Reload 期间实例被误清理
+- **Self-Test /health 返回 500 修复** — `WaitAndRespond()` 在 ThreadPool 线程上访问 `RequestTimeoutMs` 时触发 `EditorPrefs.GetInt()`（主线程限定 API），抛出 `UnityException` 被 catch 捕获返回 500。改为 `Start()` 时缓存超时值到静态字段，避免非主线程调用 Unity API
+- **清理 AudioSkills.cs.bak** — 移除误提交的备份文件，消除 Unity immutable package 中缺少 .meta 文件的警告
+- **`script_create` 参数名兼容** — 同时支持 `scriptName` 和 `name` 参数，当两者都为空时返回明确错误而非生成 `.cs` 空文件名。`script_create_batch` 同步支持
+- **`light_add_probe_group` 增强** — 新增 `gridX/gridY/gridZ`（每轴探针数）和 `spacingX/spacingY/spacingZ`（间距）参数，支持一步创建网格布局的光照探针组；已有组件时支持重新设置探针位置
+
+#### Unity 6 兼容性修复（6 项）
+- **`console_set_collapse` / `console_set_clear_on_play` 修复** — Unity 6 移除了 `ConsoleWindow.s_ConsoleFlags` 静态字段，改为多级回退策略：`SetConsoleFlag` 方法 → `s_ConsoleFlags` 字段 → `LogEntries` API → `EditorPrefs` 兜底（`ConsoleSkills.cs`）
+- **`cinemachine_set_active` IComparable 修复** — CM3 的 `Priority` 属性不支持 LINQ `Max()` 泛型比较，改用 `foreach` 手动迭代并显式 `(int)` 转换（`CinemachineSkills.cs:538`）
+- **`audio_create_mixer` 创建失败修复** — Unity 6 中 `ScriptableObject.CreateInstance(AudioMixerController)` 触发 `ExtensionOfNativeClass` 异常导致返回失败，重构为优先使用 `CreateMixerControllerAtPath` 内部工厂方法 + `ScriptableObject.CreateInstance` 回退。注："Mixer is not initialized" 日志为 Unity 6 内部已知问题，Unity 自身菜单创建 AudioMixer 也会产生，不影响功能（`AudioSkills.cs:280`）
+- **`event_add_listener` 目标组件查找修复** — `GetComponent("GameObject")` 返回 null（GameObject 不是 Component），新增特殊处理：当 `targetComponentName` 为 `"GameObject"` 时直接使用 GO 作为目标 Object；同时增加 `set_XXX` 属性 setter 方法查找支持（`EventSkills.cs:90`）
+- **`smart_reference_bind` 字段查找修复** — 增加 Unity 序列化命名约定回退查找（`m_XXX`、`_xxx`）和 `PropertyInfo` 回退，修复 Unity 6 中部分组件字段名不匹配的问题（`SmartSkills.cs:159`）
+- **Splines 版本适配** — 新增 `SplinesVersionUnity6 = "2.8.3"` 常量和 `GetRecommendedSplinesVersion()` 方法，Unity 6 自动使用 2.8.3、Unity 2022 使用 2.8.0；CM3 安装依赖同步更新（`PackageManagerHelper.cs`）
+- **`component_set_enabled` Renderer/Collider 支持** — 原代码仅检查 `Behaviour` 类型，导致 `MeshRenderer`（继承 `Renderer`）和 `Collider` 等组件无法启用/禁用，新增 `Renderer` 和 `Collider` 类型分支（`ComponentSkills.cs:911`）
+- **`optimize_find_duplicate_materials` _Color 属性异常修复** — `mat.color` 直接访问 `_Color` 属性，TextMeshPro 等 shader 无此属性时抛出异常，改为 `HasProperty` 检查并回退到 `_BaseColor`（`OptimizationSkills.cs:237`）
+
+### Added
+- **`package_install_splines` 技能** — 新增 Splines 包版本化安装技能，自动检测 Unity 版本选择正确的 Splines 版本（Unity 6: 2.8.3, Unity 2022: 2.8.0），支持升级已安装的旧版本（`PackageSkills.cs`）
+
 ## [1.5.0] - 2026-02-13
 
 ### ⭐ Highlight

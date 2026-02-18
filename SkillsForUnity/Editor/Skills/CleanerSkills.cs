@@ -380,6 +380,86 @@ namespace UnitySkills
             };
         }
 
+        [UnitySkill("cleaner_find_empty_folders", "Find empty folders in the project")]
+        public static object CleanerFindEmptyFolders(string searchPath = "Assets")
+        {
+            var empty = new List<string>();
+            FindEmptyFoldersRecursive(searchPath, empty);
+            return new { success = true, count = empty.Count, folders = empty };
+        }
+
+        private static bool FindEmptyFoldersRecursive(string path, List<string> results)
+        {
+            var dirs = Directory.GetDirectories(path);
+            var files = Directory.GetFiles(path).Where(f => !f.EndsWith(".meta")).ToArray();
+            bool allSubEmpty = true;
+            foreach (var dir in dirs)
+                if (!FindEmptyFoldersRecursive(dir, results)) allSubEmpty = false;
+            if (files.Length == 0 && (dirs.Length == 0 || allSubEmpty))
+            { results.Add(path.Replace("\\", "/")); return true; }
+            return false;
+        }
+
+        [UnitySkill("cleaner_find_large_assets", "Find largest assets by file size")]
+        public static object CleanerFindLargeAssets(string searchPath = "Assets", int limit = 20, long minSizeBytes = 0)
+        {
+            var files = Directory.GetFiles(searchPath, "*.*", SearchOption.AllDirectories)
+                .Where(f => !f.EndsWith(".meta"))
+                .Select(f => new FileInfo(f))
+                .Where(fi => fi.Length > minSizeBytes)
+                .OrderByDescending(fi => fi.Length)
+                .Take(limit)
+                .Select(fi => new { path = fi.FullName.Replace("\\", "/"), sizeBytes = fi.Length, sizeMB = fi.Length / (1024.0 * 1024.0) })
+                .ToArray();
+            return new { success = true, count = files.Length, assets = files };
+        }
+
+        [UnitySkill("cleaner_delete_empty_folders", "Delete all empty folders")]
+        public static object CleanerDeleteEmptyFolders(string searchPath = "Assets")
+        {
+            var empty = new List<string>();
+            FindEmptyFoldersRecursive(searchPath, empty);
+            int deleted = 0;
+            foreach (var folder in empty.OrderByDescending(f => f.Length))
+            {
+                if (AssetDatabase.DeleteAsset(folder)) deleted++;
+            }
+            AssetDatabase.Refresh();
+            return new { success = true, deleted, total = empty.Count };
+        }
+
+        [UnitySkill("cleaner_fix_missing_scripts", "Remove missing script components from GameObjects")]
+        public static object CleanerFixMissingScripts(bool includeInactive = true)
+        {
+            var allObjects = includeInactive
+                ? Resources.FindObjectsOfTypeAll<GameObject>().Where(go => !EditorUtility.IsPersistent(go) && go.hideFlags == HideFlags.None).ToArray()
+                : Object.FindObjectsOfType<GameObject>();
+            int totalRemoved = 0;
+            foreach (var go in allObjects)
+            {
+                int count = GameObjectUtility.GetMonoBehavioursWithMissingScriptCount(go);
+                if (count > 0)
+                {
+                    Undo.RegisterCompleteObjectUndo(go, "Fix Missing Scripts");
+                    GameObjectUtility.RemoveMonoBehavioursWithMissingScript(go);
+                    totalRemoved += count;
+                }
+            }
+            return new { success = true, removedComponents = totalRemoved };
+        }
+
+        [UnitySkill("cleaner_get_dependency_tree", "Get dependency tree for an asset")]
+        public static object CleanerGetDependencyTree(string assetPath, bool recursive = true)
+        {
+            if (!File.Exists(assetPath) && !Directory.Exists(assetPath))
+                return new { error = $"Asset not found: {assetPath}" };
+            var deps = AssetDatabase.GetDependencies(assetPath, recursive)
+                .Where(d => d != assetPath)
+                .Select(d => new { path = d, type = AssetDatabase.LoadMainAssetAtPath(d)?.GetType().Name })
+                .ToArray();
+            return new { success = true, assetPath, dependencyCount = deps.Length, dependencies = deps };
+        }
+
         private static string GetGameObjectPath(GameObject go)
         {
             var path = go.name;

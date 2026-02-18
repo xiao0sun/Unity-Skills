@@ -155,11 +155,22 @@ namespace UnitySkills
             if (comp == null) 
                 return new { success = false, error = $"Component '{componentName}' not found on target" };
 
-            // 2. Find Member
+            // 2. Find Member (field, then Unity naming conventions, then property)
             var type = comp.GetType();
             var field = type.GetField(fieldName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
-            
-            if (field == null) 
+            if (field == null)
+                field = type.GetField("m_" + char.ToUpper(fieldName[0]) + fieldName.Substring(1), BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (field == null)
+                field = type.GetField("_" + fieldName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+
+            PropertyInfo propFallback = null;
+            if (field == null)
+            {
+                propFallback = type.GetProperty(fieldName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (propFallback != null && !propFallback.CanWrite) propFallback = null;
+            }
+
+            if (field == null && propFallback == null)
                 return new { success = false, error = $"Field '{fieldName}' not found on {componentName}" };
 
             // 3. Find Source Objects
@@ -179,7 +190,7 @@ namespace UnitySkills
                 return new { success = false, error = "No source objects found matching criteria" };
 
             // 4. Validate field type
-            var fieldType = field.FieldType;
+            var fieldType = field != null ? field.FieldType : propFallback.PropertyType;
             bool isList = fieldType.IsGenericType && fieldType.GetGenericTypeDefinition() == typeof(List<>);
             bool isArray = fieldType.IsArray;
 
@@ -198,7 +209,7 @@ namespace UnitySkills
             // Append mode: start with existing items
             if (appendMode)
             {
-                var existing = field.GetValue(comp) as IEnumerable;
+                var existing = (field != null ? field.GetValue(comp) : propFallback.GetValue(comp)) as IEnumerable;
                 if (existing != null)
                 {
                     foreach (var item in existing) convertedList.Add(item);
@@ -223,13 +234,15 @@ namespace UnitySkills
             {
                 var array = System.Array.CreateInstance(elementType, convertedList.Count);
                 convertedList.CopyTo(array);
-                field.SetValue(comp, array);
+                if (field != null) field.SetValue(comp, array);
+                else propFallback.SetValue(comp, array);
             }
             else
             {
                 var list = System.Activator.CreateInstance(fieldType) as IList;
                 foreach (var item in convertedList) list.Add(item);
-                field.SetValue(comp, list);
+                if (field != null) field.SetValue(comp, list);
+                else propFallback.SetValue(comp, list);
             }
 
             EditorUtility.SetDirty(comp);
@@ -340,6 +353,143 @@ namespace UnitySkills
             if (val is Vector3 v3) return $"({v3.x:F1}, {v3.y:F1}, {v3.z:F1})";
             if (val is Color c) return $"RGBA({c.r:F2}, {c.g:F2}, {c.b:F2}, {c.a:F2})";
             return val?.ToString() ?? "null";
+        }
+
+        [UnitySkill("smart_scene_query_spatial", "Find objects within a sphere/box region, optionally filtered by component")]
+        public static object SmartSceneQuerySpatial(
+            float x, float y, float z, float radius = 10f,
+            string componentFilter = null, int limit = 50)
+        {
+            var center = new Vector3(x, y, z);
+            var colliders = Physics.OverlapSphere(center, radius);
+            var results = new List<object>();
+            foreach (var col in colliders)
+            {
+                if (results.Count >= limit) break;
+                var go = col.gameObject;
+                if (!string.IsNullOrEmpty(componentFilter))
+                {
+                    var type = GetTypeByName(componentFilter);
+                    if (type != null && go.GetComponent(type) == null) continue;
+                }
+                results.Add(new
+                {
+                    name = go.name, instanceId = go.GetInstanceID(),
+                    path = GameObjectFinder.GetPath(go),
+                    distance = Vector3.Distance(center, go.transform.position)
+                });
+            }
+            return new { success = true, count = results.Count, center = new { x, y, z }, radius, results };
+        }
+
+        [UnitySkill("smart_align_to_ground", "Raycast selected objects downward to align them to the ground")]
+        public static object SmartAlignToGround(float maxDistance = 100f, bool alignRotation = false)
+        {
+            var selected = Selection.gameObjects;
+            if (selected.Length == 0) return new { error = "No objects selected" };
+            int aligned = 0;
+            foreach (var go in selected)
+            {
+                WorkflowManager.SnapshotObject(go.transform);
+                Undo.RecordObject(go.transform, "Align To Ground");
+                if (Physics.Raycast(go.transform.position + Vector3.up * 0.1f, Vector3.down, out RaycastHit hit, maxDistance))
+                {
+                    go.transform.position = hit.point;
+                    if (alignRotation) go.transform.up = hit.normal;
+                    aligned++;
+                }
+            }
+            return new { success = true, aligned, total = selected.Length };
+        }
+
+        [UnitySkill("smart_distribute", "Evenly distribute selected objects between first and last positions")]
+        public static object SmartDistribute(string axis = "X")
+        {
+            var selected = Selection.gameObjects.OrderBy(g => g.transform.GetSiblingIndex()).ToList();
+            if (selected.Count < 3) return new { error = "Need at least 3 selected objects" };
+            Vector3 axisVec = ParseAxis(axis);
+            foreach (var go in selected) WorkflowManager.SnapshotObject(go.transform);
+            Undo.RecordObjects(selected.Select(g => g.transform).ToArray(), "Smart Distribute");
+            float startVal = Vector3.Dot(selected[0].transform.position, axisVec);
+            float endVal = Vector3.Dot(selected[selected.Count - 1].transform.position, axisVec);
+            for (int i = 1; i < selected.Count - 1; i++)
+            {
+                float t = i / (float)(selected.Count - 1);
+                float targetVal = Mathf.Lerp(startVal, endVal, t);
+                float currentVal = Vector3.Dot(selected[i].transform.position, axisVec);
+                selected[i].transform.position += axisVec * (targetVal - currentVal);
+            }
+            return new { success = true, distributed = selected.Count, axis };
+        }
+
+        [UnitySkill("smart_snap_to_grid", "Snap selected objects to a grid")]
+        public static object SmartSnapToGrid(float gridSize = 1f)
+        {
+            var selected = Selection.gameObjects;
+            if (selected.Length == 0) return new { error = "No objects selected" };
+            foreach (var go in selected)
+            {
+                WorkflowManager.SnapshotObject(go.transform);
+                Undo.RecordObject(go.transform, "Snap To Grid");
+                var p = go.transform.position;
+                go.transform.position = new Vector3(
+                    Mathf.Round(p.x / gridSize) * gridSize,
+                    Mathf.Round(p.y / gridSize) * gridSize,
+                    Mathf.Round(p.z / gridSize) * gridSize);
+            }
+            return new { success = true, snapped = selected.Length, gridSize };
+        }
+
+        [UnitySkill("smart_randomize_transform", "Randomize position/rotation/scale of selected objects within ranges")]
+        public static object SmartRandomizeTransform(
+            float posRange = 0f, float rotRange = 0f, float scaleMin = 1f, float scaleMax = 1f)
+        {
+            var selected = Selection.gameObjects;
+            if (selected.Length == 0) return new { error = "No objects selected" };
+            foreach (var go in selected)
+            {
+                WorkflowManager.SnapshotObject(go.transform);
+                Undo.RecordObject(go.transform, "Randomize Transform");
+                if (posRange > 0) go.transform.position += new Vector3(Random.Range(-posRange, posRange), Random.Range(-posRange, posRange), Random.Range(-posRange, posRange));
+                if (rotRange > 0) go.transform.eulerAngles += new Vector3(Random.Range(-rotRange, rotRange), Random.Range(-rotRange, rotRange), Random.Range(-rotRange, rotRange));
+                if (scaleMin != 1f || scaleMax != 1f) { float s = Random.Range(scaleMin, scaleMax); go.transform.localScale = new Vector3(s, s, s); }
+            }
+            return new { success = true, randomized = selected.Length };
+        }
+
+        [UnitySkill("smart_replace_objects", "Replace selected objects with a prefab (preserving transforms)")]
+        public static object SmartReplaceObjects(string prefabPath)
+        {
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
+            if (prefab == null) return new { error = $"Prefab not found: {prefabPath}" };
+            var selected = Selection.gameObjects.ToArray();
+            if (selected.Length == 0) return new { error = "No objects selected" };
+            var newObjects = new List<GameObject>();
+            foreach (var go in selected)
+            {
+                var newGo = (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+                newGo.transform.SetParent(go.transform.parent);
+                newGo.transform.position = go.transform.position;
+                newGo.transform.rotation = go.transform.rotation;
+                newGo.transform.localScale = go.transform.localScale;
+                newGo.transform.SetSiblingIndex(go.transform.GetSiblingIndex());
+                Undo.RegisterCreatedObjectUndo(newGo, "Replace Object");
+                Undo.DestroyObjectImmediate(go);
+                newObjects.Add(newGo);
+            }
+            Selection.objects = newObjects.ToArray();
+            return new { success = true, replaced = selected.Length, prefab = prefabPath };
+        }
+
+        [UnitySkill("smart_select_by_component", "Select all objects that have a specific component")]
+        public static object SmartSelectByComponent(string componentName)
+        {
+            var type = GetTypeByName(componentName);
+            if (type == null) return new { error = $"Component type '{componentName}' not found" };
+            var components = Object.FindObjectsOfType(type);
+            var gameObjects = components.OfType<Component>().Select(c => c.gameObject).Distinct().ToArray();
+            Selection.objects = gameObjects;
+            return new { success = true, selected = gameObjects.Length, component = componentName };
         }
     }
 }

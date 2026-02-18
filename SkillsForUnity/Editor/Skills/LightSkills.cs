@@ -285,5 +285,69 @@ namespace UnitySkills
             public float? range { get; set; }
             public string shadows { get; set; }
         }
+
+        [UnitySkill("light_add_probe_group", "Add a Light Probe Group to a GameObject. Optional grid layout: gridX/gridY/gridZ (count per axis), spacingX/spacingY/spacingZ (meters between probes)")]
+        public static object LightAddProbeGroup(string name = null, int instanceId = 0, string path = null,
+            int gridX = 0, int gridY = 0, int gridZ = 0,
+            float spacingX = 2f, float spacingY = 1.5f, float spacingZ = 2f)
+        {
+            var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (error != null) return error;
+
+            var lpg = go.GetComponent<LightProbeGroup>();
+            bool existed = lpg != null;
+            if (!existed)
+                lpg = Undo.AddComponent<LightProbeGroup>(go);
+
+            // Set grid layout if any grid parameter provided
+            if (gridX > 0 && gridY > 0 && gridZ > 0)
+            {
+                Undo.RecordObject(lpg, "Set Light Probe Positions");
+                var probes = new Vector3[gridX * gridY * gridZ];
+                int idx = 0;
+                float offsetX = (gridX - 1) * spacingX * 0.5f;
+                float offsetZ = (gridZ - 1) * spacingZ * 0.5f;
+                for (int iy = 0; iy < gridY; iy++)
+                    for (int ix = 0; ix < gridX; ix++)
+                        for (int iz = 0; iz < gridZ; iz++)
+                            probes[idx++] = new Vector3(ix * spacingX - offsetX, iy * spacingY, iz * spacingZ - offsetZ);
+                lpg.probePositions = probes;
+                EditorUtility.SetDirty(lpg);
+            }
+
+            return new { success = true, gameObject = go.name, probeCount = lpg.probePositions.Length,
+                existed, hasGrid = gridX > 0 && gridY > 0 && gridZ > 0 };
+        }
+
+        [UnitySkill("light_add_reflection_probe", "Create a Reflection Probe at a position")]
+        public static object LightAddReflectionProbe(string probeName = "ReflectionProbe", float x = 0, float y = 1, float z = 0,
+            float sizeX = 10, float sizeY = 10, float sizeZ = 10, int resolution = 256)
+        {
+            var go = new GameObject(probeName);
+            go.transform.position = new Vector3(x, y, z);
+            var probe = go.AddComponent<ReflectionProbe>();
+            probe.size = new Vector3(sizeX, sizeY, sizeZ);
+            probe.resolution = resolution;
+
+            Undo.RegisterCreatedObjectUndo(go, "Create Reflection Probe");
+            WorkflowManager.SnapshotObject(go, SnapshotType.Created);
+
+            return new { success = true, name = go.name, instanceId = go.GetInstanceID(), resolution, size = new { x = sizeX, y = sizeY, z = sizeZ } };
+        }
+
+        [UnitySkill("light_get_lightmap_settings", "Get Lightmap baking settings")]
+        public static object LightGetLightmapSettings()
+        {
+            return new
+            {
+                success = true,
+                bakedGI = Lightmapping.bakedGI,
+                realtimeGI = Lightmapping.realtimeGI,
+                lightmapSize = LightmapEditorSettings.maxAtlasSize,
+                lightmapPadding = LightmapEditorSettings.padding,
+                isRunning = Lightmapping.isRunning,
+                lightmapCount = LightmapSettings.lightmaps.Length
+            };
+        }
     }
 }

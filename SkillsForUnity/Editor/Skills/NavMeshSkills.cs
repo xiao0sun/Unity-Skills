@@ -62,5 +62,95 @@ namespace UnitySkills
                 corners
             };
         }
+
+        [UnitySkill("navmesh_add_agent", "Add NavMeshAgent component to an object")]
+        public static object NavMeshAddAgent(string name = null, int instanceId = 0, string path = null)
+        {
+            var (go, err) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (err != null) return err;
+            if (go.GetComponent<NavMeshAgent>() != null) return new { error = $"{go.name} already has NavMeshAgent" };
+            Undo.AddComponent<NavMeshAgent>(go);
+            WorkflowManager.SnapshotObject(go, SnapshotType.Created);
+            return new { success = true, gameObject = go.name };
+        }
+
+        [UnitySkill("navmesh_set_agent", "Set NavMeshAgent properties (speed, acceleration, radius, height, stoppingDistance)")]
+        public static object NavMeshSetAgent(string name = null, int instanceId = 0, string path = null,
+            float? speed = null, float? acceleration = null, float? angularSpeed = null,
+            float? radius = null, float? height = null, float? stoppingDistance = null)
+        {
+            var (go, err) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (err != null) return err;
+            var agent = go.GetComponent<NavMeshAgent>();
+            if (agent == null) return new { error = $"No NavMeshAgent on {go.name}" };
+            WorkflowManager.SnapshotObject(agent);
+            Undo.RecordObject(agent, "Set NavMeshAgent");
+            if (speed.HasValue) agent.speed = speed.Value;
+            if (acceleration.HasValue) agent.acceleration = acceleration.Value;
+            if (angularSpeed.HasValue) agent.angularSpeed = angularSpeed.Value;
+            if (radius.HasValue) agent.radius = radius.Value;
+            if (height.HasValue) agent.height = height.Value;
+            if (stoppingDistance.HasValue) agent.stoppingDistance = stoppingDistance.Value;
+            return new { success = true, gameObject = go.name, speed = agent.speed, radius = agent.radius };
+        }
+
+        [UnitySkill("navmesh_add_obstacle", "Add NavMeshObstacle component to an object")]
+        public static object NavMeshAddObstacle(string name = null, int instanceId = 0, string path = null, bool carve = true)
+        {
+            var (go, err) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (err != null) return err;
+            if (go.GetComponent<NavMeshObstacle>() != null) return new { error = $"{go.name} already has NavMeshObstacle" };
+            var obs = Undo.AddComponent<NavMeshObstacle>(go);
+            obs.carving = carve;
+            WorkflowManager.SnapshotObject(go, SnapshotType.Created);
+            return new { success = true, gameObject = go.name, carving = obs.carving };
+        }
+
+        [UnitySkill("navmesh_set_obstacle", "Set NavMeshObstacle properties (shape, size, carving)")]
+        public static object NavMeshSetObstacle(string name = null, int instanceId = 0, string path = null,
+            string shape = null, float? sizeX = null, float? sizeY = null, float? sizeZ = null, bool? carving = null)
+        {
+            var (go, err) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (err != null) return err;
+            var obs = go.GetComponent<NavMeshObstacle>();
+            if (obs == null) return new { error = $"No NavMeshObstacle on {go.name}" };
+            WorkflowManager.SnapshotObject(obs);
+            Undo.RecordObject(obs, "Set NavMeshObstacle");
+            if (!string.IsNullOrEmpty(shape) && System.Enum.TryParse<NavMeshObstacleShape>(shape, true, out var s)) obs.shape = s;
+            if (sizeX.HasValue || sizeY.HasValue || sizeZ.HasValue)
+            {
+                var sz = obs.size;
+                obs.size = new Vector3(sizeX ?? sz.x, sizeY ?? sz.y, sizeZ ?? sz.z);
+            }
+            if (carving.HasValue) obs.carving = carving.Value;
+            return new { success = true, gameObject = go.name, shape = obs.shape.ToString(), carving = obs.carving };
+        }
+
+        [UnitySkill("navmesh_sample_position", "Find nearest point on NavMesh")]
+        public static object NavMeshSamplePosition(float x, float y, float z, float maxDistance = 10f)
+        {
+            var sourcePos = new Vector3(x, y, z);
+            if (NavMesh.SamplePosition(sourcePos, out NavMeshHit hit, maxDistance, NavMesh.AllAreas))
+                return new { success = true, found = true, point = new { x = hit.position.x, y = hit.position.y, z = hit.position.z }, distance = hit.distance };
+            return new { success = true, found = false };
+        }
+
+        [UnitySkill("navmesh_set_area_cost", "Set area traversal cost")]
+        public static object NavMeshSetAreaCost(int areaIndex, float cost)
+        {
+            NavMesh.SetAreaCost(areaIndex, cost);
+            return new { success = true, areaIndex, cost };
+        }
+
+        [UnitySkill("navmesh_get_settings", "Get NavMesh build settings")]
+        public static object NavMeshGetSettings()
+        {
+            var settings = NavMesh.GetSettingsByIndex(0);
+            return new
+            {
+                success = true, agentRadius = settings.agentRadius, agentHeight = settings.agentHeight,
+                agentSlope = settings.agentSlope, agentClimb = settings.agentClimb
+            };
+        }
     }
 }

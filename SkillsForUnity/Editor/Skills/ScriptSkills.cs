@@ -12,8 +12,13 @@ namespace UnitySkills
     public static class ScriptSkills
     {
         [UnitySkill("script_create", "Create a new C# script. Optional: namespace")]
-        public static object ScriptCreate(string scriptName, string folder = "Assets/Scripts", string template = null, string namespaceName = null)
+        public static object ScriptCreate(string scriptName = null, string name = null, string folder = "Assets/Scripts", string template = null, string namespaceName = null)
         {
+            // Support both 'scriptName' and 'name' parameter
+            scriptName = scriptName ?? name;
+            if (string.IsNullOrEmpty(scriptName))
+                return new { error = "scriptName is required" };
+
             if (!string.IsNullOrEmpty(folder) && Validate.SafePath(folder, "folder") is object folderErr) return folderErr;
 
             if (!Directory.Exists(folder))
@@ -88,17 +93,18 @@ public class {CLASS} : MonoBehaviour
         {
             return BatchExecutor.Execute<BatchScriptItem>(items, item =>
             {
-                var result = ScriptCreate(item.scriptName, item.folder ?? "Assets/Scripts", item.template, item.namespaceName);
+                var result = ScriptCreate(item.scriptName ?? item.name, null, item.folder ?? "Assets/Scripts", item.template, item.namespaceName);
                 var json = Newtonsoft.Json.JsonConvert.SerializeObject(result);
                 if (json.Contains("\"error\""))
                     throw new System.Exception(((dynamic)result).error);
                 return result;
-            }, item => item.scriptName);
+            }, item => item.scriptName ?? item.name);
         }
 
         private class BatchScriptItem
         {
             public string scriptName { get; set; }
+            public string name { get; set; }
             public string folder { get; set; }
             public string template { get; set; }
             public string namespaceName { get; set; }
@@ -198,6 +204,88 @@ public class {CLASS} : MonoBehaviour
             AssetDatabase.ImportAsset(scriptPath);
 
             return new { success = true, path = scriptPath };
+        }
+
+        [UnitySkill("script_replace", "Find and replace content in a script file")]
+        public static object ScriptReplace(string scriptPath, string find, string replace, bool isRegex = false)
+        {
+            if (!File.Exists(scriptPath))
+                return new { error = $"Script not found: {scriptPath}" };
+            if (Validate.SafePath(scriptPath, "scriptPath") is object pathErr) return pathErr;
+            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(scriptPath);
+            if (asset != null) WorkflowManager.SnapshotObject(asset);
+            var content = File.ReadAllText(scriptPath);
+            string newContent = isRegex
+                ? Regex.Replace(content, find, replace, RegexOptions.None, System.TimeSpan.FromSeconds(2))
+                : content.Replace(find, replace);
+            int changes = isRegex
+                ? Regex.Matches(content, find, RegexOptions.None, System.TimeSpan.FromSeconds(2)).Count
+                : (content.Length - content.Replace(find, "").Length) / (find.Length > 0 ? find.Length : 1);
+            File.WriteAllText(scriptPath, newContent);
+            AssetDatabase.ImportAsset(scriptPath);
+            return new { success = true, path = scriptPath, replacements = changes };
+        }
+
+        [UnitySkill("script_list", "List C# script files in the project")]
+        public static object ScriptList(string folder = "Assets", string filter = null, int limit = 100)
+        {
+            var guids = AssetDatabase.FindAssets("t:MonoScript", new[] { folder });
+            var scripts = guids
+                .Select(g => AssetDatabase.GUIDToAssetPath(g))
+                .Where(p => p.EndsWith(".cs"))
+                .Where(p => string.IsNullOrEmpty(filter) || p.Contains(filter))
+                .Take(limit)
+                .Select(p => new { path = p, name = System.IO.Path.GetFileNameWithoutExtension(p) })
+                .ToArray();
+            return new { count = scripts.Length, scripts };
+        }
+
+        [UnitySkill("script_get_info", "Get script info (class name, base class, methods)")]
+        public static object ScriptGetInfo(string scriptPath)
+        {
+            var monoScript = AssetDatabase.LoadAssetAtPath<MonoScript>(scriptPath);
+            if (monoScript == null) return new { error = $"MonoScript not found: {scriptPath}" };
+            var type = monoScript.GetClass();
+            if (type == null) return new { path = scriptPath, className = "(unknown)", note = "Class not yet compiled or abstract" };
+            var methods = type.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.DeclaredOnly)
+                .Select(m => m.Name).ToArray();
+            var fields = type.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+                .Select(f => new { name = f.Name, type = f.FieldType.Name }).ToArray();
+            return new
+            {
+                path = scriptPath, className = type.Name,
+                baseClass = type.BaseType?.Name,
+                namespaceName = type.Namespace,
+                isMonoBehaviour = typeof(MonoBehaviour).IsAssignableFrom(type),
+                publicMethods = methods, publicFields = fields
+            };
+        }
+
+        [UnitySkill("script_rename", "Rename a script file")]
+        public static object ScriptRename(string scriptPath, string newName)
+        {
+            if (!File.Exists(scriptPath)) return new { error = $"Script not found: {scriptPath}" };
+            if (Validate.SafePath(scriptPath, "scriptPath") is object pathErr) return pathErr;
+            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(scriptPath);
+            if (asset != null) WorkflowManager.SnapshotObject(asset);
+            var result = AssetDatabase.RenameAsset(scriptPath, newName);
+            if (!string.IsNullOrEmpty(result)) return new { error = result };
+            return new { success = true, oldPath = scriptPath, newName };
+        }
+
+        [UnitySkill("script_move", "Move a script to a new folder")]
+        public static object ScriptMove(string scriptPath, string newFolder)
+        {
+            if (!File.Exists(scriptPath)) return new { error = $"Script not found: {scriptPath}" };
+            if (Validate.SafePath(scriptPath, "scriptPath") is object pathErr) return pathErr;
+            if (!Directory.Exists(newFolder)) Directory.CreateDirectory(newFolder);
+            var fileName = System.IO.Path.GetFileName(scriptPath);
+            var newPath = System.IO.Path.Combine(newFolder, fileName);
+            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(scriptPath);
+            if (asset != null) WorkflowManager.SnapshotObject(asset);
+            var result = AssetDatabase.MoveAsset(scriptPath, newPath);
+            if (!string.IsNullOrEmpty(result)) return new { error = result };
+            return new { success = true, oldPath = scriptPath, newPath };
         }
     }
 }

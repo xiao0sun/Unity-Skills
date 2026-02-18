@@ -206,5 +206,116 @@ namespace UnitySkills
                 meshCompression = importer.meshCompression.ToString()
             };
         }
+
+        [UnitySkill("audio_set_import_settings", "Set audio clip import settings")]
+        public static object AudioSetImportSettings(
+            string assetPath, bool? forceToMono = null, bool? loadInBackground = null,
+            string loadType = null, string compressionFormat = null, int? quality = null)
+        {
+            var importer = AssetImporter.GetAtPath(assetPath) as AudioImporter;
+            if (importer == null) return new { error = $"Not an audio asset: {assetPath}" };
+            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
+            if (asset != null) WorkflowManager.SnapshotObject(asset);
+            if (forceToMono.HasValue) importer.forceToMono = forceToMono.Value;
+            if (loadInBackground.HasValue) importer.loadInBackground = loadInBackground.Value;
+            var settings = importer.defaultSampleSettings;
+            if (!string.IsNullOrEmpty(loadType) && System.Enum.TryParse<AudioClipLoadType>(loadType, true, out var lt))
+                settings.loadType = lt;
+            if (!string.IsNullOrEmpty(compressionFormat) && System.Enum.TryParse<AudioCompressionFormat>(compressionFormat, true, out var cf))
+                settings.compressionFormat = cf;
+            if (quality.HasValue) settings.quality = quality.Value / 100f;
+            importer.defaultSampleSettings = settings;
+            importer.SaveAndReimport();
+            return new { success = true, assetPath, forceToMono = importer.forceToMono, loadType = settings.loadType.ToString(), compressionFormat = settings.compressionFormat.ToString() };
+        }
+
+        [UnitySkill("sprite_set_import_settings", "Set sprite import settings (mode, pivot, packingTag, pixelsPerUnit)")]
+        public static object SpriteSetImportSettings(
+            string assetPath, string spriteMode = null, float? pixelsPerUnit = null,
+            string packingTag = null, string pivotX = null, string pivotY = null)
+        {
+            var importer = AssetImporter.GetAtPath(assetPath) as TextureImporter;
+            if (importer == null) return new { error = $"Not a texture: {assetPath}" };
+            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
+            if (asset != null) WorkflowManager.SnapshotObject(asset);
+            importer.textureType = TextureImporterType.Sprite;
+            if (!string.IsNullOrEmpty(spriteMode))
+            {
+                switch (spriteMode.ToLower())
+                {
+                    case "single": importer.spriteImportMode = SpriteImportMode.Single; break;
+                    case "multiple": importer.spriteImportMode = SpriteImportMode.Multiple; break;
+                    case "polygon": importer.spriteImportMode = SpriteImportMode.Polygon; break;
+                }
+            }
+            if (pixelsPerUnit.HasValue) importer.spritePixelsPerUnit = pixelsPerUnit.Value;
+            if (!string.IsNullOrEmpty(packingTag)) importer.spritePackingTag = packingTag;
+            if (pivotX != null && pivotY != null)
+                importer.spritePivot = new Vector2(float.Parse(pivotX, System.Globalization.CultureInfo.InvariantCulture), float.Parse(pivotY, System.Globalization.CultureInfo.InvariantCulture));
+            importer.SaveAndReimport();
+            return new { success = true, assetPath, spriteMode = importer.spriteImportMode.ToString(), pixelsPerUnit = importer.spritePixelsPerUnit };
+        }
+
+        [UnitySkill("texture_get_import_settings", "Get current texture import settings")]
+        public static object TextureGetImportSettings(string assetPath)
+        {
+            var importer = AssetImporter.GetAtPath(assetPath) as TextureImporter;
+            if (importer == null) return new { error = $"Not a texture: {assetPath}" };
+            return new
+            {
+                success = true, assetPath, textureType = importer.textureType.ToString(),
+                maxSize = importer.maxTextureSize, compression = importer.textureCompression.ToString(),
+                readable = importer.isReadable, mipmaps = importer.mipmapEnabled,
+                spriteMode = importer.spriteImportMode.ToString(), pixelsPerUnit = importer.spritePixelsPerUnit
+            };
+        }
+
+        [UnitySkill("model_get_import_settings", "Get current model import settings")]
+        public static object ModelGetImportSettings(string assetPath)
+        {
+            var importer = AssetImporter.GetAtPath(assetPath) as ModelImporter;
+            if (importer == null) return new { error = $"Not a model: {assetPath}" };
+            return new
+            {
+                success = true, assetPath, globalScale = importer.globalScale,
+                importAnimation = importer.importAnimation, importMaterials = importer.materialImportMode != ModelImporterMaterialImportMode.None,
+                meshCompression = importer.meshCompression.ToString(), readable = importer.isReadable,
+                generateColliders = importer.addCollider
+            };
+        }
+
+        [UnitySkill("audio_get_import_settings", "Get current audio import settings")]
+        public static object AudioGetImportSettings(string assetPath)
+        {
+            var importer = AssetImporter.GetAtPath(assetPath) as AudioImporter;
+            if (importer == null) return new { error = $"Not an audio asset: {assetPath}" };
+            var s = importer.defaultSampleSettings;
+            return new
+            {
+                success = true, assetPath, forceToMono = importer.forceToMono,
+                loadInBackground = importer.loadInBackground,
+                loadType = s.loadType.ToString(), compressionFormat = s.compressionFormat.ToString(),
+                quality = s.quality
+            };
+        }
+
+        [UnitySkill("asset_set_labels", "Set labels on an asset")]
+        public static object AssetSetLabels(string assetPath, string labels)
+        {
+            var asset = AssetDatabase.LoadMainAssetAtPath(assetPath);
+            if (asset == null) return new { error = $"Asset not found: {assetPath}" };
+            var labelArray = labels.Split(',').Select(l => l.Trim()).Where(l => l.Length > 0).ToArray();
+            AssetDatabase.SetLabels(asset, labelArray);
+            return new { success = true, assetPath, labels = labelArray };
+        }
+
+        [UnitySkill("asset_get_labels", "Get labels of an asset")]
+        public static object AssetGetLabels(string assetPath)
+        {
+            var asset = AssetDatabase.LoadMainAssetAtPath(assetPath);
+            if (asset == null) return new { error = $"Asset not found: {assetPath}" };
+            var labels = AssetDatabase.GetLabels(asset);
+            return new { success = true, assetPath, labels };
+        }
     }
 }

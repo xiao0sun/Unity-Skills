@@ -47,8 +47,10 @@ namespace UnitySkills
         
         // Keep-alive interval (ms)
         private const int KeepAliveIntervalMs = 50;
-        // Request processing timeout (ms)
-        private const int RequestTimeoutMs = 60000;
+        // Request processing timeout - cached for thread safety (EditorPrefs is main-thread only)
+        private static int _cachedTimeoutMs = 60 * 60 * 1000;
+        private static int RequestTimeoutMs => _cachedTimeoutMs;
+        internal static void RefreshTimeoutCache() => _cachedTimeoutMs = RequestTimeoutMinutes * 60 * 1000;
         // Maximum allowed POST body size
         private const int MaxBodySizeBytes = 10 * 1024 * 1024; // 10MB
         // Heartbeat interval for registry (seconds)
@@ -71,6 +73,7 @@ namespace UnitySkills
         private static string PREF_SERVER_SHOULD_RUN => PrefKey("ServerShouldRun");
         private static string PREF_AUTO_START => PrefKey("AutoStart");
         private static string PREF_TOTAL_PROCESSED => PrefKey("TotalProcessed");
+        private static string PREF_LAST_PORT => PrefKey("LastPort");
         
         // Domain Reload tracking
         private static bool _domainReloadPending = false;
@@ -107,6 +110,22 @@ namespace UnitySkills
         {
             get => EditorPrefs.GetInt(PrefKeyPreferredPort, 0);
             set => EditorPrefs.SetInt(PrefKeyPreferredPort, value);
+        }
+
+        private const string PrefKeyRequestTimeout = "UnitySkills_RequestTimeoutMinutes";
+
+        /// <summary>
+        /// Gets or sets the request timeout in minutes.
+        /// Default 60 minutes. Minimum 1 minute.
+        /// </summary>
+        public static int RequestTimeoutMinutes
+        {
+            get => Mathf.Max(1, EditorPrefs.GetInt(PrefKeyRequestTimeout, 60));
+            set
+            {
+                EditorPrefs.SetInt(PrefKeyRequestTimeout, Mathf.Max(1, value));
+                RefreshTimeoutCache();
+            }
         }
 
         /// <summary>
@@ -209,10 +228,15 @@ namespace UnitySkills
             if (_isRunning)
             {
                 SkillsLogger.LogVerbose($"Domain Reload detected - server state saved (port {_port}), will auto-restart");
+                EditorPrefs.SetInt(PREF_LAST_PORT, _port);
                 RegistryService.Unregister(); // Unregister temporarily
-                // Don't call Stop() here - domain will be destroyed anyway
-                // Just mark as not running to prevent errors
+                // Actively close HttpListener to release port immediately
                 _isRunning = false;
+                try { _listener?.Stop(); } catch { }
+                try { _listener?.Close(); } catch { }
+                // Wait for threads to exit so port is fully released
+                try { _listenerThread?.Join(500); } catch { }
+                try { _keepAliveThread?.Join(100); } catch { }
             }
         }
         
@@ -253,9 +277,15 @@ namespace UnitySkills
             Stop();
         }
         
+        // Retry counter for CheckAndRestoreServer
+        private static int _restoreRetryCount = 0;
+        private const int MaxRestoreRetries = 3;
+        private static readonly double[] RestoreRetryDelays = { 1.0, 2.0, 4.0 }; // seconds
+
         /// <summary>
         /// Check if server should be restored after Domain Reload.
         /// Called via EditorApplication.delayCall to ensure Unity is ready.
+        /// Retries up to 3 times with increasing delays (1s, 2s, 4s) if Start() fails.
         /// </summary>
         private static void CheckAndRestoreServer()
         {
@@ -264,12 +294,43 @@ namespace UnitySkills
 
             if (autoStart)
             {
-                if (!_isRunning)
+                int lastPort = EditorPrefs.GetInt(PREF_LAST_PORT, 0);
+                int restorePort = (lastPort >= 8090 && lastPort <= 8100) ? lastPort : PreferredPort;
+                SkillsLogger.Log($"Auto-restoring server after Domain Reload (port={restorePort}, attempt {_restoreRetryCount + 1}/{MaxRestoreRetries + 1})...");
+                Start(restorePort, fallbackToAuto: true);
+
+                if (!_isRunning && _restoreRetryCount < MaxRestoreRetries)
                 {
-                    SkillsLogger.Log($"Auto-restoring server after Domain Reload...");
-                    Start(PreferredPort);
+                    double delay = RestoreRetryDelays[_restoreRetryCount];
+                    _restoreRetryCount++;
+                    ScheduleDelayedCall(delay, CheckAndRestoreServer);
+                }
+                else
+                {
+                    _restoreRetryCount = 0;
                 }
             }
+            else
+            {
+                _restoreRetryCount = 0;
+            }
+        }
+
+        /// <summary>
+        /// Schedule a callback after a real delay in seconds using EditorApplication.update polling.
+        /// </summary>
+        private static void ScheduleDelayedCall(double delaySeconds, Action callback)
+        {
+            double targetTime = EditorApplication.timeSinceStartup + delaySeconds;
+            void Poll()
+            {
+                if (EditorApplication.timeSinceStartup >= targetTime)
+                {
+                    EditorApplication.update -= Poll;
+                    callback();
+                }
+            }
+            EditorApplication.update += Poll;
         }
         
         private static void HookUpdateLoop()
@@ -286,7 +347,7 @@ namespace UnitySkills
             _updateHooked = false;
         }
 
-        public static void Start(int preferredPort = 0)
+        public static void Start(int preferredPort = 0, bool fallbackToAuto = false)
         {
             if (_isRunning)
             {
@@ -297,6 +358,7 @@ namespace UnitySkills
             try
             {
                 HookUpdateLoop();
+                RefreshTimeoutCache();
 
                 // Port Hunting: 8090 -> 8100
                 int startPort = 8090;
@@ -308,9 +370,9 @@ namespace UnitySkills
                 {
                     try
                     {
-                        string prefix = $"{_prefixBase}{preferredPort}/";
                         _listener = new HttpListener();
-                        _listener.Prefixes.Add(prefix);
+                        _listener.Prefixes.Add($"{_prefixBase}{preferredPort}/");
+                        _listener.Prefixes.Add($"http://127.0.0.1:{preferredPort}/");
                         _listener.Start();
 
                         _port = preferredPort;
@@ -319,20 +381,25 @@ namespace UnitySkills
                     catch
                     {
                         try { _listener?.Close(); } catch { }
-                        SkillsLogger.LogError($"Port {preferredPort} is in use. Try another port or use Auto.");
-                        return;
+                        if (!fallbackToAuto)
+                        {
+                            SkillsLogger.LogError($"Port {preferredPort} is in use. Try another port or use Auto.");
+                            return;
+                        }
+                        SkillsLogger.LogVerbose($"Port {preferredPort} is in use, falling back to auto-scan...");
                     }
                 }
-                else
+
+                if (!started)
                 {
                     // Auto mode: scan ports
                     for (int p = startPort; p <= endPort; p++)
                     {
                         try
                         {
-                            string prefix = $"{_prefixBase}{p}/";
                             _listener = new HttpListener();
-                            _listener.Prefixes.Add(prefix);
+                            _listener.Prefixes.Add($"{_prefixBase}{p}/");
+                            _listener.Prefixes.Add($"http://127.0.0.1:{p}/");
                             _listener.Start();
 
                             _port = p;
@@ -374,6 +441,9 @@ namespace UnitySkills
                 SkillsLogger.Log($"REST Server started at {_prefix}");
                 SkillsLogger.Log($"{skillCount} skills loaded | Instance: {RegistryService.InstanceId}");
                 SkillsLogger.LogVerbose($"Domain Reload Recovery: ENABLED (AutoStart={AutoStart})");
+
+                // Self-test: verify reachability after Start() returns
+                EditorApplication.delayCall += RunSelfTest;
             }
             catch (Exception ex)
             {
@@ -734,6 +804,7 @@ namespace UnitySkills
                     queuedRequests = QueuedRequests,
                     totalProcessed = _totalRequestsProcessed,
                     autoRestart = AutoStart,
+                    requestTimeoutMinutes = RequestTimeoutMinutes,
                     domainReloadRecovery = "enabled",
                     architecture = "Producer-Consumer (Thread-Safe)",
                     note = "If you get 'Connection Refused', Unity may be reloading scripts. Wait 2-3 seconds and retry."
@@ -819,6 +890,60 @@ namespace UnitySkills
 
             _requestsThisSecond++;
             return _requestsThisSecond <= MaxRequestsPerSecond;
+        }
+
+        private static void RunSelfTest()
+        {
+            if (!_isRunning) return;
+            int port = _port;
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                // 1. Reachability test
+                var hosts = new[] { "localhost", "127.0.0.1" };
+                foreach (var host in hosts)
+                {
+                    string url = $"http://{host}:{port}/health";
+                    try
+                    {
+                        var req = (HttpWebRequest)WebRequest.Create(url);
+                        req.Timeout = 3000;
+                        using (var resp = (HttpWebResponse)req.GetResponse())
+                        {
+                            if (resp.StatusCode == HttpStatusCode.OK)
+                                SkillsLogger.LogSuccess($"[Self-Test] {url} -> OK");
+                            else
+                                SkillsLogger.LogWarning($"[Self-Test] {url} -> HTTP {(int)resp.StatusCode}");
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        SkillsLogger.LogError($"[Self-Test] {url} -> FAILED: {ex.Message}");
+                        SkillsLogger.LogError($"[Self-Test] Check firewall/antivirus settings.");
+                    }
+                }
+
+                // 2. Port scan: report occupied ports in 8090-8100
+                var occupied = new List<string>();
+                for (int p = 8090; p <= 8100; p++)
+                {
+                    if (p == port) continue; // skip our own port
+                    try
+                    {
+                        var req = (HttpWebRequest)WebRequest.Create($"http://127.0.0.1:{p}/");
+                        req.Timeout = 500;
+                        using (req.GetResponse()) { }
+                        occupied.Add(p.ToString());
+                    }
+                    catch (WebException wex) when (wex.Response != null)
+                    {
+                        // Got an HTTP response (even if error) = port is occupied
+                        occupied.Add(p.ToString());
+                    }
+                    catch { /* Connection refused = port is free */ }
+                }
+                if (occupied.Count > 0)
+                    SkillsLogger.LogWarning($"[Self-Test] Occupied ports (8090-8100): {string.Join(", ", occupied)}");
+            });
         }
     }
 }

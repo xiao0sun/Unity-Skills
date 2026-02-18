@@ -122,6 +122,28 @@ namespace UnitySkills
             };
         }
 
+        [UnitySkill("package_install_splines", "Install Unity Splines package. Auto-detects correct version for Unity 6 vs Unity 2022.")]
+        public static object PackageInstallSplines()
+        {
+            var currentVersion = PackageManagerHelper.GetInstalledVersion(PackageManagerHelper.SplinesPackageId);
+            var targetVersion = PackageManagerHelper.GetRecommendedSplinesVersion();
+
+            if (currentVersion == targetVersion)
+                return new { success = true, message = $"Splines {currentVersion} is already installed." };
+
+            PackageManagerHelper.InstallSplines((success, msg) =>
+            {
+                if (success) Debug.Log($"[PackageSkills] Splines {msg} installed successfully");
+                else Debug.LogError($"[PackageSkills] Failed to install Splines: {msg}");
+            });
+
+            return new {
+                success = true,
+                message = $"Installing Splines {targetVersion}" + (currentVersion != null ? $" (upgrading from {currentVersion})" : "") + "...",
+                async = true
+            };
+        }
+
         [UnitySkill("package_get_cinemachine_status", "Get Cinemachine installation status.")]
         public static object PackageGetCinemachineStatus()
         {
@@ -140,6 +162,58 @@ namespace UnitySkills
                     version = splinesVersion
                 }
             };
+        }
+
+        [UnitySkill("package_search", "Search for packages in the Unity Registry")]
+        public static object PackageSearch(string query)
+        {
+            if (Validate.Required(query, "query") is object err) return err;
+
+            var packages = PackageManagerHelper.InstalledPackages;
+            if (packages == null)
+                return new { error = "Package list not ready. Call package_refresh first." };
+
+            var matches = packages.Values
+                .Where(p => p.name.IndexOf(query, System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            (p.displayName != null && p.displayName.IndexOf(query, System.StringComparison.OrdinalIgnoreCase) >= 0))
+                .Select(p => new { name = p.name, version = p.version, displayName = p.displayName })
+                .ToList();
+
+            return new { success = true, query, count = matches.Count, packages = matches };
+        }
+
+        [UnitySkill("package_get_dependencies", "Get dependency list for an installed package")]
+        public static object PackageGetDependencies(string packageId)
+        {
+            if (Validate.Required(packageId, "packageId") is object err) return err;
+
+            var packages = PackageManagerHelper.InstalledPackages;
+            if (packages == null)
+                return new { error = "Package list not ready. Call package_refresh first." };
+
+            if (!packages.TryGetValue(packageId, out var pkg))
+                return new { error = $"Package not found: {packageId}" };
+
+            var deps = pkg.dependencies?.Select(d => new { name = d.name, version = d.version }).ToList();
+            return new { success = true, packageId, version = pkg.version, dependencyCount = deps?.Count ?? 0, dependencies = deps };
+        }
+
+        [UnitySkill("package_get_versions", "Get all available versions for a package")]
+        public static object PackageGetVersions(string packageId)
+        {
+            if (Validate.Required(packageId, "packageId") is object err) return err;
+
+            var packages = PackageManagerHelper.InstalledPackages;
+            if (packages == null)
+                return new { error = "Package list not ready. Call package_refresh first." };
+
+            if (!packages.TryGetValue(packageId, out var pkg))
+                return new { error = $"Package not found: {packageId}" };
+
+            var versions = pkg.versions?.all?.ToList();
+            return new { success = true, packageId, currentVersion = pkg.version,
+                compatibleVersion = pkg.versions?.compatible, latestVersion = pkg.versions?.latest,
+                allVersions = versions };
         }
     }
 }

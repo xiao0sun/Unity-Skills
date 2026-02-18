@@ -887,5 +887,47 @@ namespace UnitySkills
         }
 
         #endregion
+
+        [UnitySkill("component_copy", "Copy a component from one GameObject to another")]
+        public static object ComponentCopy(string sourceObject, string targetObject, string componentType)
+        {
+            if (Validate.Required(componentType, "componentType") is object err) return err;
+            var (srcGo, srcErr) = GameObjectFinder.FindOrError(name: sourceObject);
+            if (srcErr != null) return srcErr;
+            var (dstGo, dstErr) = GameObjectFinder.FindOrError(name: targetObject);
+            if (dstErr != null) return dstErr;
+
+            var type = FindComponentType(componentType);
+            if (type == null) return new { error = $"Component type not found: {componentType}" };
+
+            var srcComp = srcGo.GetComponent(type);
+            if (srcComp == null) return new { error = $"No {componentType} on {sourceObject}" };
+
+            UnityEditorInternal.ComponentUtility.CopyComponent(srcComp);
+            UnityEditorInternal.ComponentUtility.PasteComponentAsNew(dstGo);
+            return new { success = true, source = sourceObject, target = targetObject, componentType };
+        }
+
+        [UnitySkill("component_set_enabled", "Enable or disable a component (Behaviour, Renderer, Collider, etc.)")]
+        public static object ComponentSetEnabled(string name = null, int instanceId = 0, string path = null, string componentType = null, bool enabled = true)
+        {
+            if (Validate.Required(componentType, "componentType") is object err) return err;
+            var (go, findErr) = GameObjectFinder.FindOrError(name, instanceId, path);
+            if (findErr != null) return findErr;
+
+            var type = FindComponentType(componentType);
+            if (type == null) return new { error = $"Component type not found: {componentType}" };
+
+            var comp = go.GetComponent(type);
+            if (comp == null) return new { error = $"No {componentType} on {go.name}" };
+
+            Undo.RecordObject(comp, "Set Component Enabled");
+            if (comp is Behaviour behaviour) behaviour.enabled = enabled;
+            else if (comp is Renderer renderer) renderer.enabled = enabled;
+            else if (comp is Collider collider) collider.enabled = enabled;
+            else return new { error = $"{componentType} does not have an enabled property" };
+
+            return new { success = true, gameObject = go.name, componentType, enabled };
+        }
     }
 }

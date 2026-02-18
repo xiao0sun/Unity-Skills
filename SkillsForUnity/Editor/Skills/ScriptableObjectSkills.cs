@@ -140,6 +140,82 @@ namespace UnitySkills
             return new { success = true, original = assetPath, copy = newPath };
         }
 
+        [UnitySkill("scriptableobject_set_batch", "Set multiple fields on a ScriptableObject at once. fields: JSON object {fieldName: value, ...}")]
+        public static object ScriptableObjectSetBatch(string assetPath, string fields)
+        {
+            var asset = AssetDatabase.LoadAssetAtPath<ScriptableObject>(assetPath);
+            if (asset == null) return new { error = $"ScriptableObject not found: {assetPath}" };
+            var dict = Newtonsoft.Json.JsonConvert.DeserializeObject<System.Collections.Generic.Dictionary<string, string>>(fields);
+            if (dict == null || dict.Count == 0) return new { error = "No fields provided" };
+            WorkflowManager.SnapshotObject(asset);
+            Undo.RecordObject(asset, "Set SO Batch");
+            var type = asset.GetType();
+            int set = 0;
+            foreach (var kv in dict)
+            {
+                var field = type.GetField(kv.Key, BindingFlags.Public | BindingFlags.Instance);
+                if (field != null) { field.SetValue(asset, ConvertValue(kv.Value, field.FieldType)); set++; }
+            }
+            EditorUtility.SetDirty(asset);
+            AssetDatabase.SaveAssets();
+            return new { success = true, fieldsSet = set };
+        }
+
+        [UnitySkill("scriptableobject_delete", "Delete a ScriptableObject asset")]
+        public static object ScriptableObjectDelete(string assetPath)
+        {
+            if (Validate.SafePath(assetPath, "assetPath", isDelete: true) is object pathErr) return pathErr;
+            var asset = AssetDatabase.LoadAssetAtPath<ScriptableObject>(assetPath);
+            if (asset == null) return new { error = $"ScriptableObject not found: {assetPath}" };
+            WorkflowManager.SnapshotObject(asset);
+            AssetDatabase.DeleteAsset(assetPath);
+            return new { success = true, deleted = assetPath };
+        }
+
+        [UnitySkill("scriptableobject_find", "Find ScriptableObject assets by type name")]
+        public static object ScriptableObjectFind(string typeName, string searchPath = "Assets", int limit = 50)
+        {
+            var guids = AssetDatabase.FindAssets($"t:{typeName}", new[] { searchPath });
+            var results = guids.Take(limit).Select(g =>
+            {
+                var p = AssetDatabase.GUIDToAssetPath(g);
+                return new { path = p, name = Path.GetFileNameWithoutExtension(p) };
+            }).ToArray();
+            return new { success = true, count = results.Length, assets = results };
+        }
+
+        [UnitySkill("scriptableobject_export_json", "Export a ScriptableObject to JSON")]
+        public static object ScriptableObjectExportJson(string assetPath, string savePath = null)
+        {
+            var asset = AssetDatabase.LoadAssetAtPath<ScriptableObject>(assetPath);
+            if (asset == null) return new { error = $"ScriptableObject not found: {assetPath}" };
+            var json = EditorJsonUtility.ToJson(asset, true);
+            if (!string.IsNullOrEmpty(savePath))
+            {
+                if (Validate.SafePath(savePath, "savePath") is object pathErr) return pathErr;
+                File.WriteAllText(savePath, json);
+                return new { success = true, path = savePath };
+            }
+            return new { success = true, json };
+        }
+
+        [UnitySkill("scriptableobject_import_json", "Import JSON data into a ScriptableObject")]
+        public static object ScriptableObjectImportJson(string assetPath, string json = null, string jsonFilePath = null)
+        {
+            var asset = AssetDatabase.LoadAssetAtPath<ScriptableObject>(assetPath);
+            if (asset == null) return new { error = $"ScriptableObject not found: {assetPath}" };
+            var data = json;
+            if (string.IsNullOrEmpty(data) && !string.IsNullOrEmpty(jsonFilePath))
+                data = File.ReadAllText(jsonFilePath);
+            if (string.IsNullOrEmpty(data)) return new { error = "No JSON data provided" };
+            WorkflowManager.SnapshotObject(asset);
+            Undo.RecordObject(asset, "Import JSON to SO");
+            EditorJsonUtility.FromJsonOverwrite(data, asset);
+            EditorUtility.SetDirty(asset);
+            AssetDatabase.SaveAssets();
+            return new { success = true, assetPath };
+        }
+
         private static System.Type FindScriptableObjectType(string name)
         {
             return System.AppDomain.CurrentDomain.GetAssemblies()
