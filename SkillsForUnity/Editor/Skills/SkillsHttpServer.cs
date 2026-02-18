@@ -59,7 +59,7 @@ namespace UnitySkills
         private static long _totalRequestsProcessed = 0;
         private static long _totalRequestsReceived = 0;
         
-        // JSON 序列化设置，禁用 Unicode 转义确保中文正确显示
+        // JSON serialization settings, disable Unicode escaping to ensure CJK characters display correctly
         private static readonly JsonSerializerSettings _jsonSettings = new JsonSerializerSettings
         {
             StringEscapeHandling = StringEscapeHandling.Default
@@ -262,7 +262,7 @@ namespace UnitySkills
             bool shouldRun = EditorPrefs.GetBool(PREF_SERVER_SHOULD_RUN, false);
             bool autoStart = AutoStart;
 
-            if (shouldRun && autoStart)
+            if (autoStart)
             {
                 if (!_isRunning)
                 {

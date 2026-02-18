@@ -10,7 +10,7 @@ using PkgInfo = UnityEditor.PackageManager.PackageInfo;
 namespace UnitySkills
 {
     /// <summary>
-    /// Unity Package Manager API 封装
+    /// Unity Package Manager API wrapper.
     /// </summary>
     public static class PackageManagerHelper
     {
@@ -26,27 +26,34 @@ namespace UnitySkills
         private static Dictionary<string, PkgInfo> _installedPackages;
         private static bool _isRefreshing;
         private static Action<bool, string> _pendingCallback;
+        // Store the current List request callback for correct unsubscription in EditorApplication.update
+        private static Action<bool> _listCallback;
 
         public static bool IsRefreshing => _isRefreshing;
         public static Dictionary<string, PkgInfo> InstalledPackages => _installedPackages;
 
         /// <summary>
-        /// 刷新已安装包列表
+        /// Refresh the installed packages list.
         /// </summary>
         public static void RefreshPackageList(Action<bool> callback = null)
         {
             if (_isRefreshing) return;
             _isRefreshing = true;
+            _listCallback = callback;
             _listRequest = Client.List(true);
-            EditorApplication.update += () => OnListProgress(callback);
+            // Use a named method instead of lambda to ensure -= can correctly match and unsubscribe
+            EditorApplication.update += OnListProgress;
         }
 
-        private static void OnListProgress(Action<bool> callback)
+        private static void OnListProgress()
         {
-            if (!_listRequest.IsCompleted) return;
-            EditorApplication.update -= () => OnListProgress(callback);
+            if (_listRequest == null || !_listRequest.IsCompleted) return;
+            EditorApplication.update -= OnListProgress;
 
             _isRefreshing = false;
+            var callback = _listCallback;
+            _listCallback = null;
+
             if (_listRequest.Status == StatusCode.Success)
             {
                 _installedPackages = new Dictionary<string, PkgInfo>();
@@ -62,7 +69,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 检查包是否已安装
+        /// Check if a package is installed.
         /// </summary>
         public static bool IsPackageInstalled(string packageId)
         {
@@ -70,7 +77,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 获取已安装版本
+        /// Get the installed version of a package.
         /// </summary>
         public static string GetInstalledVersion(string packageId)
         {
@@ -80,7 +87,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 安装包（异步）
+        /// Install a package (async).
         /// </summary>
         public static void InstallPackage(string packageId, string version, Action<bool, string> callback)
         {
@@ -116,7 +123,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 移除包（异步）
+        /// Remove a package (async).
         /// </summary>
         public static void RemovePackage(string packageId, Action<bool, string> callback)
         {
@@ -151,13 +158,13 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 安装 Cinemachine（自动处理依赖）
+        /// Install Cinemachine (automatically handles dependencies).
         /// </summary>
         public static void InstallCinemachine(bool useVersion3, Action<bool, string> callback)
         {
             if (useVersion3)
             {
-                // CM3 需要先安装 Splines
+                // CM3 requires Splines to be installed first
                 if (!IsPackageInstalled(SplinesPackageId))
                 {
                     InstallPackage(SplinesPackageId, SplinesVersion, (success, msg) =>
@@ -180,7 +187,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 获取 Cinemachine 安装状态
+        /// Get Cinemachine installation status.
         /// </summary>
         public static (bool installed, string version, bool isVersion3) GetCinemachineStatus()
         {
@@ -193,12 +200,12 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 初始化（首次加载时刷新包列表并自动安装 Cinemachine）
+        /// Initialize (refresh package list on first load and auto-install Cinemachine).
         /// </summary>
         [InitializeOnLoadMethod]
         private static void Initialize()
         {
-            // 延迟执行，等待 Package Manager 完成初始化
+            // Delay execution to wait for Package Manager initialization to complete
             EditorApplication.delayCall += () =>
             {
                 RefreshPackageList(success =>
@@ -215,8 +222,8 @@ namespace UnitySkills
         private const double RetryDelaySeconds = 3.0;
 
         /// <summary>
-        /// 自动安装 Cinemachine（如果未安装）
-        /// Unity 6+ 默认 CM3，Unity 2022 及以下默认 CM2
+        /// Auto-install Cinemachine if not already installed.
+        /// Unity 6+ defaults to CM3, Unity 2022 and below defaults to CM2.
         /// </summary>
         private static void AutoInstallCinemachineIfNeeded()
         {

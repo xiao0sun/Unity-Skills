@@ -101,12 +101,13 @@ namespace UnitySkills
         [UnitySkill("debug_force_recompile", "Force script recompilation.")]
         public static object DebugForceRecompile()
         {
-            // 1. Refresh AssetDatabase
-            AssetDatabase.Refresh();
-            
-            // 2. Request Script Compilation (Target specific or all)
-            CompilationPipeline.RequestScriptCompilation();
-            
+            // 1. Force refresh AssetDatabase to detect external file changes
+            AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+
+            // 2. Use CleanBuildCache to force recompilation even if Unity thinks nothing changed
+            CompilationPipeline.RequestScriptCompilation(
+                RequestScriptCompilationOptions.CleanBuildCache);
+
             return new { success = true, message = "Compilation requested" };
         }
         

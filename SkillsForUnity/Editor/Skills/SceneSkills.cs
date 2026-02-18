@@ -109,7 +109,9 @@ namespace UnitySkills
         [UnitySkill("scene_screenshot", "Capture a screenshot of the scene view")]
         public static object SceneScreenshot(string filename = "screenshot.png", int width = 1920, int height = 1080)
         {
-            var path = Path.Combine(Application.dataPath, "Screenshots", filename);
+            // Save to project root's Screenshots/ directory to avoid polluting the Assets folder
+            var projectRoot = Path.GetDirectoryName(Application.dataPath);
+            var path = Path.Combine(projectRoot, "Screenshots", filename);
             var dir = Path.GetDirectoryName(path);
             if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
 
