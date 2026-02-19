@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
@@ -33,7 +34,7 @@ namespace UnitySkills
 
         internal enum VerifyStep { Idle, Compilation, Errors, Tests, Scene, UI, Done }
 
-        internal enum UIPhase { NotStarted, EnteringPlay, WaitingInit, Querying, ExitingPlay, Done }
+        internal enum UIPhase { NotStarted, LoadingScene, EnteringPlay, WaitingInit, ClickingElement, WaitingForElement, Querying, ExitingPlay, Done }
 
         internal class VerifyJob
         {
@@ -55,6 +56,8 @@ namespace UnitySkills
             public int UICheckDepth = 2;
             public string[] UICheckRequiredNames = Array.Empty<string>();
             public int UICheckInitWaitSeconds = 8;
+            public string UICheckClickSelector = "";
+            public string UICheckWaitSelector = "";
 
             // Step results - stored as JObject for JSON serialization
             public Dictionary<string, JObject> Steps = new Dictionary<string, JObject>();
@@ -66,9 +69,16 @@ namespace UnitySkills
             public long StepStartTimeTicks;
             public bool Failed;
 
+            // 测试完成后等待 Test Framework 清理的帧计数器
+            // RestoreSceneSetupTask 在 EditorApplication.update 上异步清理，
+            // 需要等待几帧让它完成，避免进入 Play Mode 时抛 InvalidOperationException
+            public int TestCleanupFrames;
+
             // UI phase tracking (persisted as part of job)
             public UIPhase CurrentUIPhase = UIPhase.NotStarted;
             public long UIWaitStartTicks;
+            public string UIScenePath = "";
+            public string UIWaitJobId = "";  // WaitingForElement 阶段使用的等待 job ID
 
             // Helper properties (not serialized, computed from ticks)
             [JsonIgnore]
@@ -259,7 +269,10 @@ namespace UnitySkills
             bool uiCheckEnabled = false,
             int uiCheckDepth = 2,
             string uiCheckRequiredNames = "",
-            int uiCheckInitWaitSeconds = 8)
+            int uiCheckInitWaitSeconds = 8,
+            string uiScenePath = "",
+            string uiCheckClickSelector = "",
+            string uiCheckWaitSelector = "")
         {
             // Validate parameters
             if (compilationTimeout < 1 || compilationTimeout > 300)
@@ -288,7 +301,10 @@ namespace UnitySkills
                 UICheckRequiredNames = string.IsNullOrEmpty(uiCheckRequiredNames)
                     ? Array.Empty<string>()
                     : uiCheckRequiredNames.Split(',').Select(s => s.Trim()).Where(s => s.Length > 0).ToArray(),
-                UICheckInitWaitSeconds = uiCheckInitWaitSeconds
+                UICheckInitWaitSeconds = uiCheckInitWaitSeconds,
+                UIScenePath = uiScenePath ?? "",
+                UICheckClickSelector = uiCheckClickSelector ?? "",
+                UICheckWaitSelector = uiCheckWaitSelector ?? ""
             };
 
             _jobs[jobId] = job;
@@ -362,6 +378,14 @@ namespace UnitySkills
                 return;
             }
 
+            // 全局 Play Mode 守卫：只有 UI step 允许在 Play Mode 中运行
+            // 其他步骤（Compilation/Errors/Tests/Scene）都需要 Edit Mode 环境
+            // 域重载恢复后如果仍在 Play Mode 中，等待退出后再继续
+            if (EditorApplication.isPlayingOrWillChangePlaymode && job.CurrentStep != VerifyStep.UI)
+            {
+                return;
+            }
+
             try
             {
                 switch (job.CurrentStep)
@@ -386,9 +410,10 @@ namespace UnitySkills
                             job.CurrentStep = VerifyStep.Scene;
                         break;
 
+                    // SceneStep 改为非阻塞等待（与 TestStep 行为一致）
                     case VerifyStep.Scene:
-                        ExecuteSceneStep(job);
-                        job.CurrentStep = VerifyStep.UI;
+                        if (ExecuteSceneStep(job))
+                            job.CurrentStep = VerifyStep.UI;
                         break;
 
                     case VerifyStep.UI:
@@ -584,6 +609,14 @@ namespace UnitySkills
         /// </summary>
         internal static bool ExecuteTestStep(VerifyJob job)
         {
+            // Edit Mode 测试不能在 Play Mode 中运行，先退出 Play Mode
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
+            {
+                if (EditorApplication.isPlaying)
+                    EditorApplication.isPlaying = false;
+                return false; // 等下一帧 Play Mode 完全退出后再继续
+            }
+
             if (!job.RunTests)
             {
                 job.Steps["tests"] = StepResult(
@@ -631,6 +664,16 @@ namespace UnitySkills
             }
 
             var pollResult = TestSkills.TestGetResult(job.TestJobId);
+
+            // 检测域重载后 test job 丢失的情况（TestSkills 内存状态不持久化）
+            var errorProp = pollResult.GetType().GetProperty("error");
+            if (errorProp != null && errorProp.GetValue(pollResult) != null)
+            {
+                SkillsLogger.LogWarning($"[Verify] Test job '{job.TestJobId}' lost (likely domain reload), restarting tests");
+                job.TestJobId = null;  // 清空，下一帧重新启动
+                return false;
+            }
+
             var statusProp = pollResult.GetType().GetProperty("status");
             var status = statusProp?.GetValue(pollResult)?.ToString();
 
@@ -664,6 +707,15 @@ namespace UnitySkills
             if (!testsPassed)
                 job.Failed = true;
 
+            // 测试完成后等待几帧，让 Test Framework 的 RestoreSceneSetupTask 完成清理。
+            // 如果立即推进到下一步（Scene/UI）并进入 Play Mode，
+            // RestoreSceneSetupTask 会因在 Play Mode 中执行而抛 InvalidOperationException。
+            if (job.TestCleanupFrames < 10)
+            {
+                job.TestCleanupFrames++;
+                return false;
+            }
+
             return true;
         }
 
@@ -673,15 +725,24 @@ namespace UnitySkills
 
         /// <summary>
         /// Execute scene validation. Runs even if tests failed, but skips if compilation had errors.
+        /// 返回 true 表示完成（可推进到下一步），false 表示等待中（下一帧再调用）。
         /// </summary>
-        internal static void ExecuteSceneStep(VerifyJob job)
+        internal static bool ExecuteSceneStep(VerifyJob job)
         {
+            // 场景验证需要在 Edit Mode 中进行，等待 Play Mode 完全退出
+            if (EditorApplication.isPlayingOrWillChangePlaymode)
+            {
+                if (EditorApplication.isPlaying)
+                    EditorApplication.isPlaying = false;
+                return false; // 等下一帧 Play Mode 完全退出后再继续
+            }
+
             if (!job.ValidateScene)
             {
                 job.Steps["scene"] = StepResult(
                     ("skipped", true),
                     ("reason", "validateScene is false"));
-                return;
+                return true;
             }
 
             // Skip if compilation errors exist
@@ -693,7 +754,7 @@ namespace UnitySkills
                     job.Steps["scene"] = StepResult(
                         ("skipped", true),
                         ("reason", "Compilation had errors, skipping scene validation"));
-                    return;
+                    return true;
                 }
             }
 
@@ -743,6 +804,8 @@ namespace UnitySkills
                     ("passed", false),
                     ("error", $"Scene validation error: {ex.Message}"));
             }
+
+            return true;
         }
 
         // ─────────────────────────────────────────────────────────────
@@ -780,30 +843,54 @@ namespace UnitySkills
                 }
             }
 
-            // Initialize UI phase if not started
+            // 初始化 UI 阶段：测试运行后场景可能已被重置，需要先恢复场景
             if (job.CurrentUIPhase == UIPhase.NotStarted)
             {
                 job.StepStartTime = DateTime.Now;
-                if (EditorApplication.isPlaying)
+
+                // 如果已在 Play Mode（或正在进入），直接等待初始化
+                // 使用 isPlayingOrWillChangePlaymode 避免域重载过渡期误判
+                if (EditorApplication.isPlayingOrWillChangePlaymode)
                 {
                     job.CurrentUIPhase = UIPhase.WaitingInit;
                     job.UIWaitStart = DateTime.Now;
+                    return false;
                 }
-                else
+
+                // 测试框架运行后会重置场景，需要重新加载目标场景
+                // 如果指定了 uiScenePath，先加载该场景再进入 Play Mode
+                if (!string.IsNullOrEmpty(job.UIScenePath))
                 {
-                    job.CurrentUIPhase = UIPhase.EnteringPlay;
                     try
                     {
-                        EditorApplication.isPlaying = true;
+                        SkillsLogger.Log($"[Verify] UI 检查前重新加载场景: {job.UIScenePath}");
+                        EditorSceneManager.OpenScene(job.UIScenePath, OpenSceneMode.Single);
+                        job.CurrentUIPhase = UIPhase.LoadingScene;
                     }
                     catch (Exception ex)
                     {
                         job.Steps["ui"] = StepResult(
                             ("skipped", true),
-                            ("reason", $"Failed to enter Play Mode: {ex.Message}"));
+                            ("reason", $"Failed to load scene '{job.UIScenePath}': {ex.Message}"));
                         job.CurrentUIPhase = UIPhase.Done;
                         return true;
                     }
+                    return false;
+                }
+
+                // 没有指定场景路径，直接进入 Play Mode
+                job.CurrentUIPhase = UIPhase.EnteringPlay;
+                try
+                {
+                    EditorApplication.isPlaying = true;
+                }
+                catch (Exception ex)
+                {
+                    job.Steps["ui"] = StepResult(
+                        ("skipped", true),
+                        ("reason", $"Failed to enter Play Mode: {ex.Message}"));
+                    job.CurrentUIPhase = UIPhase.Done;
+                    return true;
                 }
                 return false;
             }
@@ -825,6 +912,24 @@ namespace UnitySkills
 
             switch (job.CurrentUIPhase)
             {
+                // 场景加载完成后进入 Play Mode
+                case UIPhase.LoadingScene:
+                    SkillsLogger.Log($"[Verify] 场景已加载，准备进入 Play Mode");
+                    job.CurrentUIPhase = UIPhase.EnteringPlay;
+                    try
+                    {
+                        EditorApplication.isPlaying = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        job.Steps["ui"] = StepResult(
+                            ("skipped", true),
+                            ("reason", $"Failed to enter Play Mode after scene load: {ex.Message}"));
+                        job.CurrentUIPhase = UIPhase.Done;
+                        return true;
+                    }
+                    return false;
+
                 case UIPhase.EnteringPlay:
                     if (EditorApplication.isPlaying)
                     {
@@ -836,9 +941,159 @@ namespace UnitySkills
                 case UIPhase.WaitingInit:
                     if ((DateTime.Now - job.UIWaitStart).TotalSeconds >= job.UICheckInitWaitSeconds)
                     {
-                        job.CurrentUIPhase = UIPhase.Querying;
+                        // 如果指定了点击选择器，先点击再等待；否则直接查询
+                        if (!string.IsNullOrEmpty(job.UICheckClickSelector))
+                            job.CurrentUIPhase = UIPhase.ClickingElement;
+                        else
+                            job.CurrentUIPhase = UIPhase.Querying;
                     }
                     return false;
+
+                // 点击指定元素（如"开始"按钮）
+                case UIPhase.ClickingElement:
+                    try
+                    {
+                        SkillsLogger.Log($"[Verify] UI 检查：点击元素 '{job.UICheckClickSelector}'");
+                        var clickResult = InteractionSkills.UIClick(job.UICheckClickSelector);
+
+                        // 检查点击是否成功
+                        var errorProp = clickResult.GetType().GetProperty("error");
+                        if (errorProp?.GetValue(clickResult) != null)
+                        {
+                            var errorMsg = errorProp.GetValue(clickResult).ToString();
+                            SkillsLogger.LogWarning($"[Verify] 点击元素失败: {errorMsg}");
+                            job.Steps["ui"] = StepResult(
+                                ("passed", false),
+                                ("error", $"Failed to click '{job.UICheckClickSelector}': {errorMsg}"));
+                            job.Failed = true;
+                            EditorApplication.isPlaying = false;
+                            job.CurrentUIPhase = UIPhase.ExitingPlay;
+                            return false;
+                        }
+
+                        SkillsLogger.Log($"[Verify] 成功点击元素 '{job.UICheckClickSelector}'");
+
+                        // 如果指定了等待选择器，进入等待阶段
+                        if (!string.IsNullOrEmpty(job.UICheckWaitSelector))
+                        {
+                            job.CurrentUIPhase = UIPhase.WaitingForElement;
+                            job.UIWaitStart = DateTime.Now;
+                        }
+                        else
+                        {
+                            job.CurrentUIPhase = UIPhase.Querying;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        SkillsLogger.LogError($"[Verify] 点击元素异常: {ex.Message}");
+                        job.Steps["ui"] = StepResult(
+                            ("passed", false),
+                            ("error", $"Click exception: {ex.Message}"));
+                        job.Failed = true;
+                        EditorApplication.isPlaying = false;
+                        job.CurrentUIPhase = UIPhase.ExitingPlay;
+                    }
+                    return false;
+
+                // 等待指定元素出现（如 HUD 的 .goal-progress）
+                case UIPhase.WaitingForElement:
+                {
+                    var waitElapsed = (DateTime.Now - job.UIWaitStart).TotalSeconds;
+                    var waitTimeout = 15; // 最多等待 15 秒
+
+                    if (waitElapsed > waitTimeout)
+                    {
+                        SkillsLogger.LogWarning($"[Verify] 等待元素 '{job.UICheckWaitSelector}' 超时 ({waitTimeout}s)");
+                        job.Steps["ui"] = StepResult(
+                            ("passed", false),
+                            ("error", $"Timeout waiting for '{job.UICheckWaitSelector}' after {waitTimeout}s"));
+                        job.Failed = true;
+                        EditorApplication.isPlaying = false;
+                        job.CurrentUIPhase = UIPhase.ExitingPlay;
+                        return false;
+                    }
+
+                    // 直接用 InteractionSkills 内部的 FindElementAcrossDocuments 逻辑查找元素
+                    // 但 FindElementAcrossDocuments 是 private，所以用 WaitForElement 的同步检查方式
+                    // 通过 UIClick 的方式探测元素是否存在（不实际点击，只查找）
+                    // 更简单的方法：用 UIToolkitSkills.Tree 查找，或直接调用 WaitForElement
+                    try
+                    {
+                        // 使用 WaitForElement 启动异步等待（仅在首次进入时启动）
+                        if (string.IsNullOrEmpty(job.UIWaitJobId))
+                        {
+                            var waitResult = InteractionSkills.WaitForElement(
+                                job.UICheckWaitSelector,
+                                condition: "exists",
+                                timeout: waitTimeout);
+
+                            // 检查是否立即满足
+                            var statusProp = waitResult.GetType().GetProperty("status");
+                            var status = statusProp?.GetValue(waitResult)?.ToString();
+
+                            if (status == "found")
+                            {
+                                SkillsLogger.Log($"[Verify] 元素 '{job.UICheckWaitSelector}' 已存在，继续查询");
+                                job.CurrentUIPhase = UIPhase.Querying;
+                                return false;
+                            }
+
+                            // 获取 jobId 用于后续轮询
+                            var jobIdProp = waitResult.GetType().GetProperty("jobId");
+                            job.UIWaitJobId = jobIdProp?.GetValue(waitResult)?.ToString() ?? "";
+
+                            if (string.IsNullOrEmpty(job.UIWaitJobId))
+                            {
+                                // 没有 jobId 且没有 found，说明出错了
+                                var errorProp = waitResult.GetType().GetProperty("error");
+                                var errorMsg = errorProp?.GetValue(waitResult)?.ToString() ?? "Unknown error";
+                                job.Steps["ui"] = StepResult(
+                                    ("passed", false),
+                                    ("error", $"WaitForElement failed: {errorMsg}"));
+                                job.Failed = true;
+                                EditorApplication.isPlaying = false;
+                                job.CurrentUIPhase = UIPhase.ExitingPlay;
+                            }
+                            return false;
+                        }
+
+                        // 轮询等待结果
+                        var pollResult = InteractionSkills.WaitGetResult(job.UIWaitJobId);
+                        var pollStatusProp = pollResult.GetType().GetProperty("status");
+                        var pollStatus = pollStatusProp?.GetValue(pollResult)?.ToString();
+
+                        if (pollStatus == "found")
+                        {
+                            SkillsLogger.Log($"[Verify] 元素 '{job.UICheckWaitSelector}' 已出现，继续查询");
+                            job.CurrentUIPhase = UIPhase.Querying;
+                        }
+                        else if (pollStatus == "timeout" || pollStatus == "error")
+                        {
+                            var msgProp = pollResult.GetType().GetProperty("message");
+                            var msg = msgProp?.GetValue(pollResult)?.ToString() ?? pollStatus;
+                            SkillsLogger.LogWarning($"[Verify] 等待元素失败: {msg}");
+                            job.Steps["ui"] = StepResult(
+                                ("passed", false),
+                                ("error", $"WaitForElement {pollStatus}: {msg}"));
+                            job.Failed = true;
+                            EditorApplication.isPlaying = false;
+                            job.CurrentUIPhase = UIPhase.ExitingPlay;
+                        }
+                        // else still waiting
+                    }
+                    catch (Exception ex)
+                    {
+                        SkillsLogger.LogError($"[Verify] 等待元素异常: {ex.Message}");
+                        job.Steps["ui"] = StepResult(
+                            ("passed", false),
+                            ("error", $"WaitForElement exception: {ex.Message}"));
+                        job.Failed = true;
+                        EditorApplication.isPlaying = false;
+                        job.CurrentUIPhase = UIPhase.ExitingPlay;
+                    }
+                    return false;
+                }
 
                 case UIPhase.Querying:
                     try
