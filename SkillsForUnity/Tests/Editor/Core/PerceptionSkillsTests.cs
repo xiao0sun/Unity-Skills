@@ -47,16 +47,23 @@ namespace UnitySkills.Tests.Core
         [Test]
         public void SceneSummarize_CountsObjectsCorrectly()
         {
-            new GameObject("TestObj1");
-            new GameObject("TestObj2");
+            // Measure the exact delta the skill reports for a known mutation instead of asserting
+            // an absolute count. Starting from an empty scene and comparing before/after removes
+            // the fragile "default scene has Camera + Light" assumption, which is not guaranteed
+            // under a full-suite run (editor mid-domain-reload) or when the project's default scene
+            // template differs — the historical cause of this test flaking.
+            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+            GameObjectFinder.InvalidateCache();
+            var baseline = ToJObject(PerceptionSkills.SceneSummarize())["stats"]?["totalObjects"]?.Value<int>() ?? 0;
+
+            const int added = 3;
+            for (int i = 0; i < added; i++) new GameObject($"TestObj{i}");
             GameObjectFinder.InvalidateCache();
 
-            var result = PerceptionSkills.SceneSummarize();
-            var json = ToJObject(result);
-
+            var json = ToJObject(PerceptionSkills.SceneSummarize());
             Assert.IsTrue(json["success"]?.Value<bool>() ?? false);
-            // Default scene has Camera + Light, we added 2 more
-            Assert.IsTrue(json["stats"]?["totalObjects"]?.Value<int>() >= 4);
+            Assert.AreEqual(baseline + added, json["stats"]?["totalObjects"]?.Value<int>() ?? -1,
+                "SceneSummarize must count exactly the objects added to the scene.");
         }
 
         [Test]
