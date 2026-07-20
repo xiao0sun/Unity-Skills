@@ -76,11 +76,16 @@ namespace UnitySkills
         private DropdownField _logDropdown;
         private Toggle        _confirmToggle;
         private Label         _confirmHint;
+        private Toggle        _telemetryToggle;
+        private Label         _telemetryHint;
 
         // Stats group
         private Label  _statsGroupTitle;
         private Label  _statsHint;
         private Button _statsResetBtn;
+
+        // Shortcuts group — own controller (capture state machine + conflict detection).
+        private ShortcutsSettingsController _shortcutsController;
 
         public SettingsDrawerController(VisualElement root, UnitySkillsWindow window)
         {
@@ -110,6 +115,9 @@ namespace UnitySkills
             BindEvents();
             InitializeValues();
             RefreshPermissionsUi();
+
+            // Shortcuts 节：独立控制器接管捕获态机与冲突检测，抽屉仅做组装与生命周期转发。
+            _shortcutsController = new ShortcutsSettingsController(_drawerContainer);
 
             // Click on mask closes the drawer
             if (_drawerMask != null)
@@ -184,6 +192,8 @@ namespace UnitySkills
             _logDropdown       = _drawerContainer.Q<DropdownField>("loglevel-dropdown");
             _confirmToggle     = _drawerContainer.Q<Toggle>("confirm-toggle");
             _confirmHint       = _drawerContainer.Q<Label>("confirm-hint");
+            _telemetryToggle   = _drawerContainer.Q<Toggle>("telemetry-toggle");
+            _telemetryHint     = _drawerContainer.Q<Label>("telemetry-hint");
 
             _statsGroupTitle = _drawerContainer.Q<Label>("group-stats-title");
             _statsHint       = _drawerContainer.Q<Label>("stats-hint");
@@ -267,6 +277,13 @@ namespace UnitySkills
                         ConfirmationTokenService.RequireConfirmation = evt.newValue;
                 });
 
+            if (_telemetryToggle != null)
+                _telemetryToggle.RegisterValueChangedCallback(evt =>
+                {
+                    if (evt.newValue != SkillTelemetryService.Enabled)
+                        SkillTelemetryService.Enabled = evt.newValue;
+                });
+
             if (_statsResetBtn != null)
                 _statsResetBtn.clicked += () =>
                 {
@@ -311,10 +328,14 @@ namespace UnitySkills
             if (_timeoutField   != null) _timeoutField.value     = SkillsHttpServer.RequestTimeoutMinutes;
             if (_keepaliveField != null) _keepaliveField.value   = SkillsHttpServer.KeepAliveIntervalSeconds;
             if (_confirmToggle  != null) _confirmToggle.value    = ConfirmationTokenService.RequireConfirmation;
+            if (_telemetryToggle != null) _telemetryToggle.value = SkillTelemetryService.Enabled;
         }
 
         public void Open()
         {
+            // 每次打开重建 Shortcuts 行，拉取最新绑定（覆盖 Edit ▸ Shortcuts 外部改动）。
+            _shortcutsController?.Refresh();
+
             if (_drawerContainer != null) _drawerContainer.AddToClassList("open");
             if (_drawerMask != null)
             {
@@ -398,8 +419,15 @@ namespace UnitySkills
                     : "When ON: delete / high-risk skills first return a _confirm token + dryRun preview; re-call within 5 min with the token to execute.";
             }
 
+            if (_telemetryToggle != null)
+                _telemetryToggle.label = SkillsLocalization.Get("drawer_telemetry_label");
+            if (_telemetryHint != null)
+                _telemetryHint.text = SkillsLocalization.Get("drawer_telemetry_hint");
+
             if (_statsHint     != null) _statsHint.text     = SkillsLocalization.Get("drawer_stats_hint");
             if (_statsResetBtn != null) _statsResetBtn.text = SkillsLocalization.Get("drawer_reset_stats_btn");
+
+            _shortcutsController?.RefreshLocalization();
         }
 
         // ===== Permissions group helpers =====
@@ -726,3 +754,5 @@ namespace UnitySkills
         }
     }
 }
+
+// Producer:Betsy

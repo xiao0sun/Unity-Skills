@@ -89,6 +89,7 @@ namespace UnitySkills
             });
             AddLog(job, "info", currentStage, resultSummary, "job_created");
             BatchPersistence.UpsertJob(job);
+            BatchPersistence.FlushIfDirty();
             return job;
         }
 
@@ -426,6 +427,8 @@ namespace UnitySkills
                 return job;
             }
 
+            PlayCaptureService.NotifyCancelled(job);
+
             job.status = "cancelled";
             job.currentStage = "cancelled";
             job.updatedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -487,6 +490,13 @@ namespace UnitySkills
             AddLog(job, "error", stage, error, "job_failed");
             BatchPersistence.UpsertJob(job);
             BatchPersistence.FlushIfDirty();
+            EventChannelService.Publish("job_failed", new
+            {
+                jobId = job.jobId,
+                kind = job.kind,
+                status = job.status,
+                error = job.error,
+            });
         }
 
         internal static void CompleteJob(string jobId, string summary, Dictionary<string, object> resultData = null)
@@ -514,6 +524,12 @@ namespace UnitySkills
             AddLog(job, "info", "completed", summary, "job_completed");
             BatchPersistence.UpsertJob(job);
             BatchPersistence.FlushIfDirty();
+            EventChannelService.Publish("job_completed", new
+            {
+                jobId = job.jobId,
+                kind = job.kind,
+                status = job.status,
+            });
         }
 
         private static void ProcessJobs()
@@ -578,6 +594,15 @@ namespace UnitySkills
                         break;
                     case "test_smoke":
                         ProcessSmokeJob(job);
+                        break;
+                    case "build_player":
+                        BuildPlayerService.Process(job);
+                        break;
+                    case "playmode":
+                        PlayCaptureService.ProcessPlayModeJob(job);
+                        break;
+                    case "play_capture":
+                        PlayCaptureService.Process(job);
                         break;
                 }
             }
@@ -1477,3 +1502,5 @@ namespace UnitySkills
         }
     }
 }
+
+// Producer:Betsy

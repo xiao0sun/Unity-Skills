@@ -26,6 +26,17 @@ namespace UnitySkills
             return new { success = true, mode = "playing", jobId = job.jobId };
         }
 
+        [UnitySkill("editor_play_capture", "Enter Play Mode, observe runtime errors for a fixed duration, optionally capture the Game View, then exit and return a job report.",
+            Category = SkillCategory.Editor, Operation = SkillOperation.Execute | SkillOperation.Analyze,
+            Tags = new[] { "play", "runtime", "observe", "errors", "screenshot", "test", "job" },
+            Outputs = new[] { "jobId", "kind", "durationSeconds", "captureScreenshot" },
+            MayEnterPlayMode = true, RiskLevel = "medium", SupportsDryRun = false)]
+        public static object EditorPlayCapture(int durationSeconds = 10, bool captureScreenshot = false,
+            string screenshotFilename = null, int maxErrors = 50)
+        {
+            return PlayCaptureService.Start(durationSeconds, captureScreenshot, screenshotFilename, maxErrors);
+        }
+
         [UnitySkill("editor_stop", "Exit play mode. Warning: any scene changes made during Play mode will be lost.",
             Category = SkillCategory.Editor, Operation = SkillOperation.Execute,
             Tags = new[] { "stop", "runtime", "exit" },
@@ -128,6 +139,17 @@ namespace UnitySkills
                 unityVersion = Application.unityVersion,
                 platform = Application.platform.ToString()
             };
+        }
+
+        [UnitySkill("editor_get_changes", "Read the persistent editor-change journal instead of parsing .unity YAML. Use after the user edited the project while the AI was away, after external file changes, or after asking the user to make manual Editor changes. Returns scene structure/property summaries and imported/deleted/moved asset paths newer than 'since'. Omit since (or pass 0) for retained history, then pass the returned cursor on the next call. types: all/scene/file/undo/lifecycle (comma-separated). source: all/editor/manual/rest.",
+            Category = SkillCategory.Editor, Operation = SkillOperation.Query,
+            Tags = new[] { "changes", "observe", "journal", "scene", "files", "cursor" },
+            Outputs = new[] { "hasChanges", "cursor", "oldestSeq", "dropped", "truncated", "changes" },
+            ReadOnly = true,
+            Mode = SkillMode.SemiAuto)]
+        public static object EditorGetChanges(long since = 0, string types = null, string source = "all", int limit = 100)
+        {
+            return EditorChangeTrackerService.ReadChanges(since, types, source, limit);
         }
 
         [UnitySkill("editor_execute_menu", "Execute a Unity menu item",
@@ -260,3 +282,5 @@ namespace UnitySkills
 
     }
 }
+
+// Producer:Betsy

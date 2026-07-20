@@ -261,6 +261,13 @@ namespace UnitySkills
                 BatchPersistence.FlushIfDirty();
                 EndWorkflowSession(context);
                 FinalizeRuntimeContext(context);
+                EventChannelService.Publish("job_failed", new
+                {
+                    jobId = job.jobId,
+                    kind = job.kind,
+                    status = job.status,
+                    error = job.error,
+                });
             }
         }
 
@@ -297,6 +304,12 @@ namespace UnitySkills
             BatchPersistence.FlushIfDirty();
             EndWorkflowSession(context);
             FinalizeRuntimeContext(context);
+            EventChannelService.Publish("job_completed", new
+            {
+                jobId = job.jobId,
+                kind = job.kind,
+                status = job.status,
+            });
         }
 
         private static void FinishCancelledJob(RuntimeJobContext context)
@@ -348,3 +361,5 @@ namespace UnitySkills
         }
     }
 }
+
+// Producer:Betsy

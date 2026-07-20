@@ -11,7 +11,7 @@ namespace UnitySkills
     /// <summary>
     /// Unity Editor Window — UnitySkills v2 layout.
     /// Topbar (server status + URL + toggle + settings) — persistent.
-    /// 3 tabs: Skills / AI Config / History.
+    /// 4 tabs: Skills / AI Config / History / Analytics.
     /// Footer: version + live stats pill + segmented language switch.
     /// Settings panel: slide-in drawer from the right.
     /// </summary>
@@ -44,6 +44,7 @@ namespace UnitySkills
         private SkillsTabController      _skillsController;
         private AIConfigTabController    _configController;
         private HistoryTabController     _historyController;
+        private AnalyticsTabController   _analyticsController;
 
         // ----- Tab strip -----
         private VisualElement[] _tabContents;
@@ -55,7 +56,12 @@ namespace UnitySkills
         // so a closed window can't keep queuing refreshes. -----
         private IVisualElementScheduledItem _liveUpdateItem;
 
-        [MenuItem("Window/UnitySkills")]
+        // Single flat entry: clicking "Window ▸ UnitySkills" opens the main panel directly.
+        // CONSTRAINT: a "Window/UnitySkills" leaf cannot coexist with any
+        // "Window/UnitySkills/..." submenu item — Unity swallows the leaf. Secondary panels
+        // Secondary panels (such as Audit Log) are therefore reachable only via in-panel buttons and
+        // shortcuts (ShortcutActions); never add another [MenuItem] under this prefix.
+        [MenuItem("Window/UnitySkills", false, 1)]
         public static void ShowWindow()
         {
             var window = GetWindow<UnitySkillsWindow>("UnitySkills");
@@ -106,6 +112,7 @@ namespace UnitySkills
             _skillsController  = new SkillsTabController(_tabContents[0], this);
             _configController  = new AIConfigTabController(_tabContents[1], this);
             _historyController = new HistoryTabController(_tabContents[2], this);
+            _analyticsController = new AnalyticsTabController(_tabContents[3], this);
 
             // --- Tab clicks ---
             for (int i = 0; i < _tabButtons.Length; i++)
@@ -126,10 +133,10 @@ namespace UnitySkills
 
         private void CacheTabReferences()
         {
-            _tabButtons    = new Button[3];
-            _tabContents   = new VisualElement[3];
-            _tabUnderlines = new VisualElement[3];
-            for (int i = 0; i < 3; i++)
+            _tabButtons    = new Button[4];
+            _tabContents   = new VisualElement[4];
+            _tabUnderlines = new VisualElement[4];
+            for (int i = 0; i < 4; i++)
             {
                 _tabButtons[i]    = rootVisualElement.Q<Button>($"tab-btn-{i}");
                 _tabContents[i]   = rootVisualElement.Q<VisualElement>($"tab-content-{i}");
@@ -161,6 +168,10 @@ namespace UnitySkills
             }
 
             if (_tabButtons[index] != null) _tabButtons[index].Blur();
+
+            // Analytics pulls aggregates on demand (30s cache in SkillTelemetryService),
+            // so activating the tab is the natural refresh point — no live tick involved.
+            if (index == 3) _analyticsController?.OnTabSelected();
         }
 
         /// <summary>
@@ -198,6 +209,7 @@ namespace UnitySkills
             if (_tabButtons[0] != null) _tabButtons[0].text = SkillsLocalization.Get("tab_skills");
             if (_tabButtons[1] != null) _tabButtons[1].text = SkillsLocalization.Get("tab_ai_config");
             if (_tabButtons[2] != null) _tabButtons[2].text = SkillsLocalization.Get("tab_history");
+            if (_tabButtons[3] != null) _tabButtons[3].text = SkillsLocalization.Get("tab_analytics");
 
             _topbar?.RefreshLocalization();
             _footer?.RefreshLocalization();
@@ -206,6 +218,7 @@ namespace UnitySkills
             _skillsController?.RefreshLocalization();
             _configController?.RefreshLocalization();
             _historyController?.RefreshLocalization();
+            _analyticsController?.RefreshLocalization();
         }
 
         // ===== Skill catalog (preserved API for controllers) =====
@@ -213,28 +226,29 @@ namespace UnitySkills
         public void RefreshSkillsList()
         {
             _skillsByCategory = new Dictionary<string, List<SkillInfo>>();
-            var allTypes = SkillsCommon.GetAllLoadedTypes();
+            // 与路由器使用相同的 Unity 编辑器索引，避免窗口刷新时再次全量枚举类型。
+            var methods = TypeCache.GetMethodsWithAttribute<UnitySkillAttribute>();
 
-            foreach (var type in allTypes)
+            foreach (var method in methods)
             {
-                foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                if (!method.IsPublic || !method.IsStatic || method.DeclaringType == null)
+                    continue;
+
+                UnitySkillAttribute attr;
+                try { attr = method.GetCustomAttribute<UnitySkillAttribute>(); }
+                catch { continue; }
+                if (attr == null) continue;
+
+                var category = method.DeclaringType.Name.Replace("Skills", "");
+                if (!_skillsByCategory.ContainsKey(category))
+                    _skillsByCategory[category] = new List<SkillInfo>();
+
+                _skillsByCategory[category].Add(new SkillInfo
                 {
-                    UnitySkillAttribute attr;
-                    try { attr = method.GetCustomAttribute<UnitySkillAttribute>(); }
-                    catch { continue; }
-                    if (attr == null) continue;
-
-                    var category = type.Name.Replace("Skills", "");
-                    if (!_skillsByCategory.ContainsKey(category))
-                        _skillsByCategory[category] = new List<SkillInfo>();
-
-                    _skillsByCategory[category].Add(new SkillInfo
-                    {
-                        Name = attr.Name ?? method.Name,
-                        Description = attr.Description ?? "",
-                        Method = method
-                    });
-                }
+                    Name = attr.Name ?? method.Name,
+                    Description = attr.Description ?? "",
+                    Method = method
+                });
             }
         }
 
@@ -866,3 +880,5 @@ namespace UnitySkills
         }
     }
 }
+
+// Producer:Betsy

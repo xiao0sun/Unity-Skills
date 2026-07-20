@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using UnityEditor;
 using UnityEngine;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -340,54 +341,54 @@ namespace UnitySkills
                 var skills = new Dictionary<string, SkillInfo>(StringComparer.OrdinalIgnoreCase);
                 var trackedSkills = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-                var allTypes = SkillsCommon.GetAllLoadedTypes();
-
-                foreach (var type in allTypes)
+                // 使用 Unity 编辑器索引直接查询 Skill 方法，避免在 Domain Reload 后枚举全部程序集和类型。
+                var methods = TypeCache.GetMethodsWithAttribute<UnitySkillAttribute>();
+                foreach (var method in methods)
                 {
-                    foreach (var method in type.GetMethods(BindingFlags.Public | BindingFlags.Static))
+                    if (!method.IsPublic || !method.IsStatic)
+                        continue;
+
+                    UnitySkillAttribute attr;
+                    try { attr = method.GetCustomAttribute<UnitySkillAttribute>(); }
+                    catch { continue; }
+                    if (attr != null)
                     {
-                        UnitySkillAttribute attr;
-                        try { attr = method.GetCustomAttribute<UnitySkillAttribute>(); }
-                        catch { continue; }
-                        if (attr != null)
+                        var name = attr.Name ?? ToSnakeCase(method.Name);
+                        var parameters = method.GetParameters();
+                        var parameterNames = parameters.Select(p => p.Name).ToArray();
+                        var allowedSet = new HashSet<string>(parameterNames, StringComparer.OrdinalIgnoreCase);
+                        allowedSet.UnionWith(_reservedBodyParameters);
+                        if (!allowedSet.Contains(EntityIdParameterName) && SupportsSyntheticEntityId(parameterNames))
+                            allowedSet.Add(EntityIdParameterName);
+                        skills[name] = new SkillInfo
                         {
-                            var name = attr.Name ?? ToSnakeCase(method.Name);
-                            var parameters = method.GetParameters();
-                            var parameterNames = parameters.Select(p => p.Name).ToArray();
-                            var allowedSet = new HashSet<string>(parameterNames, StringComparer.OrdinalIgnoreCase);
-                            allowedSet.UnionWith(_reservedBodyParameters);
-                            if (!allowedSet.Contains(EntityIdParameterName) && SupportsSyntheticEntityId(parameterNames))
-                                allowedSet.Add(EntityIdParameterName);
-                            skills[name] = new SkillInfo
-                            {
-                                Name = name,
-                                Description = attr.Description ?? "",
-                                Method = method,
-                                Parameters = parameters,
-                                TracksWorkflow = attr.TracksWorkflow,
-                                Category = attr.Category,
-                                Operation = attr.Operation,
-                                Tags = attr.Tags,
-                                Outputs = attr.Outputs,
-                                RequiresInput = attr.RequiresInput,
-                                ReadOnly = attr.ReadOnly,
-                                MutatesScene = attr.MutatesScene,
-                                MutatesAssets = attr.MutatesAssets,
-                                MayTriggerReload = attr.MayTriggerReload,
-                                MayEnterPlayMode = attr.MayEnterPlayMode,
-                                SupportsDryRun = attr.SupportsDryRun,
-                                RiskLevel = attr.RiskLevel ?? "low",
-                                RequiresPackages = attr.RequiresPackages,
-                                Mode = attr.Mode,
-                                ParameterNames = parameterNames,
-                                AllowedParameterSet = allowedSet,
-                                NameLower = name.ToLowerInvariant(),
-                                DescriptionLower = (attr.Description ?? "").ToLowerInvariant(),
-                                TagsLower = attr.Tags?.Select(t => t.ToLowerInvariant()).ToArray()
-                            };
-                            if (attr.TracksWorkflow)
-                                trackedSkills.Add(name);
-                        }
+                            Name = name,
+                            Description = attr.Description ?? "",
+                            Method = method,
+                            Parameters = parameters,
+                            TracksWorkflow = attr.TracksWorkflow,
+                            Category = attr.Category,
+                            Operation = attr.Operation,
+                            Tags = attr.Tags,
+                            Outputs = attr.Outputs,
+                            RequiresInput = attr.RequiresInput,
+                            ReadOnly = attr.ReadOnly,
+                            MutatesScene = attr.MutatesScene,
+                            MutatesAssets = attr.MutatesAssets,
+                            MayTriggerReload = attr.MayTriggerReload,
+                            MayEnterPlayMode = attr.MayEnterPlayMode,
+                            SupportsDryRun = attr.SupportsDryRun,
+                            RiskLevel = attr.RiskLevel ?? "low",
+                            RequiresPackages = attr.RequiresPackages,
+                            Mode = attr.Mode,
+                            ParameterNames = parameterNames,
+                            AllowedParameterSet = allowedSet,
+                            NameLower = name.ToLowerInvariant(),
+                            DescriptionLower = (attr.Description ?? "").ToLowerInvariant(),
+                            TagsLower = attr.Tags?.Select(t => t.ToLowerInvariant()).ToArray()
+                        };
+                        if (attr.TracksWorkflow)
+                            trackedSkills.Add(name);
                     }
                 }
 
@@ -458,6 +459,19 @@ namespace UnitySkills
 
         public static string Execute(string name, string json)
         {
+            return Execute(name, json, captureDiff: false);
+        }
+
+        /// <summary>
+        /// Execute a skill. When <paramref name="captureDiff"/> is true (POST /skill/{name}?diff=1),
+        /// a semantic scene diff is captured as a pure side-observer and attached to the success
+        /// response as a top-level "sceneDiff" field — telling the caller what this operation
+        /// actually changed. The diff never affects execution: undo/workflow/error branches are
+        /// untouched, and any diff failure degrades sceneDiff to {error:...} without impacting the
+        /// skill result. captureDiff:false reproduces the original byte-for-byte output.
+        /// </summary>
+        public static string Execute(string name, string json, bool captureDiff)
+        {
             Initialize();
             if (!_skills.TryGetValue(name, out var skill))
             {
@@ -467,6 +481,9 @@ namespace UnitySkills
             bool autoStartedWorkflow = false;
             var wrapWithUndoTransaction = !skill.ReadOnly && !_transactionlessSkills.Contains(name);
             int undoGroup = -1;
+            // Attribute changes made by this call (including frame-end ObjectChangeEvents) to
+            // REST in the persistent editor-change journal.
+            EditorChangeTrackerService.BeginRestExecution();
             try
             {
                 var validation = ValidateParameters(skill, json);
@@ -540,6 +557,13 @@ namespace UnitySkills
                 var args = validation.Args;
                 var invoke = validation.InvokeArgs;
 
+                // Semantic diff pre-capture (?diff=1). Pure side-observer placed after the
+                // permission gate and before invoke; read-only skills are skipped (no execution
+                // to diff). CaptureBefore is fully exception-isolated internally.
+                SkillSceneDiff.DiffCapture diffCapture = null;
+                if (captureDiff && !skill.ReadOnly)
+                    diffCapture = SkillSceneDiff.CaptureBefore(args);
+
                 if (wrapWithUndoTransaction)
                 {
                     UnityEditor.Undo.IncrementCurrentGroup();
@@ -566,7 +590,41 @@ namespace UnitySkills
                 bool verbose = true; // Default to true if not specified to maintain backward compatibility for direct calls
                 if (args.TryGetValue("verbose", StringComparison.OrdinalIgnoreCase, out var verboseToken))
                 {
-                    verbose = verboseToken.ToObject<bool>();
+                    try
+                    {
+                        verbose = verboseToken.ToObject<bool>();
+                    }
+                    catch (Exception)
+                    {
+                        // ToObject<bool> accepts true/false/"true"/1 but rejects "1"/"yes" etc.
+                        // Try the common string forms first; anything else is a client error and
+                        // must surface as TYPE_MISMATCH + fix_and_retry — the generic catch below
+                        // would mislabel it INTERNAL "[Transactional Revert]" + wait_and_retry,
+                        // sending agents into a retry loop on a body only they can fix.
+                        var raw = verboseToken.Type == JTokenType.String
+                            ? verboseToken.Value<string>()?.Trim().ToLowerInvariant()
+                            : null;
+                        if (raw == "true" || raw == "1" || raw == "yes")
+                            verbose = true;
+                        else if (raw == "false" || raw == "0" || raw == "no")
+                            verbose = false;
+                        else
+                        {
+                            // Nothing was invoked yet; unwind the bookkeeping opened above,
+                            // mirroring the catch handlers below.
+                            if (autoStartedWorkflow && WorkflowManager.IsRecording)
+                                WorkflowManager.EndTask();
+                            if (undoGroup >= 0)
+                                UnityEditor.Undo.RevertAllInCurrentGroup();
+
+                            return SkillErrorResponse.Build(
+                                SkillErrorCode.TypeMismatch,
+                                $"Parameter 'verbose' must be a boolean (true/false), got: {verboseToken.ToString(Formatting.None)}",
+                                skill: name,
+                                details: new { typeErrors = new object[] { new { parameter = "verbose", expectedType = "boolean", error = $"Cannot convert {verboseToken.Type} to Boolean" } } },
+                                retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                        }
+                    }
                     args.Remove("verbose");
                 }
 
@@ -609,6 +667,12 @@ namespace UnitySkills
                         retryStrategy: SkillErrorResponse.Abort);
                 }
 
+                // Semantic diff post-capture + compare (?diff=1). Attached to the success envelope
+                // as a top-level "sceneDiff"; null on the default path so the output stays
+                // byte-identical. BuildSceneDiff is exception-isolated — diff never breaks the
+                // response, and a skill that reported an error above never reaches this point.
+                JToken sceneDiff = BuildSceneDiff(captureDiff, skill, diffCapture, result);
+
                 if (!verbose && result != null)
                 {
                     // "Summary Mode" Logic
@@ -632,12 +696,12 @@ namespace UnitySkills
                             ["hint"] = "Result is truncated. To see all items, pass 'verbose=true' parameter."
                         };
 
-                        return SerializeSuccessResponse(wrapper);
+                        return SerializeSuccessResponse(wrapper, sceneDiff);
                     }
                 }
 
                 // Full Mode (verbose=true OR small result) - Return original result as is
-                return SerializeSuccessResponse(result);
+                return SerializeSuccessResponse(result, sceneDiff);
             }
             catch (TargetInvocationException ex)
             {
@@ -690,6 +754,10 @@ namespace UnitySkills
                     skill: name,
                     details: new { exceptionType = ex.GetType().Name },
                     retryStrategy: SkillErrorResponse.RetryWaitAndRetry);
+            }
+            finally
+            {
+                EditorChangeTrackerService.EndRestExecution();
             }
         }
 
@@ -753,7 +821,7 @@ namespace UnitySkills
                     note = "No execution performed"
                 }, _jsonSettings);
             }
-            catch (Exception ex)
+            catch (Newtonsoft.Json.JsonException ex)
             {
                 return SkillErrorResponse.Build(
                     SkillErrorCode.InvalidJson,
@@ -761,9 +829,21 @@ namespace UnitySkills
                     skill: name,
                     retryStrategy: SkillErrorResponse.RetryFixAndRetry);
             }
+            catch (Exception ex)
+            {
+                // Valid JSON can still crash plan/semantic validation (e.g. an NRE). Reporting
+                // that as INVALID_JSON sends agents into a loop rewriting a body that is fine;
+                // mirror Execute's catch split and report the real failure instead.
+                return SkillErrorResponse.Build(
+                    SkillErrorCode.Internal,
+                    $"Dry-run failed: {ex.Message}",
+                    skill: name,
+                    details: new { exceptionType = ex.GetType().Name },
+                    retryStrategy: SkillErrorResponse.Abort);
+            }
         }
 
-        private static string SerializeSuccessResponse(object result)
+        private static string SerializeSuccessResponse(object result, JToken sceneDiff = null)
         {
             var jsonResult = NormalizeSuccessResult(result);
 
@@ -779,14 +859,43 @@ namespace UnitySkills
                         if (notice != null)
                         {
                             obj["serverAvailability"] = JToken.FromObject(notice);
-                            return JsonConvert.SerializeObject(new { status = "success", result = obj }, _jsonSettings);
+                            return BuildSuccessEnvelope(obj, sceneDiff);
                         }
                     }
                 }
                 catch { }
             }
 
-            return JsonConvert.SerializeObject(new { status = "success", result = jsonResult }, _jsonSettings);
+            return BuildSuccessEnvelope(jsonResult, sceneDiff);
+        }
+
+        // Serializes the success envelope. sceneDiff (?diff=1) is appended as a top-level field
+        // only when non-null; the null path is byte-identical to the pre-diff output.
+        private static string BuildSuccessEnvelope(JToken result, JToken sceneDiff)
+        {
+            if (sceneDiff == null)
+                return JsonConvert.SerializeObject(new { status = "success", result }, _jsonSettings);
+            return JsonConvert.SerializeObject(new { status = "success", result, sceneDiff }, _jsonSettings);
+        }
+
+        // Builds the sceneDiff payload for a successful ?diff=1 execution. Read-only skills report
+        // a note (nothing to diff); otherwise delegates to SkillSceneDiff.Build. Fully isolated —
+        // any failure degrades to {error:...} and never disturbs the response envelope.
+        private static JToken BuildSceneDiff(bool captureDiff, SkillInfo skill, SkillSceneDiff.DiffCapture diffCapture, object result)
+        {
+            if (!captureDiff)
+                return null;
+            try
+            {
+                if (skill.ReadOnly)
+                    return new JObject { ["note"] = "read-only skill, no diff captured" };
+                return SkillSceneDiff.Build(diffCapture, result);
+            }
+            catch (Exception ex)
+            {
+                SkillsLogger.LogVerbose($"[diff] build failed: {ex.Message}");
+                return new JObject { ["error"] = $"diff failed: {ex.Message}" };
+            }
         }
 
         private static JToken NormalizeSuccessResult(object result)
@@ -1051,6 +1160,19 @@ namespace UnitySkills
             if (_filteredOutputCache.TryGetValue(cacheKey, out var cachedOutput))
                 return cachedOutput;
 
+            // ?brief=1 (or ?brief=true) → directory layer: skill names grouped by category,
+            // no descriptions or parameter schemas (~19KB vs ~139KB summary / ~618KB full).
+            // Takes priority over summary/category/other filters (they are ignored) so the
+            // semantics stay minimal: locate the module first, then pull exact signatures
+            // via GET /skills/schema?category=<Category>.
+            if (filters.TryGetValue("brief", out var briefVal) &&
+                (briefVal == "1" || briefVal.Equals("true", StringComparison.OrdinalIgnoreCase)))
+            {
+                var briefJson = JsonConvert.SerializeObject(BuildBriefManifest(), _jsonSettings);
+                _filteredOutputCache[cacheKey] = briefJson;
+                return briefJson;
+            }
+
             IEnumerable<SkillInfo> filtered = _skills.Values;
 
             if (filters.TryGetValue("category", out var cat))
@@ -1167,7 +1289,9 @@ namespace UnitySkills
             return parameters.ToArray();
         }
 
-        private static string[] GetEffectiveOutputs(SkillInfo skill)
+        // internal: /skills/batch dry-run uses this to structurally check $ref paths
+        // against the referenced skill's declared outputs (incl. the synthetic entityId).
+        internal static string[] GetEffectiveOutputs(SkillInfo skill)
         {
             if (skill?.Outputs == null)
                 return null;
@@ -1253,6 +1377,35 @@ namespace UnitySkills
             };
         }
 
+        /// <summary>
+        /// Directory-layer manifest (GET /skills?brief=1): skill names grouped by category,
+        /// nothing else. Sorted module keys and sorted names keep the payload byte-stable
+        /// per skill set, so the cached string (and its fast-path ETag) holds until Refresh().
+        /// </summary>
+        private static object BuildBriefManifest()
+        {
+            var modules = new SortedDictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var s in _skills.Values)
+            {
+                var category = s.Category.ToString();
+                if (!modules.TryGetValue(category, out var names))
+                    modules[category] = names = new List<string>();
+                names.Add(s.Name);
+            }
+            foreach (var names in modules.Values)
+                names.Sort(StringComparer.OrdinalIgnoreCase);
+
+            return new
+            {
+                manifestType = "brief",
+                schemaVersion = SkillSchemaVersion,
+                version = SkillsLogger.Version,
+                totalSkills = _skills.Count,
+                briefHint = "DIRECTORY ONLY — names + categories, no descriptions or parameters. Locate the module(s) you need, then fetch exact signatures via GET /skills/schema?category=<Category>, and always dryRun before first execution. If a name is ambiguous, fall back to GET /skills?summary=1 (full descriptions) or GET /skills/recommend?intent=...",
+                modules
+            };
+        }
+
         // ========== Skill Recommendations ==========
 
         /// <summary>
@@ -1282,7 +1435,8 @@ namespace UnitySkills
 
             var rawKeywords = intent.ToLowerInvariant().Split(new[] { ' ', '+', '_' }, StringSplitOptions.RemoveEmptyEntries);
             var keywords = ExpandIntent(rawKeywords);
-            var scored = new List<(SkillInfo skill, int score, List<string> matchedOn)>();
+            var healthBySkill = SkillTelemetryService.GetRecommendationHealth();
+            var scored = new List<(SkillInfo skill, int score, int semanticScore, List<string> matchedOn, SkillTelemetryService.RecommendationHealth health)>();
 
             // Pre-compute operation and category matches (with Chinese substring support)
             var matchedOps = ExtractOperations(rawKeywords);
@@ -1336,10 +1490,16 @@ namespace UnitySkills
                 }
 
                 if (score > 0)
-                    scored.Add((s, score, matchedOn));
+                {
+                    healthBySkill.TryGetValue(s.Name, out var health);
+                    var adjustedScore = Math.Max(1, score - (health?.Penalty ?? 0));
+                    scored.Add((s, adjustedScore, score, matchedOn, health));
+                }
             }
 
-            var results = scored.OrderByDescending(x => x.score).Take(topN).ToList();
+            var results = scored.OrderByDescending(x => x.score)
+                .ThenByDescending(x => x.semanticScore)
+                .Take(topN).ToList();
             var response = new
             {
                 intent,
@@ -1353,8 +1513,19 @@ namespace UnitySkills
                     description = GetEffectiveDescription(x.skill),
                     category = x.skill.Category != SkillCategory.Uncategorized ? x.skill.Category.ToString() : null,
                     score = x.score,
+                    semanticScore = x.semanticScore,
                     confidence = ScoreToConfidence(x.score),
                     matchedOn = x.matchedOn.Distinct().ToArray(),
+                    telemetry = x.health == null ? null : new
+                    {
+                        window = "7d",
+                        calls = x.health.Calls,
+                        errors = x.health.Errors,
+                        errorRate = x.health.ErrorRate,
+                        avgMs = x.health.AvgMs,
+                    },
+                    telemetryPenalty = x.health?.Penalty ?? 0,
+                    warnings = x.health != null && x.health.Warnings.Length > 0 ? x.health.Warnings : null,
                     schema = includeSchema ? BuildSkillSchemaForRecommend(x.skill) : null
                 })
             };
@@ -1521,7 +1692,15 @@ namespace UnitySkills
                 {
                     try
                     {
-                        invoke[i] = token.ToObject(p.ParameterType);
+                        // Batch-style skills declare JSON payloads as string parameters, and
+                        // agents routinely send them as native arrays/objects instead. Serialize
+                        // back to a string rather than failing with TYPE_MISMATCH — the skill
+                        // re-parses the JSON internally, so the round-trip is lossless. Only
+                        // string targets get this leniency; other types stay strict.
+                        if (p.ParameterType == typeof(string) && (token is JArray || token is JObject))
+                            invoke[i] = token.ToString(Formatting.None);
+                        else
+                            invoke[i] = token.ToObject(p.ParameterType);
                     }
                     catch (Exception ex)
                     {
@@ -1866,7 +2045,7 @@ namespace UnitySkills
                 return directSuggestions;
             }
 
-            return allowedParameterNames
+            var fuzzyMatches = allowedParameterNames
                 .Select(name => new
                 {
                     Name = name,
@@ -1882,6 +2061,64 @@ namespace UnitySkills
                 .Select(x => x.Name)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+
+            if (fuzzyMatches.Length > 0)
+                return fuzzyMatches;
+
+            // Last-resort fallback: the alias table and edit distance both miss renames like
+            // assetPath→savePath (distance 4, no substring overlap), yet parameter names across
+            // the skill library reuse camelCase tokens (path/name/id/target/source/...), so
+            // sharing any token is a strong hint. Gated on the stricter levels finding nothing
+            // to avoid adding noise to suggestions that already have good matches.
+            var unknownTokens = SplitCamelCaseTokens(unknownParameter);
+            if (unknownTokens.Count == 0)
+                return fuzzyMatches;
+
+            return allowedParameterNames
+                .Where(name => SplitCamelCaseTokens(name).Overlaps(unknownTokens))
+                .Select(name => new
+                {
+                    Name = name,
+                    Distance = ComputeLevenshteinDistance(unknownParameter, name)
+                })
+                .OrderBy(x => x.Distance)
+                .ThenBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
+                .Take(3)
+                .Select(x => x.Name)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        private static HashSet<string> SplitCamelCaseTokens(string name)
+        {
+            var tokens = new HashSet<string>(StringComparer.Ordinal);
+            if (string.IsNullOrEmpty(name))
+                return tokens;
+
+            var current = new System.Text.StringBuilder();
+            foreach (var c in name)
+            {
+                if (!char.IsLetter(c))
+                {
+                    if (current.Length > 0)
+                    {
+                        tokens.Add(current.ToString());
+                        current.Clear();
+                    }
+                    continue;
+                }
+
+                if (char.IsUpper(c) && current.Length > 0)
+                {
+                    tokens.Add(current.ToString());
+                    current.Clear();
+                }
+                current.Append(char.ToLowerInvariant(c));
+            }
+
+            if (current.Length > 0)
+                tokens.Add(current.ToString());
+            return tokens;
         }
 
         private static string GetParameterHint(string skillName, string parameterName)
@@ -1960,13 +2197,25 @@ namespace UnitySkills
                 var plan = SkillPlanningService.BuildPlan(skill, validation);
                 return JsonConvert.SerializeObject(plan, _jsonSettings);
             }
-            catch (Exception ex)
+            catch (Newtonsoft.Json.JsonException ex)
             {
                 return SkillErrorResponse.Build(
                     SkillErrorCode.InvalidJson,
                     $"Invalid JSON: {ex.Message}",
                     skill: name,
                     retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+            }
+            catch (Exception ex)
+            {
+                // Valid JSON can still crash plan/semantic validation (e.g. an NRE). Reporting
+                // that as INVALID_JSON sends agents into a loop rewriting a body that is fine;
+                // mirror Execute's catch split and report the real failure instead.
+                return SkillErrorResponse.Build(
+                    SkillErrorCode.Internal,
+                    $"Plan failed: {ex.Message}",
+                    skill: name,
+                    details: new { exceptionType = ex.GetType().Name },
+                    retryStrategy: SkillErrorResponse.Abort);
             }
         }
 
@@ -2040,119 +2289,228 @@ namespace UnitySkills
         /// <summary>
         /// Auto-snapshot target objects from skill arguments for universal rollback support.
         /// Identifies common target parameters (name, instanceId, path, materialPath, etc.) and snapshots them.
+        /// Target locating is delegated to <see cref="CollectTargetsFromArgs"/> so the semantic-diff
+        /// pre-capture reuses the exact same object set, order and best-effort semantics.
         /// </summary>
         private static void TrySnapshotTargetsFromArgs(JObject args)
         {
             try
             {
-                // Try to find target GameObject by common parameter names
-                string targetName = null;
-                int targetInstanceId = 0;
-                string targetPath = null;
-                string targetEntityId = null;
-
-                if (args.TryGetValue("name", StringComparison.OrdinalIgnoreCase, out var nameToken))
-                    targetName = nameToken.ToString();
-                if (args.TryGetValue("instanceId", StringComparison.OrdinalIgnoreCase, out var idToken))
-                    targetInstanceId = idToken.ToObject<int>();
-                if (args.TryGetValue("path", StringComparison.OrdinalIgnoreCase, out var pathToken))
-                    targetPath = pathToken.ToString();
-                if (args.TryGetValue(EntityIdParameterName, StringComparison.OrdinalIgnoreCase, out var entityIdToken))
-                    targetEntityId = entityIdToken.ToString();
-
-                // Snapshot GameObject if identifiable
-                if (!string.IsNullOrEmpty(targetEntityId) || !string.IsNullOrEmpty(targetName) || targetInstanceId != 0 || !string.IsNullOrEmpty(targetPath))
-                {
-                    var (go, _) = GameObjectFinder.FindOrError(targetName, targetInstanceId, targetPath, entityId: targetEntityId);
-                    if (go != null)
-                    {
-                        WorkflowManager.SnapshotObject(go);
-                        // Also snapshot Transform which is commonly modified
-                        WorkflowManager.SnapshotObject(go.transform);
-                        // Snapshot Renderer's material if present
-                        var renderer = go.GetComponent<UnityEngine.Renderer>();
-                        if (renderer != null && renderer.sharedMaterial != null)
-                            WorkflowManager.SnapshotObject(renderer.sharedMaterial);
-                    }
-                }
-
-                // Snapshot Material asset if materialPath is provided
-                if (args.TryGetValue("materialPath", StringComparison.OrdinalIgnoreCase, out var matPathToken))
-                {
-                    var matPath = matPathToken.ToString();
-                    if (!string.IsNullOrEmpty(matPath))
-                    {
-                        var mat = UnityEditor.AssetDatabase.LoadAssetAtPath<UnityEngine.Material>(matPath);
-                        if (mat != null)
-                            WorkflowManager.SnapshotObject(mat);
-                    }
-                }
-
-                // Snapshot asset if assetPath is provided
-                if (args.TryGetValue("assetPath", StringComparison.OrdinalIgnoreCase, out var assetPathToken))
-                {
-                    var assetPath = assetPathToken.ToString();
-                    if (!string.IsNullOrEmpty(assetPath))
-                    {
-                        var asset = UnityEditor.AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
-                        if (asset != null)
-                            WorkflowManager.SnapshotObject(asset);
-                    }
-                }
-
-                // Handle child/parent operations (entityId-aware fallback snapshot)
-                {
-                    args.TryGetValue("childName", StringComparison.OrdinalIgnoreCase, out var childNameToken);
-                    args.TryGetValue("childEntityId", StringComparison.OrdinalIgnoreCase, out var childEntityIdToken);
-                    args.TryGetValue("childInstanceId", StringComparison.OrdinalIgnoreCase, out var childInstanceIdToken);
-                    args.TryGetValue("childPath", StringComparison.OrdinalIgnoreCase, out var childPathToken);
-                    var childEntityId = childEntityIdToken?.ToString();
-                    var childName = childNameToken?.ToString();
-                    int.TryParse(childInstanceIdToken?.ToString(), out int childInstanceId);
-                    var childPath = childPathToken?.ToString();
-                    if (!string.IsNullOrEmpty(childEntityId) || !string.IsNullOrEmpty(childName) || childInstanceId != 0 || !string.IsNullOrEmpty(childPath))
-                    {
-                        var (childGo, _) = GameObjectFinder.FindOrError(childName, childInstanceId, childPath, entityId: childEntityId);
-                        if (childGo != null)
-                            WorkflowManager.SnapshotObject(childGo.transform);
-                    }
-                }
-
-                // Handle batch items - snapshot each target in the batch
-                if (args.TryGetValue("items", StringComparison.OrdinalIgnoreCase, out var itemsToken))
-                {
-                    try
-                    {
-                        var items = itemsToken.ToObject<List<Dictionary<string, object>>>();
-                        if (items != null)
-                        {
-                            foreach (var item in items.Take(50)) // Limit to avoid performance issues
-                            {
-                                string itemName = item.ContainsKey("name") ? item["name"]?.ToString() : null;
-                                int itemId = item.ContainsKey("instanceId") ? Convert.ToInt32(item["instanceId"]) : 0;
-                                string itemPath = item.ContainsKey("path") ? item["path"]?.ToString() : null;
-                                string itemEntityId = item.ContainsKey(EntityIdParameterName) ? item[EntityIdParameterName]?.ToString() : null;
-
-                                if (!string.IsNullOrEmpty(itemEntityId) || !string.IsNullOrEmpty(itemName) || itemId != 0 || !string.IsNullOrEmpty(itemPath))
-                                {
-                                    var (itemGo, _) = GameObjectFinder.FindOrError(itemName, itemId, itemPath, entityId: itemEntityId);
-                                    if (itemGo != null)
-                                    {
-                                        WorkflowManager.SnapshotObject(itemGo);
-                                        WorkflowManager.SnapshotObject(itemGo.transform);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    catch { /* Ignore batch parsing errors */ }
-                }
+                foreach (var obj in CollectTargetsFromArgs(args))
+                    WorkflowManager.SnapshotObject(obj);
             }
             catch (Exception ex)
             {
                 SkillsLogger.LogWarning($"Workflow snapshot failed: {ex.Message}");
             }
         }
+
+        /// <summary>
+        /// Locates the UnityEngine.Objects addressed by a skill's arguments — the shared primitive
+        /// behind both auto-workflow snapshotting (<see cref="TrySnapshotTargetsFromArgs"/>) and the
+        /// semantic-diff pre-capture (<see cref="SkillSceneDiff.CaptureBefore"/>).
+        ///
+        /// Objects are returned in a fixed order matching the historical snapshot sequence so
+        /// snapshot behavior is unchanged: target GameObject + its Transform + Renderer.sharedMaterial,
+        /// then materialPath / assetPath assets, then the child Transform, then each items[] target
+        /// (GameObject + Transform, first 50). Locating is best-effort; unresolved targets are
+        /// skipped. The items[] block keeps its own try/catch so a malformed batch never aborts the
+        /// rest — mirroring the original inline behavior.
+        /// </summary>
+        internal static List<UnityEngine.Object> CollectTargetsFromArgs(JObject args)
+        {
+            var targets = new List<UnityEngine.Object>();
+
+            // Try to find target GameObject by common parameter names
+            string targetName = null;
+            int targetInstanceId = 0;
+            string targetPath = null;
+            string targetEntityId = null;
+
+            if (args.TryGetValue("name", StringComparison.OrdinalIgnoreCase, out var nameToken))
+                targetName = nameToken.ToString();
+            if (args.TryGetValue("instanceId", StringComparison.OrdinalIgnoreCase, out var idToken))
+                targetInstanceId = idToken.ToObject<int>();
+            if (args.TryGetValue("path", StringComparison.OrdinalIgnoreCase, out var pathToken))
+                targetPath = pathToken.ToString();
+            if (args.TryGetValue(EntityIdParameterName, StringComparison.OrdinalIgnoreCase, out var entityIdToken))
+                targetEntityId = entityIdToken.ToString();
+
+            // Snapshot GameObject if identifiable
+            if (!string.IsNullOrEmpty(targetEntityId) || !string.IsNullOrEmpty(targetName) || targetInstanceId != 0 || !string.IsNullOrEmpty(targetPath))
+            {
+                var (go, _) = GameObjectFinder.FindOrError(targetName, targetInstanceId, targetPath, entityId: targetEntityId);
+                if (go != null)
+                {
+                    targets.Add(go);
+                    // Also snapshot Transform which is commonly modified
+                    targets.Add(go.transform);
+                    // Snapshot Renderer's material if present
+                    var renderer = go.GetComponent<UnityEngine.Renderer>();
+                    if (renderer != null && renderer.sharedMaterial != null)
+                        targets.Add(renderer.sharedMaterial);
+                }
+            }
+
+            // Snapshot Material asset if materialPath is provided
+            if (args.TryGetValue("materialPath", StringComparison.OrdinalIgnoreCase, out var matPathToken))
+            {
+                var matPath = matPathToken.ToString();
+                if (!string.IsNullOrEmpty(matPath))
+                {
+                    var mat = UnityEditor.AssetDatabase.LoadAssetAtPath<UnityEngine.Material>(matPath);
+                    if (mat != null)
+                        targets.Add(mat);
+                }
+            }
+
+            // Snapshot asset if assetPath is provided
+            if (args.TryGetValue("assetPath", StringComparison.OrdinalIgnoreCase, out var assetPathToken))
+            {
+                var assetPath = assetPathToken.ToString();
+                if (!string.IsNullOrEmpty(assetPath))
+                {
+                    var asset = UnityEditor.AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
+                    if (asset != null)
+                        targets.Add(asset);
+                }
+            }
+
+            // Handle child/parent operations (entityId-aware fallback snapshot)
+            {
+                args.TryGetValue("childName", StringComparison.OrdinalIgnoreCase, out var childNameToken);
+                args.TryGetValue("childEntityId", StringComparison.OrdinalIgnoreCase, out var childEntityIdToken);
+                args.TryGetValue("childInstanceId", StringComparison.OrdinalIgnoreCase, out var childInstanceIdToken);
+                args.TryGetValue("childPath", StringComparison.OrdinalIgnoreCase, out var childPathToken);
+                var childEntityId = childEntityIdToken?.ToString();
+                var childName = childNameToken?.ToString();
+                int.TryParse(childInstanceIdToken?.ToString(), out int childInstanceId);
+                var childPath = childPathToken?.ToString();
+                if (!string.IsNullOrEmpty(childEntityId) || !string.IsNullOrEmpty(childName) || childInstanceId != 0 || !string.IsNullOrEmpty(childPath))
+                {
+                    var (childGo, _) = GameObjectFinder.FindOrError(childName, childInstanceId, childPath, entityId: childEntityId);
+                    if (childGo != null)
+                        targets.Add(childGo.transform);
+                }
+            }
+
+            // Handle batch items - snapshot each target in the batch
+            if (args.TryGetValue("items", StringComparison.OrdinalIgnoreCase, out var itemsToken))
+            {
+                try
+                {
+                    var items = itemsToken.ToObject<List<Dictionary<string, object>>>();
+                    if (items != null)
+                    {
+                        foreach (var item in items.Take(50)) // Limit to avoid performance issues
+                        {
+                            string itemName = item.ContainsKey("name") ? item["name"]?.ToString() : null;
+                            int itemId = item.ContainsKey("instanceId") ? Convert.ToInt32(item["instanceId"]) : 0;
+                            string itemPath = item.ContainsKey("path") ? item["path"]?.ToString() : null;
+                            string itemEntityId = item.ContainsKey(EntityIdParameterName) ? item[EntityIdParameterName]?.ToString() : null;
+
+                            if (!string.IsNullOrEmpty(itemEntityId) || !string.IsNullOrEmpty(itemName) || itemId != 0 || !string.IsNullOrEmpty(itemPath))
+                            {
+                                var (itemGo, _) = GameObjectFinder.FindOrError(itemName, itemId, itemPath, entityId: itemEntityId);
+                                if (itemGo != null)
+                                {
+                                    targets.Add(itemGo);
+                                    targets.Add(itemGo.transform);
+                                }
+                            }
+                        }
+                    }
+                }
+                catch { /* Ignore batch parsing errors */ }
+            }
+
+            return targets;
+        }
+
+        #region HTTP-thread cached GET fast path (v2.1)
+        // ⚠ 跨线程契约：本 region 会被 SkillsHttpServer 的 HTTP 监听线程直接调用，必须保持
+        // 零 Unity API（UnityEngine.*/UnityEditor.*）、零 SkillsLogger（内部走 Debug.Log 且
+        // Level getter 首次会读 EditorPrefs）。只允许读取已由主线程构建好的字符串缓存
+        // （_cachedManifest / _cachedSchema / _filteredOutputCache，均为不可变 string 或
+        // ConcurrentDictionary）以及本 region 自有的 _etagCache。缓存未建立时必须返回 false，
+        // 交回主线程慢路径（主线程构建缓存后下一次请求即可命中）。
+        // 本 region 内代码不得调用 Initialize()/GetManifest()/GetSchema()/BuildFilteredOutput()
+        // ——它们会触发反射扫描与 SkillsLogger 日志，只能在主线程运行。
+
+        // ETag 缓存：键 = 输出缓存键，值 = (来源 json 引用, etag)。
+        // SkillRouter 非 [InitializeOnLoad]、无静态持久化，域重载即整体重置，天然失效；
+        // Refresh()（skill 增删）重建后缓存 json 是新 string 实例，下方 ReferenceEquals
+        // 不匹配即自动重算——因此无需在 Refresh() 里挂清空钩子。
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Json, string Etag)> _etagCache =
+            new System.Collections.Concurrent.ConcurrentDictionary<string, (string Json, string Etag)>();
+
+        /// <summary>
+        /// HTTP 线程快速通道：GET /skills 与 GET /skills/schema（含 query 变体）在字符串缓存
+        /// 已由主线程构建时直接返回缓存 json + ETag（SHA256 前 16 hex），绕过主线程队列。
+        /// 未命中（缓存尚未构建 / 路径不属于这两个端点）返回 false。
+        /// /skills/recommend、/skills/chain、/skills/batch 等路径精确匹配不上，一律走慢路径。
+        /// </summary>
+        internal static bool TryGetCachedGetResponse(string path, string query, out string json, out string etag)
+        {
+            json = null;
+            etag = null;
+
+            bool isSchema = string.Equals(path, "/skills/schema", StringComparison.OrdinalIgnoreCase);
+            if (!isSchema && !string.Equals(path, "/skills", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            string manifestType = isSchema ? "schema" : "manifest";
+            string cacheKey;
+
+            // 与 BuildFilteredOutput 的分流保持一致：query 为空或解析后无有效过滤键 → 全量缓存；
+            // 否则用同一把 BuildFilteredOutputCacheKey 生成的键读 _filteredOutputCache
+            // （两者键构造完全同源，大小写归一语义一致）。
+            var filters = string.IsNullOrEmpty(query) ? null : ParseQueryString(query);
+            if (filters == null || filters.Count == 0)
+            {
+                json = isSchema ? _cachedSchema : _cachedManifest;
+                cacheKey = manifestType + "|__full__";
+            }
+            else
+            {
+                cacheKey = BuildFilteredOutputCacheKey(filters, manifestType);
+                _filteredOutputCache.TryGetValue(cacheKey, out json);
+            }
+
+            if (json == null)
+                return false;
+
+            etag = GetOrComputeEtag(cacheKey, json);
+            return true;
+        }
+
+        /// <summary>
+        /// 按 (缓存键, json 引用) 记忆化的 ETag 获取：条目存在且 Json 引用与当前缓存串一致
+        /// 才复用，否则重算并覆盖——保证 Refresh() 重建缓存后不会拿旧 etag 误判 304。
+        /// </summary>
+        private static string GetOrComputeEtag(string cacheKey, string json)
+        {
+            if (_etagCache.TryGetValue(cacheKey, out var entry) && ReferenceEquals(entry.Json, json))
+                return entry.Etag;
+
+            string etag = ComputeEtag(json);
+            _etagCache[cacheKey] = (json, etag);
+            return etag;
+        }
+
+        private static string ComputeEtag(string json)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            {
+                var hash = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(json));
+                var sb = new System.Text.StringBuilder(16);
+                for (int i = 0; i < 8; i++)
+                    sb.Append(hash[i].ToString("x2"));
+                return sb.ToString();
+            }
+        }
+
+        #endregion
     }
 
     internal static class SkillResultHelper
@@ -2217,3 +2575,5 @@ namespace UnitySkills
         }
     }
 }
+
+// Producer:Betsy

@@ -6,7 +6,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Unity-2022.3%2B-black?style=for-the-badge&logo=unity" alt="Unity">
-  <img src="https://img.shields.io/badge/Skills-726-green?style=for-the-badge" alt="Skills">
+  <img src="https://img.shields.io/badge/Skills-738-green?style=for-the-badge" alt="Skills">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-orange?style=for-the-badge" alt="License"></a>
   <a href="README_CN.md"><img src="https://img.shields.io/badge/README-中文-blue?style=for-the-badge" alt="中文"></a>
 </p>
@@ -30,8 +30,8 @@ This project is a deep refactoring and feature extension based on the excellent 
 
 ## 🚀 Core Features
 
-- 🛠️ **726 REST Skills Comprehensive Toolkit**: Includes 51 functional source modules plus 19 advisory design modules, with Batch operations for multi-object control.
-- ⚡ **Revolutionary Efficiency Boost (v2.0.1+)**: Schema caching + exponential backoff polling + BATCH-FIRST guidance → **Token consumption ↓ 96%**, **simple tasks 4-6 calls → 1 call (↓ 75-83%)**. Current: v2.0.9.
+- 🛠️ **738 REST Skills Comprehensive Toolkit**: Includes 52 functional source modules plus 23 advisory design modules, with Batch operations for multi-object control.
+- ⚡ **Revolutionary Efficiency Boost (v2.0.1+)**: Schema caching + exponential backoff polling + BATCH-FIRST guidance → **Token consumption ↓ 96%**, **simple tasks 4-6 calls → 1 call (↓ 75-83%)**. Current: v2.2.0.
 - 🔐 **Three-Tier Permission Modes (v1.9.0+)**: Approval / Auto / Bypass with dual approval channels (Dialog / Panel), aligned with Claude Code permission modes; zero-impact upgrade for existing users.
 - 🤖 **4 Major IDEs Native Support**: Claude Code / Antigravity / Codex / Cursor — one-click install and use.
 - 🛡️ **Transactional Atomicity**: Failed operations auto-rollback, leaving scenes clean and safe.
@@ -43,7 +43,7 @@ This project is a deep refactoring and feature extension based on the excellent 
 
 ## 🔐 Operating Modes (v1.9.0+)
 
-UnitySkills ships with a true server-side permission system aligned with Claude Code permission modes. All mode switching happens in the Unity panel (**Window > UnitySkills > Server**) — chat trigger words are no longer supported.
+UnitySkills ships with a true server-side permission system aligned with Claude Code permission modes. All mode switching happens in the Unity panel — open **Window > UnitySkills**, click the ⚙ (Settings) button, and use the **Server** section — chat trigger words are no longer supported.
 
 | Mode | Default | Behavior | Use Case |
 |:-----|:-------:|:---------|:---------|
@@ -55,15 +55,15 @@ UnitySkills ships with a true server-side permission system aligned with Claude 
 - **Dialog** (default) — AI explains intent + grant token, user agrees in chat, AI replays the token via `POST /permission/grant`
 - **Panel** (opt-in) — grant token only takes effect after user clicks **[Approve]** in the Unity panel; AI-issued grants without panel approval return `GRANT_PENDING_APPROVAL`
 
-**Zero-impact upgrade for existing users**: the plugin detects legacy `UnitySkills_*` EditorPrefs keys and keeps **Bypass** as the default, preserving the previous Full-Auto behavior with no action required. New installations default to **Auto** — FullAuto skills run directly, only NeverInSemi (Delete / MayEnterPlayMode / MayTriggerReload / high-risk) operations are blocked. Switch to **Approval** in the Server tab if you need per-skill manual gating.
+**Zero-impact upgrade for existing users**: the plugin detects legacy `UnitySkills_*` EditorPrefs keys and keeps **Bypass** as the default, preserving the previous Full-Auto behavior with no action required. New installations default to **Auto** — FullAuto skills run directly, only NeverInSemi (Delete / MayEnterPlayMode / MayTriggerReload / high-risk) operations are blocked. Switch to **Approval** from the ⚙ Settings drawer's Server section if you need per-skill manual gating.
 
-> ❌ Chat trigger words (e.g. `"full auto"` / `"semi-auto"`) are no longer recognized. Switch modes in **Window > UnitySkills > Server**.
+> ❌ Chat trigger words (e.g. `"full auto"` / `"semi-auto"`) are no longer recognized. Switch modes via the ⚙ Settings button in **Window > UnitySkills**.
 >
-> 📜 Audit log: `Library/UnitySkillsAudit.jsonl` (per-project, jsonl, auto-rolls at 1MB, keeps 3 files) records every grant / revoke / restricted hit / call. Open **Window > UnitySkills > Audit Log** to browse, filter, delete individual entries (✕), or wipe everything (🗑 Clear All) — deletions themselves are appended as `audit_deleted` / `audit_cleared` events so the log stays auditable.
+> 📜 Audit log: `Library/UnitySkillsAudit.jsonl` (per-project, jsonl, auto-rolls at 1MB, keeps 3 files) records every grant / revoke / restricted hit / call. Open it from the ⚙ Settings drawer → **View Audit Log** (or press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>L</kbd>) to browse, filter, delete individual entries (✕), or wipe everything (🗑 Clear All) — deletions themselves are appended as `audit_deleted` / `audit_cleared` events so the log stays auditable.
 >
 > 🗑 The Skill Installer card shows a **per-scope uninstall** button that auto-adapts: disabled when nothing's installed, a single button labeled with its scope when only one is installed, and a dropdown (`Uninstall ▾`) listing Project / Global when both are installed.
 >
-> 19 advisory design modules (architecture, performance, design patterns, testability, package-specific source rules, etc.) are available in all modes and loaded on demand.
+> 23 advisory design modules (architecture, performance, design patterns, testability, package-specific source rules, etc.) are available in all modes and loaded on demand.
 
 ---
 
@@ -108,13 +108,13 @@ https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#v1.6.0
 
 > 📦 All version packages are available on the [Releases](https://github.com/Besty0728/Unity-Skills/releases) page
 
-### 2. Start Server
-In Unity, click menu: `Window > UnitySkills > Start Server`
+### 2. Open the Panel & Start Server
+In Unity, open menu: `Window > UnitySkills` (or press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd>). Use the server toggle switch in the top bar to start it; once started it auto-restarts across domain reloads.
 
 > ⏳ `script_*`, `debug_force_recompile`, `debug_set_defines`, some asset reimports, and package changes may trigger compilation or Domain Reload. Temporary REST unavailability during that window is expected; wait a moment and retry.
 
 ### 3. One-Click AI Skills Configuration
-1. Open `Window > UnitySkills > Skill Installer`.
+1. Open `Window > UnitySkills` and go to the **AI Config** tab.
 2. Select the corresponding terminal icon (Claude / Antigravity / Codex / Cursor).
 3. Click **"Install"** to complete the environment configuration without manual code copying.
 
@@ -173,7 +173,7 @@ If you're using other tools that support Skills, install according to the Skills
 ---
 
 <details>
-<summary><h2>📦 Skills Category Overview (726)</h2></summary>
+<summary><h2>📦 Skills Category Overview (738)</h2></summary>
 
 | Category | Count | Core Functions |
 | :--- | :---: | :--- |
@@ -188,14 +188,15 @@ If you're using other tools that support Skills, install according to the Skills
 | **XR** | 22 | XR rig setup/interactors/interactables/teleportation/continuous move/UI/haptics/interaction layers |
 | **Material** | 21 | Batch material property modification/HDR/PBR/Emission/Keywords/Render queue |
 | **PostProcess** | 10 | SRP post-processing effect management |
-| **GameObject** | 18 | Create/Find/Transform sync/Batch operations/Hierarchy management/Rename/Duplicate |
+| **GameObject** | 19 | Create/Find/Transform sync/Batch operations/Hierarchy management/Rename/Duplicate |
 | **Perception** | 18 | Scene summary/health checks/stack detection/context export/dependency analysis/hotspots/diff/tag-layer stats/performance hints |
 | **Volume** | 9 | VolumeProfile/Volume/VolumeComponent creation and parameter editing |
 | **Validation** | 10 | Project validation/Empty folder cleanup/Reference detection/Mesh collider/Shader errors |
 | **URP** | 7 | URP asset/renderer/renderer feature inspection and edits |
 | **Decal** | 7 | URP Decal Projector create/inspect/configure/delete workflows |
 | **DOTween** | 21 | DOTweenAnimation editor-time setup and tuning |
-| **Editor** | 12 | Play mode/Selection/Undo-Redo/Context retrieval/Menu execution |
+| **PrimeTween** | 5 | PrimeTween Free inspection, factory discovery, and runtime tween/sequence script generation |
+| **Editor** | 14 | Play mode runtime capture/Selection/Undo-Redo/Context retrieval/Change journal/Menu execution |
 | **Physics** | 12 | Raycast/SphereCast/BoxCast/Physics materials/Layer collision matrix |
 | **Script** | 12 | C# script create/Read/Replace/List/Info/Rename/Move/Analyze |
 | **Timeline** | 12 | Track create/Delete/Clip management/Playback control/Binding/Duration |
@@ -220,17 +221,17 @@ If you're using other tools that support Skills, install according to the Skills
 | **Optimization** | 10 | Texture compression/Mesh compression/Audio compression/Scene analysis/Static flags/LOD/Duplicate materials/Overdraw |
 | **Profiler** | 10 | FPS/Memory/Texture/Mesh/Material/Audio/Rendering stats/Object count/AssetBundle |
 | **Scene** | 10 | Multi-scene load/Unload/Activate/Screenshot/Context/Dependency analysis/Report export |
-| **ScriptableObject** | 10 | Create/Read-Write/Batch set/Delete/Find/JSON import-export |
+| **ScriptableObject** | 13 | Create/Read-Write/Serialized-property path write (nested/array/reference)/Batch set/Delete/Find/JSON import-export |
 | **Smart** | 10 | Scene SQL query/Spatial query/Auto layout/Snap to ground/Grid snap/Randomize/Replace |
 | **Terrain** | 10 | Terrain create/Heightmap/Perlin noise/Smooth/Flatten/Texture painting |
 | **Texture** | 10 | Texture import settings/Platform settings/Sprite/Type/Size search/Batch |
-| **Project** | 9 | Render pipeline/Build settings/Package management/Layer/Tag/PlayerSettings/Quality |
+| **Project** | 10 | Player builds/Render pipeline/Build settings/Package management/Layer/Tag/PlayerSettings/Quality |
 | **Sample** | 8 | Basic examples: Create/Delete/Transform/Scene info |
 | **Diagnose** | 1 | Aggregated Editor health snapshot (console/compile/workflow/server/jobs) |
 
 > ⚠️ Most modules support `*_batch` batch operations. When operating on multiple objects, prioritize batch Skills for better performance.
 >
-> 🧠 `unity-skills/skills/` also includes **19 advisory design modules** for architecture, script design, performance, maintainability, Inspector guidance, and package-specific source rules.
+> 🧠 `unity-skills/skills/` also includes **23 advisory design modules** for architecture, script design, performance, maintainability, Inspector guidance, and package-specific source rules.
 
 </details>
 
@@ -246,9 +247,9 @@ If you're using other tools that support Skills, install according to the Skills
 │   │   ├── SKILL.md                # Main Skill Definitions (AI-readable)
 │   │   ├── scripts/
 │   │   │   └── unity_skills.py     # Python Client Library
-│   │   ├── skills/                 # 68 module docs (49 REST/module docs + 19 advisory docs)
+│   │   ├── skills/                 # 71 module docs (48 REST/module docs + 23 advisory docs)
 │   │   └── references/             # Unity Development References
-│   └── Editor/Skills/              # Core Skill Logic (51 *Skills.cs files, 726 Skills)
+│   └── Editor/Skills/              # Core Skill Logic (52 *Skills.cs files, 738 Skills)
 │       ├── SkillsHttpServer.cs     # HTTP Server Core (Producer-Consumer)
 │       ├── SkillRouter.cs          # Request Routing & Reflection-based Skill Discovery
 │       ├── WorkflowManager.cs      # Persistent Workflow (Task/Session/Snapshot)
@@ -260,7 +261,7 @@ If you're using other tools that support Skills, install according to the Skills
 │       ├── CinemachineSkills.cs    # Cinemachine 2.x/3.x (34 skills)
 │       ├── WorkflowSkills.cs       # Workflow Undo/Rollback (23 skills)
 │       ├── PerceptionSkills.cs     # Scene Understanding (18 skills)
-│       └── ...                     # 726 Skills source code
+│       └── ...                     # 738 Skills source code
 ├── docs/
 │   └── SETUP_GUIDE.md              # Complete Setup & Usage Guide
 ├── CHANGELOG.md                    # Version Update Log
@@ -271,11 +272,11 @@ If you're using other tools that support Skills, install according to the Skills
 
 ## ⭐Star History
 
-<a href="https://www.star-history.com/?type=date&repos=Besty0728%2FUnity-Skills">
+<a href="https://www.star-history.com/?repos=Besty0728%2FUnity-Skills&type=date&logscale=&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Besty0728/Unity-Skills&type=date&theme=dark&legend=top-left" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Besty0728/Unity-Skills&type=date&legend=top-left" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Besty0728/Unity-Skills&type=date&legend=top-left" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Besty0728/Unity-Skills&type=date&theme=dark&logscale&legend=top-left&sealed_token=puHA56V-rw188klMvHmwK9HLr_ngIGDkOUeEYYDkfQK3jex-mQSY6gtQdUX5bpeyxWr5NL-itvG9WkEDtFn3BasAn6uuPtHh-qWIVrwRkXb6cGi5wYWeehiHyw-STZw9Aam6AX47PMNtw62yrm-WZOp7UaUFK96GqOHmKTDCcx9ryitoAMkHAcOO18sG" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Besty0728/Unity-Skills&type=date&logscale&legend=top-left&sealed_token=puHA56V-rw188klMvHmwK9HLr_ngIGDkOUeEYYDkfQK3jex-mQSY6gtQdUX5bpeyxWr5NL-itvG9WkEDtFn3BasAn6uuPtHh-qWIVrwRkXb6cGi5wYWeehiHyw-STZw9Aam6AX47PMNtw62yrm-WZOp7UaUFK96GqOHmKTDCcx9ryitoAMkHAcOO18sG" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Besty0728/Unity-Skills&type=date&logscale&legend=top-left&sealed_token=puHA56V-rw188klMvHmwK9HLr_ngIGDkOUeEYYDkfQK3jex-mQSY6gtQdUX5bpeyxWr5NL-itvG9WkEDtFn3BasAn6uuPtHh-qWIVrwRkXb6cGi5wYWeehiHyw-STZw9Aam6AX47PMNtw62yrm-WZOp7UaUFK96GqOHmKTDCcx9ryitoAMkHAcOO18sG" />
  </picture>
 </a>
 

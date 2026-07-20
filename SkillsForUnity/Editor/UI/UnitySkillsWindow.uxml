@@ -33,7 +33,7 @@
                        style="height: 22px; margin: 0 4px 0 4px;" />
 
             <ui:Button name="open-settings-btn" class="icon-btn"
-                       text="⚙" tooltip="Settings" />
+                       tooltip="Settings" />
         </ui:VisualElement>
 
         <!-- ============================================
@@ -56,7 +56,7 @@
         </ui:VisualElement>
 
         <!-- ============================================
-             2. TAB BAR — 3 tabs
+             2. TAB BAR — 4 tabs
              ============================================ -->
         <ui:VisualElement name="tab-bar" class="tab-bar"
                           style="flex-direction: row; flex-shrink: 0;">
@@ -72,6 +72,10 @@
                 <ui:Button name="tab-btn-2" text="History" class="tab-btn" />
                 <ui:VisualElement name="tab-underline-2" class="tab-underline" />
             </ui:VisualElement>
+            <ui:VisualElement class="tab-wrap" style="flex-grow: 1; flex-direction: column;">
+                <ui:Button name="tab-btn-3" text="Analytics" class="tab-btn" />
+                <ui:VisualElement name="tab-underline-3" class="tab-underline" />
+            </ui:VisualElement>
         </ui:VisualElement>
 
         <!-- ============================================
@@ -82,6 +86,7 @@
             <ui:VisualElement name="tab-content-0" class="tab-pane" style="flex-grow: 1;" />
             <ui:VisualElement name="tab-content-1" class="tab-pane" style="flex-grow: 1;" />
             <ui:VisualElement name="tab-content-2" class="tab-pane" style="flex-grow: 1;" />
+            <ui:VisualElement name="tab-content-3" class="tab-pane" style="flex-grow: 1;" />
         </ui:VisualElement>
 
         <!-- ============================================
@@ -94,7 +99,7 @@
             <ui:VisualElement name="stats-pill" class="stats-pill"
                               style="flex-direction: row; align-items: center;">
                 <ui:VisualElement class="stat-item" style="flex-direction: row; align-items: center;">
-                    <ui:Label class="stat-icon" text="▣" />
+                    <ui:VisualElement class="stat-icon stat-icon--pending" />
                     <ui:Label name="stat-queue-value" class="stat-value" text="0" />
                     <ui:Label name="stat-queue-label" class="stat-label" text="Pending" />
                 </ui:VisualElement>

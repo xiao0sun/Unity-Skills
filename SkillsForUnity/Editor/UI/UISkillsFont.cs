@@ -1,70 +1,148 @@
-using System;
-using UnityEngine;
 using UnityEditor;
+using UnityEngine;
+using UnityEngine.TextCore.Text;
 using UnityEngine.UIElements;
 
 namespace UnitySkills
 {
     /// <summary>
-    /// Forces the UnitySkills editor windows to render text with a bundled CJK font
-    /// instead of the editor's shared default font.
+    /// Applies the package's CJK font to UnitySkills editor windows.
     ///
-    /// Why: on macOS, the Unity editor's default UI Toolkit text path rasterizes CJK
-    /// glyphs on demand into a single *shared* dynamic font atlas. When that atlas has
-    /// to grow/repack, individual glyphs can come back with a stale/blank UV rect and
-    /// render as empty advances — so a handful of common characters (e.g. 局/更/卸/定)
-    /// silently disappear while everything else looks fine. It is glyph-specific and
-    /// stable-per-session, not a style/bold/truncation issue.
-    ///
-    /// Fix: bind our bundled, subsetted Maple Mono CN (OFL 1.1) TTF to the window
-    /// root via <c>unityFont</c>, which is an inherited property, so every label in
-    /// the window picks it up. Avoid constructing a runtime TextCore FontAsset here:
-    /// in Unity 2022 UI Toolkit can retain stale/null material references from those
-    /// generated assets and fail inside UIRStylePainter.DrawTextInfo.
+    /// Unity 6's Advanced Text Generator requires a dynamic font backed by the source
+    /// Font. Unity 2022 instead uses the pre-baked, persistent FontAsset because it can
+    /// unload runtime-created atlas resources while TextElement meshes still use them.
     /// </summary>
+    [InitializeOnLoad]
     internal static class UISkillsFont
     {
-        private const string TtfPath =
+        internal const string TtfPath =
             "Packages/com.besty.unity-skills/Editor/UI/Fonts/UnitySkillsCN-Regular.ttf";
+        internal const string FontAssetPath =
+            "Packages/com.besty.unity-skills/Editor/UI/Fonts/UnitySkillsCN-UI.asset";
 
+#if UNITY_6000_0_OR_NEWER
         private static Font _cjkFont;
-        private static bool _attempted;
+#else
+        private static FontAsset _cjkFont;
+#endif
+        private static bool _warned;
 
+        static UISkillsFont()
+        {
+            EditorApplication.delayCall += ReapplyToOpenWindows;
+        }
+
+#if UNITY_6000_0_OR_NEWER
         private static Font GetFont()
         {
-            if (_attempted) return _cjkFont;
-            _attempted = true;
+            if (_cjkFont != null)
+                return _cjkFont;
 
-            try
-            {
-                _cjkFont = AssetDatabase.LoadAssetAtPath<Font>(TtfPath);
-                if (_cjkFont == null)
-                {
-                    // Missing font is non-fatal: fall back to the editor default so the
-                    // window still works (just with the original macOS glyph-drop quirk).
-                    Debug.LogWarning($"[UnitySkills] CJK font not found, using editor default: {TtfPath}");
-                }
-            }
-            catch (Exception ex)
-            {
-                Debug.LogWarning($"[UnitySkills] Failed to load CJK font: {ex.Message}");
-                _cjkFont = null;
-            }
+            _cjkFont = AssetDatabase.LoadAssetAtPath<Font>(TtfPath);
+            if (_cjkFont == null)
+                WarnOnce($"CJK font is missing; using editor default: {TtfPath}");
 
             return _cjkFont;
         }
+#else
+        private static FontAsset GetFontAsset()
+        {
+            if (_cjkFont != null)
+                return _cjkFont;
+
+            var candidate = AssetDatabase.LoadAssetAtPath<FontAsset>(FontAssetPath);
+            if (!IsPersistentAndComplete(candidate))
+            {
+                if (!_warned)
+                    WarnOnce(
+                        $"Pre-baked CJK FontAsset is missing or incomplete; using editor default: {FontAssetPath}");
+                return null;
+            }
+
+            _cjkFont = candidate;
+            return _cjkFont;
+        }
+#endif
+
+        private static void WarnOnce(string message)
+        {
+            if (_warned)
+                return;
+
+            _warned = true;
+            SkillsLogger.LogWarning(message);
+        }
+
+        internal static bool IsPersistentAndComplete(FontAsset fontAsset)
+        {
+            if (fontAsset == null || fontAsset.atlasPopulationMode != AtlasPopulationMode.Static)
+                return false;
+            if (fontAsset.material == null || fontAsset.atlasTextures == null ||
+                fontAsset.atlasTextures.Length == 0)
+                return false;
+            if (AssetDatabase.GetAssetPath(fontAsset) != FontAssetPath ||
+                AssetDatabase.GetAssetPath(fontAsset.material) != FontAssetPath)
+                return false;
+
+            foreach (var texture in fontAsset.atlasTextures)
+            {
+                if (texture == null || AssetDatabase.GetAssetPath(texture) != FontAssetPath)
+                    return false;
+            }
+
+            return fontAsset.material.mainTexture == fontAsset.atlasTextures[0];
+        }
+
+        private static void ReapplyToOpenWindows()
+        {
+            foreach (var window in UnityEngine.Resources.FindObjectsOfTypeAll<UnitySkillsWindow>())
+                Apply(window.rootVisualElement);
+            foreach (var window in UnityEngine.Resources.FindObjectsOfTypeAll<UnitySkillsAuditWindow>())
+                Apply(window.rootVisualElement);
+            foreach (var window in UnityEngine.Resources.FindObjectsOfTypeAll<AllowlistPickerWindow>())
+                Apply(window.rootVisualElement);
+        }
 
         /// <summary>
-        /// Apply the bundled CJK font to a window's root element. Safe to call on every
-        /// window; the font asset is loaded once and shared. No-op if the font is missing.
+        /// Reapplying replaces any stale runtime font definition left on a surviving
+        /// EditorWindow by an older package version.
         /// </summary>
         public static void Apply(VisualElement root)
         {
-            if (root == null) return;
-            var font = GetFont();
-            if (font == null) return;
-            root.style.unityFontDefinition = StyleKeyword.Null;
-            root.style.unityFont = font;
+            if (root == null)
+                return;
+
+#if UNITY_6000_0_OR_NEWER
+            Apply(root, GetFont());
+#else
+            Apply(root, GetFontAsset());
+#endif
         }
+
+#if UNITY_6000_0_OR_NEWER
+        internal static void Apply(VisualElement root, Font font)
+        {
+            if (root == null)
+                return;
+
+            root.style.unityFont = new StyleFont(StyleKeyword.Null);
+            root.style.unityFontDefinition = font == null
+                ? new StyleFontDefinition(StyleKeyword.Null)
+                : new StyleFontDefinition(FontDefinition.FromFont(font));
+        }
+#else
+        internal static void Apply(VisualElement root, FontAsset fontAsset)
+        {
+            if (root == null)
+                return;
+
+            root.style.unityFont = new StyleFont(StyleKeyword.Null);
+            root.style.unityFontDefinition = fontAsset == null
+                ? new StyleFontDefinition(StyleKeyword.Null)
+                : new StyleFontDefinition(fontAsset);
+        }
+#endif
     }
 }
+
+// Producer:Betsy

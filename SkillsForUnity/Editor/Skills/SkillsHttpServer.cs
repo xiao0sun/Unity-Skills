@@ -340,6 +340,70 @@ namespace UnitySkills
             }
         }
 
+        /// <summary>
+        /// Fast-path responder for cached GET /skills and /skills/schema. Runs ON THE HTTP
+        /// LISTENER THREAD — must never touch Unity APIs or SkillsLogger (headers, hashing and
+        /// socket writes only). Adds an ETag header and honors If-None-Match with an
+        /// empty-body 304 reply.
+        /// </summary>
+        private static void SendCachedGetResponse(HttpListenerContext context, HttpListenerRequest request, string json, string etag)
+        {
+            HttpListenerResponse response = null;
+            try
+            {
+                response = context.Response;
+                response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                response.Headers.Add("Access-Control-Allow-Headers", "Content-Type, X-Agent-Id");
+                response.Headers.Add("Access-Control-Allow-Origin", "*");
+                response.Headers.Add("X-Request-Id", $"req_{Interlocked.Increment(ref _requestIdCounter):X8}");
+                response.Headers.Add("X-Agent-Id", DetectAgent(request));
+                response.Headers.Add("X-Fast-Path", "true");
+                response.Headers.Add("ETag", $"\"{etag}\"");
+
+                if (IfNoneMatchSatisfied(request.Headers["If-None-Match"], etag))
+                {
+                    response.StatusCode = 304; // Not Modified — must not carry a body
+                    return;
+                }
+
+                response.StatusCode = 200;
+                response.ContentType = "application/json; charset=utf-8";
+                byte[] buffer = Encoding.UTF8.GetBytes(json);
+                response.ContentLength64 = buffer.Length;
+                response.OutputStream.Write(buffer, 0, buffer.Length);
+            }
+            catch (HttpListenerException) { /* Client disconnected */ }
+            catch (System.IO.IOException) { /* Client disconnected mid-write */ }
+            catch (ObjectDisposedException) { /* Response already closed */ }
+            catch { /* Never let fast-path errors kill the listener loop */ }
+            finally
+            {
+                try { response?.Close(); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Loose If-None-Match comparison: tolerates quoted values, W/ weak prefixes,
+        /// comma-separated lists and the '*' wildcard.
+        /// </summary>
+        private static bool IfNoneMatchSatisfied(string ifNoneMatch, string etag)
+        {
+            if (string.IsNullOrEmpty(ifNoneMatch) || string.IsNullOrEmpty(etag))
+                return false;
+
+            foreach (var raw in ifNoneMatch.Split(','))
+            {
+                var candidate = raw.Trim();
+                if (candidate == "*") return true;
+                if (candidate.StartsWith("W/", StringComparison.OrdinalIgnoreCase))
+                    candidate = candidate.Substring(2);
+                candidate = candidate.Trim('"');
+                if (string.Equals(candidate, etag, StringComparison.Ordinal))
+                    return true;
+            }
+            return false;
+        }
+
         // Agent detection table - keyword to agent ID mapping
         private static readonly (string keyword, string agentId)[] _agentKeywords = new[]
         {
@@ -693,6 +757,10 @@ namespace UnitySkills
 
                 // Self-test: verify reachability after a short delay to let the update loop stabilize
                 ScheduleDelayedCall(1.5, RunSelfTest);
+
+                // Reconnection anchor for /events clients: carries the last compilation
+                // summary because compilation_finished (success) dies with the old domain.
+                EventChannelService.PublishServerRestored(_port);
             }
             catch (Exception ex)
             {
@@ -847,6 +915,53 @@ namespace UnitySkills
                             retryStrategy: SkillErrorResponse.RetryWaitAndRetry,
                             retryAfterSeconds: 2)));
                         continue;
+                    }
+
+                    // Fast path: GET /skills and GET /skills/schema are answered directly on this
+                    // HTTP thread when SkillRouter's string caches are already built (zero Unity
+                    // API — see SkillRouter.TryGetCachedGetResponse). A cache miss falls through
+                    // to the normal main-thread queue, which builds the cache for next time.
+                    // /health deliberately stays on the main-thread path: clients probe it to
+                    // detect main-thread liveness and compilation state.
+                    if (request.HttpMethod == "GET")
+                    {
+                        string fastPath = request.Url.AbsolutePath;
+
+                        // Long-poll: GET /events never enters the main-thread queue. The accept
+                        // loop only hands the context to a ThreadPool waiter — it must NEVER
+                        // block here (this is the sole accept thread). The responder releases
+                        // the pending slot and closes the response on every exit path.
+                        if (string.Equals(fastPath, "/events", StringComparison.OrdinalIgnoreCase))
+                        {
+                            var pollState = new EventsPollState
+                            {
+                                Context = context,
+                                RawQuery = request.Url.Query,
+                                RequestId = $"req_{Interlocked.Increment(ref _requestIdCounter):X8}",
+                                AgentId = DetectAgent(request),
+                            };
+                            try
+                            {
+                                ThreadPool.QueueUserWorkItem(EventsLongPollCallback, pollState);
+                                handedOffToResponder = true;
+                            }
+                            finally
+                            {
+                                if (!handedOffToResponder)
+                                    ReleasePendingSlot();
+                            }
+                            continue;
+                        }
+
+                        if ((string.Equals(fastPath, "/skills", StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(fastPath, "/skills/schema", StringComparison.OrdinalIgnoreCase)) &&
+                            SkillRouter.TryGetCachedGetResponse(fastPath, request.Url.Query, out var cachedJson, out var cachedEtag))
+                        {
+                            ReleasePendingSlot();
+                            reservedPendingSlot = false;
+                            SendCachedGetResponse(context, request, cachedJson, cachedEtag);
+                            continue;
+                        }
                     }
 
                     if (request.HttpMethod == "POST" && request.ContentLength64 > 0)
@@ -1041,6 +1156,193 @@ namespace UnitySkills
             }
         }
 
+        // ===== GET /events long-polling (v2.1) =====
+
+        private const int EventsDefaultTimeoutSeconds = 25;
+        private const int EventsMinTimeoutSeconds = 1;
+        private const int EventsMaxTimeoutSeconds = 55;
+        private const int EventsPollIntervalMs = 250;
+
+        /// <summary>Raw request data handed from the accept loop to the long-poll responder.</summary>
+        private sealed class EventsPollState
+        {
+            public HttpListenerContext Context;
+            public string RawQuery;
+            public string RequestId;
+            public string AgentId;
+        }
+
+        private static void EventsLongPollCallback(object state)
+        {
+            if (!(state is EventsPollState poll))
+                return;
+
+            try
+            {
+                RespondEventsLongPoll(poll);
+            }
+            catch
+            {
+                // Client disconnected or the listener died mid-poll — reconnecting is the
+                // established protocol; never let this kill the ThreadPool thread noisily.
+            }
+            finally
+            {
+                ReleasePendingSlot();
+            }
+        }
+
+        /// <summary>
+        /// GET /events long-poll responder. Runs ENTIRELY on a ThreadPool thread — zero
+        /// Unity API, zero SessionState, no SkillsLogger (same constraints as
+        /// SendCachedGetResponse). Loops "scan buffer → wait" until events newer than
+        /// 'since' show up, the timeout elapses, or the server stops (domain reload) —
+        /// then writes the response directly. Correctness relies on the 250ms poll; the
+        /// publish signal only reduces latency.
+        /// Query: since (default = current max seq → wait for new events only; 0 = replay
+        /// buffer), timeout (seconds, default 25, clamp 1-55), types (comma-separated filter).
+        /// </summary>
+        private static void RespondEventsLongPoll(EventsPollState poll)
+        {
+            var qs = SkillRouter.ParseQueryString(poll.RawQuery);
+
+            long since;
+            if (qs.TryGetValue("since", out var sinceRaw))
+            {
+                if (!long.TryParse(sinceRaw, out since) || since < 0)
+                {
+                    WriteEventsResponse(poll, 400, SkillErrorResponse.Build(
+                        SkillErrorCode.TypeMismatch,
+                        $"Invalid 'since' value '{sinceRaw}' — expected a non-negative integer sequence number.",
+                        details: new
+                        {
+                            received = sinceRaw,
+                            hint = "Pass the 'cursor' from a previous /events response, 'since=0' to replay the whole buffer, or omit 'since' to wait for new events only.",
+                        },
+                        retryStrategy: SkillErrorResponse.RetryFixAndRetry));
+                    return;
+                }
+            }
+            else
+            {
+                since = EventChannelService.GetCurrentSeq();
+            }
+
+            int timeoutSeconds;
+            if (qs.TryGetValue("timeout", out var timeoutRaw))
+            {
+                if (!int.TryParse(timeoutRaw, out timeoutSeconds))
+                {
+                    WriteEventsResponse(poll, 400, SkillErrorResponse.Build(
+                        SkillErrorCode.TypeMismatch,
+                        $"Invalid 'timeout' value '{timeoutRaw}' — expected whole seconds.",
+                        details: new { received = timeoutRaw, validRange = $"{EventsMinTimeoutSeconds}-{EventsMaxTimeoutSeconds}" },
+                        retryStrategy: SkillErrorResponse.RetryFixAndRetry));
+                    return;
+                }
+                timeoutSeconds = Math.Max(EventsMinTimeoutSeconds, Math.Min(EventsMaxTimeoutSeconds, timeoutSeconds));
+            }
+            else
+            {
+                timeoutSeconds = EventsDefaultTimeoutSeconds;
+            }
+
+            string[] typeFilter = null;
+            if (qs.TryGetValue("types", out var typesRaw) && !string.IsNullOrWhiteSpace(typesRaw))
+            {
+                typeFilter = typesRaw.Split(',')
+                    .Select(t => t.Trim())
+                    .Where(t => t.Length > 0)
+                    .ToArray();
+                if (typeFilter.Length == 0)
+                    typeFilter = null;
+            }
+
+            long deadlineTicks = DateTime.UtcNow.Ticks + timeoutSeconds * TimeSpan.TicksPerSecond;
+            List<string> events;
+            long cursor, oldestSeq;
+            bool timedOut = false;
+
+            while (true)
+            {
+                // Reset BEFORE scanning: a publish landing after the scan re-sets the signal.
+                // Another waiter's Reset can still swallow it, which merely costs one 250ms
+                // poll interval — never correctness.
+                EventChannelService.ResetSignal();
+
+                if (EventChannelService.TryReadEventsAfter(since, typeFilter, out events, out cursor, out oldestSeq))
+                    break;
+
+                // Server stopping (domain reload imminent): answer instantly with what we
+                // have (nothing) so the client can reconnect instead of hanging.
+                if (!_isRunning)
+                {
+                    timedOut = true;
+                    break;
+                }
+
+                long remainingTicks = deadlineTicks - DateTime.UtcNow.Ticks;
+                if (remainingTicks <= 0)
+                {
+                    timedOut = true;
+                    break;
+                }
+
+                int waitMs = (int)Math.Min(EventsPollIntervalMs, remainingTicks / TimeSpan.TicksPerMillisecond + 1);
+                EventChannelService.WaitSignal(waitMs);
+            }
+
+            // since+1 is the first seq the client is missing; anything below oldestSeq was
+            // evicted (ring overflow) or lost to a domain reload.
+            bool dropped = since + 1 < oldestSeq;
+
+            var sb = new StringBuilder(128 + events.Count * 256);
+            sb.Append("{\"status\":\"ok\",\"events\":[");
+            for (int i = 0; i < events.Count; i++)
+            {
+                if (i > 0) sb.Append(',');
+                sb.Append(events[i]);
+            }
+            sb.Append("],\"cursor\":").Append(cursor)
+              .Append(",\"oldestSeq\":").Append(oldestSeq)
+              .Append(",\"dropped\":").Append(dropped ? "true" : "false")
+              .Append(",\"timedOut\":").Append(timedOut ? "true" : "false")
+              .Append('}');
+
+            WriteEventsResponse(poll, 200, sb.ToString());
+        }
+
+        /// <summary>
+        /// Writes the /events HTTP response. ThreadPool thread — headers, encoding and
+        /// socket writes only (pure-string sibling of SendCachedGetResponse/SendResponse).
+        /// </summary>
+        private static void WriteEventsResponse(EventsPollState poll, int statusCode, string json)
+        {
+            HttpListenerResponse response = null;
+            try
+            {
+                response = poll.Context.Response;
+                response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                response.Headers.Add("Access-Control-Allow-Headers", "Content-Type, X-Agent-Id");
+                response.Headers.Add("Access-Control-Allow-Origin", "*");
+                response.Headers.Add("X-Request-Id", poll.RequestId);
+                response.Headers.Add("X-Agent-Id", poll.AgentId);
+                response.StatusCode = statusCode;
+                response.ContentType = "application/json; charset=utf-8";
+                byte[] buffer = Encoding.UTF8.GetBytes(json);
+                response.ContentLength64 = buffer.Length;
+                response.OutputStream.Write(buffer, 0, buffer.Length);
+            }
+            catch (HttpListenerException) { /* Client disconnected */ }
+            catch (System.IO.IOException) { /* Client disconnected mid-write */ }
+            catch (ObjectDisposedException) { /* Response already closed */ }
+            catch { /* Never let long-poll write errors bubble */ }
+            finally
+            {
+                try { response?.Close(); } catch { }
+            }
+        }
+
         /// <summary>
         /// Main thread job processor (Consumer).
         /// Runs via EditorApplication.update - ALL Unity API calls are safe here.
@@ -1212,7 +1514,36 @@ namespace UnitySkills
                 }, _jsonSettings);
                 return;
             }
-            
+
+            // Compilation feedback loop — authoritative "did my last script edit compile?" query.
+            // Runs on the main-thread path (like /health) so it can read live editor state and the
+            // last result, which survives the domain reload a successful compile triggers.
+            if (string.Equals(path, "/compile/status", StringComparison.OrdinalIgnoreCase) && job.HttpMethod == "GET")
+            {
+                string lastCompilation = CompilationResultService.GetLastCompilationJson();
+                job.StatusCode = 200;
+                job.ResponseJson = JsonConvert.SerializeObject(new {
+                    status = "ok",
+                    isCompiling = EditorApplication.isCompiling,
+                    isUpdating = EditorApplication.isUpdating,
+                    domainReloadPending = _domainReloadPending,
+                    lastCompilation = lastCompilation != null ? (object)new JRaw(lastCompilation) : null
+                }, _jsonSettings);
+                return;
+            }
+
+            // Execution telemetry aggregation — "which skills are called / failing / slow?".
+            // Main-thread path (like /health): reads the telemetry EditorPref + the JSONL files.
+            // Results are cached 30s per window inside SkillTelemetryService to bound disk reads.
+            if (string.Equals(path, "/analytics", StringComparison.OrdinalIgnoreCase) && job.HttpMethod == "GET")
+            {
+                var analyticsQs = SkillRouter.ParseQueryString(job.QueryString);
+                string window = analyticsQs.TryGetValue("window", out var windowVal) ? windowVal : "24h";
+                job.StatusCode = 200;
+                job.ResponseJson = SkillTelemetryService.BuildAnalyticsJson(window);
+                return;
+            }
+
             // Get skills manifest (with optional filtering)
             if (string.Equals(path, "/skills", StringComparison.OrdinalIgnoreCase) && job.HttpMethod == "GET")
             {
@@ -1248,6 +1579,13 @@ namespace UnitySkills
                 return;
             }
 
+            // Cross-skill aggregated execution (each step runs the full Execute pipeline)
+            if (string.Equals(path, "/skills/batch", StringComparison.OrdinalIgnoreCase) && job.HttpMethod == "POST")
+            {
+                HandleSkillsBatchRequest(job);
+                return;
+            }
+
             // Job query (lightweight GET, bypasses skill router for high-frequency progress polling)
             if (job.HttpMethod == "GET" &&
                 (string.Equals(path, "/jobs", StringComparison.OrdinalIgnoreCase) ||
@@ -1260,23 +1598,8 @@ namespace UnitySkills
             // Execute / DryRun / Plan skill
             if (path.StartsWith("/skill/", StringComparison.OrdinalIgnoreCase) && job.HttpMethod == "POST")
             {
-                if (_domainReloadPending || ServerAvailabilityHelper.IsCompilationInProgress())
-                {
-                    job.StatusCode = 503;
-                    job.ResponseJson = SkillErrorResponse.Build(
-                        SkillErrorCode.Compiling,
-                        "Unity is compiling or reloading scripts",
-                        details: new {
-                            isCompiling = EditorApplication.isCompiling,
-                            isUpdating = EditorApplication.isUpdating,
-                            domainReloadPending = _domainReloadPending,
-                            suggestion = "The REST server is temporarily unavailable during compilation. Wait a few seconds and retry.",
-                            manualAction = "If this persists, check Unity Editor for compilation errors or stuck dialogs.",
-                        },
-                        retryStrategy: SkillErrorResponse.RetryWaitAndRetry,
-                        retryAfterSeconds: _domainReloadPending ? 8 : 5);
+                if (RejectIfCompiling(job))
                     return;
-                }
 
                 // Extract skill name (preserve original case) and validate
                 string skillName = job.Path.Substring(7);
@@ -1292,19 +1615,12 @@ namespace UnitySkills
                 }
 
                 var skillQs = SkillRouter.ParseQueryString(job.QueryString);
-                SkillRouter.RequestMode mode = SkillRouter.RequestMode.Execute;
-                if (skillQs.TryGetValue("mode", out var modeValue) && !string.IsNullOrWhiteSpace(modeValue))
-                {
-                    if (modeValue.Equals("dryRun", StringComparison.OrdinalIgnoreCase))
-                        mode = SkillRouter.RequestMode.DryRun;
-                    else if (modeValue.Equals("plan", StringComparison.OrdinalIgnoreCase))
-                        mode = SkillRouter.RequestMode.Plan;
-                }
-                else if (skillQs.TryGetValue("dryRun", out var dryRunVal) && dryRunVal.Equals("true", StringComparison.OrdinalIgnoreCase))
-                {
-                    mode = SkillRouter.RequestMode.DryRun;
-                }
+                if (!TryResolveRequestMode(job, skillQs, skillName, out var mode))
+                    return;
+                if (!TryResolveDiff(job, skillQs, skillName, mode, out var captureDiff))
+                    return;
 
+                var skillSw = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
                     job.StatusCode = 200;
@@ -1317,7 +1633,7 @@ namespace UnitySkills
                             job.ResponseJson = SkillRouter.Plan(skillName, job.Body);
                             break;
                         default:
-                            job.ResponseJson = SkillRouter.Execute(skillName, job.Body);
+                            job.ResponseJson = SkillRouter.Execute(skillName, job.Body, captureDiff);
                             SkillsLogger.LogAgent(job.AgentId, skillName);
                             break;
                     }
@@ -1334,6 +1650,8 @@ namespace UnitySkills
                         retryAfterSeconds: 3);
                     SkillsLogger.LogWarning($"Skill '{skillName}' error: {ex.Message}");
                 }
+                skillSw.Stop();
+                RecordSkillTelemetry(mode, skillName, job.AgentId, job.ResponseJson, skillSw.ElapsedMilliseconds);
                 return;
             }
 
@@ -1359,11 +1677,15 @@ namespace UnitySkills
                         "GET /skills/schema",
                         "GET /skills/recommend",
                         "GET /skills/chain",
+                        "POST /skills/batch",
                         "POST /skill/{name}",
                         "POST /skill/{name}?mode=dryRun",
                         "POST /skill/{name}?mode=plan",
                         "POST /skill/{name}?dryRun=true",
                         "GET /health",
+                        "GET /compile/status",
+                        "GET /events",
+                        "GET /analytics",
                         "GET /permission/status",
                         "POST /permission/grant",
                         "POST /permission/approve",
@@ -1377,6 +1699,1339 @@ namespace UnitySkills
                 },
                 retryStrategy: SkillErrorResponse.RetryFixAndRetry);
         }
+
+        /// <summary>
+        /// Resolves ?mode= / ?dryRun= from the parsed query string. Returns false (and writes an
+        /// INVALID_MODE error response to the job) when either parameter is present with an
+        /// unrecognized value — the request must NOT be executed in that case. Without this
+        /// guard, an agent that misspells the mode (e.g. ?mode=dry_run, ?dryRun=1) believes it
+        /// is previewing while the server silently executes for real.
+        /// </summary>
+        private static bool TryResolveRequestMode(RequestJob job, Dictionary<string, string> qs, string skillName, out SkillRouter.RequestMode mode)
+        {
+            mode = SkillRouter.RequestMode.Execute;
+
+            if (qs.TryGetValue("mode", out var modeValue) && !string.IsNullOrWhiteSpace(modeValue))
+            {
+                if (modeValue.Equals("dryRun", StringComparison.OrdinalIgnoreCase))
+                {
+                    mode = SkillRouter.RequestMode.DryRun;
+                    return true;
+                }
+                if (modeValue.Equals("plan", StringComparison.OrdinalIgnoreCase))
+                {
+                    mode = SkillRouter.RequestMode.Plan;
+                    return true;
+                }
+
+                job.StatusCode = 400;
+                job.ResponseJson = SkillErrorResponse.Build(
+                    SkillErrorCode.InvalidMode,
+                    $"Unknown mode '{modeValue}' — request was NOT executed.",
+                    skill: skillName,
+                    details: new
+                    {
+                        received = modeValue,
+                        validValues = new[] { "dryRun", "plan" },
+                        hint = "Use '?mode=dryRun' to validate without executing, '?mode=plan' for an execution plan, or omit '?mode=' entirely to execute for real.",
+                    },
+                    retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                return false;
+            }
+
+            if (qs.TryGetValue("dryRun", out var dryRunVal) && !string.IsNullOrWhiteSpace(dryRunVal))
+            {
+                if (dryRunVal.Equals("true", StringComparison.OrdinalIgnoreCase))
+                {
+                    mode = SkillRouter.RequestMode.DryRun;
+                    return true;
+                }
+                if (dryRunVal.Equals("false", StringComparison.OrdinalIgnoreCase))
+                    return true; // explicit false = execute for real
+
+                job.StatusCode = 400;
+                job.ResponseJson = SkillErrorResponse.Build(
+                    SkillErrorCode.InvalidMode,
+                    $"Invalid dryRun value '{dryRunVal}' — request was NOT executed.",
+                    skill: skillName,
+                    details: new
+                    {
+                        received = dryRunVal,
+                        validValues = new[] { "true", "false" },
+                        hint = "Use '?dryRun=true' (or '?mode=dryRun') to validate without executing; omit the parameter to execute for real.",
+                    },
+                    retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Resolves ?diff= for POST /skill/{name}. A semantic sceneDiff is only meaningful for a
+        /// real execution, so it is silently ignored under ?mode=dryRun / ?mode=plan (nothing is
+        /// executed, nothing to diff). An unrecognized value is rejected with 400 (mirroring
+        /// TryResolveRequestMode) rather than silently ignored, so an agent that misspells ?diff
+        /// never believes it requested a diff while the server quietly omits it. Returns false
+        /// (and writes a 400) only on an invalid value; captureDiff is set otherwise.
+        /// </summary>
+        private static bool TryResolveDiff(RequestJob job, Dictionary<string, string> qs, string skillName, SkillRouter.RequestMode mode, out bool captureDiff)
+        {
+            captureDiff = false;
+
+            if (!qs.TryGetValue("diff", out var diffValue) || string.IsNullOrWhiteSpace(diffValue))
+                return true;
+
+            bool requested;
+            if (diffValue.Equals("1", StringComparison.OrdinalIgnoreCase) || diffValue.Equals("true", StringComparison.OrdinalIgnoreCase))
+                requested = true;
+            else if (diffValue.Equals("0", StringComparison.OrdinalIgnoreCase) || diffValue.Equals("false", StringComparison.OrdinalIgnoreCase))
+                requested = false;
+            else
+            {
+                job.StatusCode = 400;
+                job.ResponseJson = SkillErrorResponse.Build(
+                    SkillErrorCode.InvalidMode,
+                    $"Invalid diff value '{diffValue}' — request was NOT executed.",
+                    skill: skillName,
+                    details: new
+                    {
+                        received = diffValue,
+                        validValues = new[] { "1", "true", "0", "false" },
+                        hint = "Use '?diff=1' (or '?diff=true') to attach a semantic sceneDiff to the success response; omit it or use '?diff=0' for none. Ignored under ?mode=dryRun/plan.",
+                    },
+                    retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                return false;
+            }
+
+            // Diff only applies to a real execution; a dryRun/plan preview has nothing to diff.
+            captureDiff = requested && mode == SkillRouter.RequestMode.Execute;
+            return true;
+        }
+
+        /// <summary>
+        /// Writes a 503 COMPILING response when Unity is compiling or a Domain Reload is
+        /// pending. Returns true when the request was rejected. Shared by POST /skill/{name}
+        /// and POST /skills/batch (the latter does not match the "/skill/" prefix check).
+        /// </summary>
+        private static bool RejectIfCompiling(RequestJob job)
+        {
+            if (!_domainReloadPending && !ServerAvailabilityHelper.IsCompilationInProgress())
+                return false;
+
+            job.StatusCode = 503;
+            job.ResponseJson = SkillErrorResponse.Build(
+                SkillErrorCode.Compiling,
+                "Unity is compiling or reloading scripts",
+                details: new {
+                    isCompiling = EditorApplication.isCompiling,
+                    isUpdating = EditorApplication.isUpdating,
+                    domainReloadPending = _domainReloadPending,
+                    suggestion = "The REST server is temporarily unavailable during compilation. Wait a few seconds and retry.",
+                    manualAction = "If this persists, check Unity Editor for compilation errors or stuck dialogs.",
+                },
+                retryStrategy: SkillErrorResponse.RetryWaitAndRetry,
+                retryAfterSeconds: _domainReloadPending ? 8 : 5);
+            return true;
+        }
+
+        // ===== Execution telemetry (v2.1) =====
+
+        /// <summary>
+        /// Records one POST /skill/{name} outcome to <see cref="SkillTelemetryService"/>. Uses a
+        /// lightweight string probe (not JObject.Parse — this is the hot single-skill path) to
+        /// classify ok + extract errorCode. Fully isolated: a telemetry failure never changes the
+        /// business response the caller already computed.
+        /// </summary>
+        private static void RecordSkillTelemetry(SkillRouter.RequestMode mode, string skillName, string agentId, string responseJson, long durationMs)
+        {
+            try
+            {
+                string modeStr = mode == SkillRouter.RequestMode.DryRun ? "dryRun"
+                               : mode == SkillRouter.RequestMode.Plan ? "plan"
+                               : "execute";
+                ProbeOutcome(responseJson, mode == SkillRouter.RequestMode.DryRun, out bool ok, out string errorCode);
+                SkillTelemetryService.Record(skillName, agentId, modeStr, ok, errorCode, durationMs);
+            }
+            catch { /* telemetry is best-effort — never surface to the caller */ }
+        }
+
+        /// <summary>
+        /// Records one /skills/batch step outcome. The batch loop already holds each step's parsed
+        /// payload, so ok/errorCode are passed in directly (no string probing). A null/blank skill
+        /// name (a malformed step) is logged as "(malformed)". mode is batch_step /
+        /// batch_step_dryRun per the dryRun flag.
+        /// </summary>
+        private static void RecordBatchStep(string skillName, string agentId, bool dryRun, bool ok, string errorCode, long durationMs)
+        {
+            try
+            {
+                SkillTelemetryService.Record(
+                    string.IsNullOrWhiteSpace(skillName) ? "(malformed)" : skillName,
+                    agentId,
+                    dryRun ? "batch_step_dryRun" : "batch_step",
+                    ok, errorCode, durationMs);
+            }
+            catch { /* telemetry is best-effort */ }
+        }
+
+        /// <summary>
+        /// Classifies a skill response by scanning the raw JSON string — cheap enough for the hot
+        /// path and tolerant of nested content. An error envelope (<c>"status":"error"</c>) is a
+        /// failure and its <c>"errorCode"</c> is extracted. For a dryRun preview, a
+        /// <c>"valid":false</c> verdict is a failure reported as DRYRUN_INVALID (an unknown-skill
+        /// dryRun comes back as an error envelope and is caught by the first check).
+        /// </summary>
+        private static void ProbeOutcome(string json, bool isDryRun, out bool ok, out string errorCode)
+        {
+            ok = true;
+            errorCode = null;
+            if (string.IsNullOrEmpty(json))
+                return;
+
+            if (json.IndexOf("\"status\":\"error\"", StringComparison.Ordinal) >= 0)
+            {
+                ok = false;
+                errorCode = ExtractErrorCode(json);
+                return;
+            }
+
+            if (isDryRun && json.IndexOf("\"valid\":false", StringComparison.Ordinal) >= 0)
+            {
+                ok = false;
+                errorCode = "DRYRUN_INVALID";
+            }
+        }
+
+        /// <summary>
+        /// Extracts the value of the first <c>"errorCode":"..."</c> field. Returns null when the
+        /// field is absent or is JSON null (<c>"errorCode":null</c> does not match the quoted
+        /// probe), so the telemetry line records a null errorCode rather than a wrong one.
+        /// </summary>
+        private static string ExtractErrorCode(string json)
+        {
+            const string key = "\"errorCode\":\"";
+            int idx = json.IndexOf(key, StringComparison.Ordinal);
+            if (idx < 0) return null;
+            int start = idx + key.Length;
+            int end = json.IndexOf('"', start);
+            return end > start ? json.Substring(start, end - start) : null;
+        }
+
+        // ===== Cross-skill batch execution (v2.1) =====
+
+        private const int MaxBatchSteps = 50;
+
+        /// <summary>
+        /// POST /skills/batch — executes several skills sequentially inside one main-thread job,
+        /// saving one HTTP round-trip + main-thread wakeup per step.
+        ///
+        /// Body: {"steps":[{"skill":"gameobject_create","args":{...}}, ...], "continueOnError":false}
+        /// - Each step runs the FULL SkillRouter.Execute pipeline (permission gate, semantic
+        ///   validation, undo, audit) exactly like a standalone POST /skill/{name}; each step
+        ///   gets its own undo group (no merging).
+        /// - Default is fail-fast: the first failed step stops the batch and the remaining steps
+        ///   are reported as "skipped". With continueOnError=true failed steps are recorded and
+        ///   the batch continues. Authorization-type responses (MODE_RESTRICTED /
+        ///   CONFIRMATION_REQUIRED) ALWAYS interrupt regardless of continueOnError — they cannot
+        ///   be skipped; the step's full response (incl. grant token) is returned so the caller
+        ///   can complete the grant flow and re-submit the remaining steps.
+        /// - Static $param slots: a body-level "params":{"name":value,...} object fills
+        ///   placeholder nodes in a step's structured args. Any object whose ONLY key is "$param"
+        ///   (e.g. {"$param":"height"}), or exactly {"$param":"name","default":X}, at any depth,
+        ///   is replaced by params[name] when present, else its "default", else the step fails
+        ///   SEMANTIC_INVALID (details.param names the missing slot). $param is a pure static
+        ///   substitution with no step-order dependency, so it is resolved BEFORE $ref and
+        ///   identically in dryRun and execute (real values always exist — a missing slot fails a
+        ///   dry-run too, surfacing gaps before replay). $param and $ref are orthogonal: a step
+        ///   may use both, but a single node is one or the other, never both
+        ///   ({"$param":..,"$ref":..} is rejected SEMANTIC_INVALID). Any $ref left after
+        ///   substitution goes through the $ref stage below.
+        /// - Inter-step references (v2): inside a step's structured args, any object whose ONLY
+        ///   key is "$ref" (e.g. {"$ref":"$0.instanceId"}), at any depth, is replaced before that
+        ///   step executes. "$N" is the 0-based index of an EARLIER successful step; the part
+        ///   after the dot is a Newtonsoft SelectToken path into that step's unwrapped result
+        ///   ("$0" alone = the whole result, "$1.items[0].path" digs into arrays). Unresolvable
+        ///   refs (malformed / index out of range / forward reference / referenced step not
+        ///   successful / path with no match) fail the step with SEMANTIC_INVALID and then follow
+        ///   the normal fail-fast / continueOnError rules. Refs inside string-typed args are NOT
+        ///   resolved — only structured JSON args are scanned.
+        /// - ?mode=dryRun validates every step without executing anything and never interrupts,
+        ///   so an agent can preview the whole sequence in one call. $ref params carry no real
+        ///   value in a dry-run: they are stripped from the validation body and checked
+        ///   structurally only (index range, ordering, referenced skill's declared Outputs); such
+        ///   steps carry refsValidated + findings in validation.warnings. ?mode=plan is not
+        ///   supported.
+        /// - ?mode=transactional makes the batch all-or-nothing: unknown skills and steps whose
+        ///   skill declares MayTriggerReload are rejected up front with 400 (a domain reload
+        ///   wipes the editor undo stack, so the rollback promise could not be kept), and
+        ///   continueOnError=true is rejected as contradictory. When any step fails — including
+        ///   authorization interrupts, whose grant token is still returned — every already
+        ///   executed step is reverted via Undo.RevertAllDownToGroup and re-labelled
+        ///   status:"rolled_back" (steps of MutatesAssets skills get
+        ///   rollbackReliability:"partial": AssetDatabase disk writes are not fully covered by
+        ///   the undo stack). The response then reports status:"rolled_back" + rolledBack:true.
+        ///   Transactional mode composes freely with $ref references.
+        /// </summary>
+        private static void HandleSkillsBatchRequest(RequestJob job)
+        {
+            if (RejectIfCompiling(job))
+                return;
+
+            var qs = SkillRouter.ParseQueryString(job.QueryString);
+            if (!TryResolveBatchRequestMode(job, qs, out bool dryRun, out bool transactional))
+                return;
+            var batchMode = dryRun ? SkillRouter.RequestMode.DryRun : SkillRouter.RequestMode.Execute;
+            if (!TryResolveDiff(job, qs, "/skills/batch", batchMode, out bool captureDiff))
+                return;
+
+            if (!TryParseBody(job, out var body)) return;
+
+            if (!(body.TryGetValue("steps", StringComparison.OrdinalIgnoreCase, out var stepsToken) && stepsToken is JArray steps) || steps.Count == 0)
+            {
+                job.StatusCode = 400;
+                job.ResponseJson = SkillErrorResponse.Build(
+                    SkillErrorCode.MissingParam,
+                    "'steps' must be a non-empty array of {skill, args} objects.",
+                    details: new
+                    {
+                        example = new
+                        {
+                            steps = new object[] { new { skill = "gameobject_create", args = new { name = "Cube" } } },
+                            continueOnError = false,
+                        },
+                    },
+                    retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                return;
+            }
+
+            if (steps.Count > MaxBatchSteps)
+            {
+                job.StatusCode = 400;
+                job.ResponseJson = SkillErrorResponse.Build(
+                    SkillErrorCode.SemanticInvalid,
+                    $"Too many steps: {steps.Count} (max {MaxBatchSteps}). Split into multiple /skills/batch calls.",
+                    details: new { received = steps.Count, max = MaxBatchSteps },
+                    retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                return;
+            }
+
+            bool continueOnError = body.TryGetValue("continueOnError", StringComparison.OrdinalIgnoreCase, out var coeToken)
+                && coeToken.Type == JTokenType.Boolean && coeToken.ToObject<bool>();
+
+            // Body-level "params" fills $param slots inside step args (static, mode-agnostic).
+            JObject batchParams = null;
+            if (body.TryGetValue("params", StringComparison.OrdinalIgnoreCase, out var paramsToken) && paramsToken is JObject paramsObj)
+                batchParams = paramsObj;
+
+            if (transactional && RejectTransactionalPrecheck(job, steps, continueOnError))
+                return;
+
+            var response = ExecuteBatchCore(steps, batchParams, continueOnError, dryRun, transactional, job.AgentId, captureDiff);
+            job.StatusCode = 200;
+            job.ResponseJson = JsonConvert.SerializeObject(response, _jsonSettings);
+        }
+
+        /// <summary>
+        /// Core sequential executor behind POST /skills/batch: $param substitution,
+        /// inter-step $ref resolution, then the FULL single-skill pipeline per step
+        /// (SkillRouter.Execute — permission gate, undo, audit), with fail-fast /
+        /// continueOnError / authorization-interrupt semantics and optional transactional
+        /// rollback. Callers must pass a validated non-empty steps array (and, for
+        /// transactional, run RejectTransactionalPrecheck first). Returns the response body
+        /// ({status, executed, failed, results, ...}) as a JObject.
+        /// </summary>
+        internal static JObject ExecuteBatchCore(JArray steps, JObject batchParams, bool continueOnError,
+            bool dryRun, bool transactional, string agentId, bool captureDiff = false)
+        {
+            int txStartGroup = -1;
+            if (transactional)
+            {
+                // Fence the whole batch in the undo timeline. Each step still opens (and
+                // collapses) its own undo group inside Execute; on failure everything above
+                // this fence is reverted in one shot.
+                Undo.IncrementCurrentGroup();
+                txStartGroup = Undo.GetCurrentGroup();
+            }
+
+            var results = new List<JObject>(steps.Count);
+            // Unwrapped result of each successful step, resolvable by later steps via $ref.
+            var stepResults = new JToken[steps.Count];
+            int executedCount = 0;
+            int failedCount = 0;
+            bool halted = false;
+            var batchDiff = captureDiff && !dryRun ? SkillSceneDiff.CreateBatchCapture() : null;
+
+            for (int i = 0; i < steps.Count; i++)
+            {
+                string stepSkillName = GetBatchStepSkillName(steps[i]);
+
+                if (halted)
+                {
+                    results.Add(new JObject { ["index"] = i, ["skill"] = stepSkillName, ["status"] = "skipped" });
+                    continue;
+                }
+
+                var stepSw = System.Diagnostics.Stopwatch.StartNew();
+
+                if (!(steps[i] is JObject step) || string.IsNullOrWhiteSpace(stepSkillName))
+                {
+                    failedCount++;
+                    results.Add(new JObject
+                    {
+                        ["index"] = i,
+                        ["skill"] = stepSkillName,
+                        ["status"] = "error",
+                        ["error"] = BuildErrorPayload(SkillErrorResponse.Build(
+                            SkillErrorCode.MissingParam,
+                            $"steps[{i}] must be an object with a non-empty 'skill' field.",
+                            retryStrategy: SkillErrorResponse.RetryFixAndRetry)),
+                    });
+                    if (!continueOnError && !dryRun) halted = true;
+                    RecordBatchStep(stepSkillName, agentId, dryRun, false, "MISSING_PARAM", stepSw.ElapsedMilliseconds);
+                    continue;
+                }
+
+                string argsJson = "{}";
+                JToken argsToken = null;
+                if (step.TryGetValue("args", StringComparison.OrdinalIgnoreCase, out var rawArgs) &&
+                    rawArgs != null && rawArgs.Type != JTokenType.Null)
+                {
+                    argsToken = rawArgs;
+                    argsJson = rawArgs.Type == JTokenType.String
+                        ? rawArgs.ToString()
+                        : rawArgs.ToString(Formatting.None);
+                }
+
+                // ---- Static $param substitution (v2, resolved before $ref) ----
+                // Pure static replacement from the body-level "params" object, so dryRun and
+                // execute resolve it identically (real values exist either way). Any $ref left
+                // in the substituted args is handled by the $ref stage below.
+                if (argsToken is JContainer)
+                {
+                    var paramNodes = FindBatchParamNodes(argsToken, out var paramRefConflict);
+                    if (paramRefConflict != null || paramNodes.Count > 0)
+                    {
+                        string paramErrorJson = null;
+                        if (paramRefConflict != null)
+                        {
+                            paramErrorJson = SkillErrorResponse.Build(
+                                SkillErrorCode.SemanticInvalid,
+                                $"steps[{i}]: an args node may be $param or $ref, not both — {paramRefConflict.ToString(Formatting.None)}",
+                                skill: stepSkillName,
+                                details: new { node = paramRefConflict.ToString(Formatting.None), reason = "a single node cannot mix $param and $ref" },
+                                retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                        }
+                        else
+                        {
+                            // Substitute on a deep copy; the original request body is never mutated.
+                            var paramClone = argsToken.DeepClone();
+                            foreach (var paramNode in FindBatchParamNodes(paramClone, out _))
+                            {
+                                if (!TryResolveBatchParam(paramNode, batchParams, out var value, out var reason))
+                                {
+                                    paramErrorJson = SkillErrorResponse.Build(
+                                        SkillErrorCode.SemanticInvalid,
+                                        $"steps[{i}]: cannot resolve $param '{paramNode.ParamName ?? "(non-string)"}' — {reason}",
+                                        skill: stepSkillName,
+                                        details: new { param = paramNode.ParamName, reason },
+                                        retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                                    break;
+                                }
+                                var replacement = (value ?? JValue.CreateNull()).DeepClone();
+                                if (ReferenceEquals(paramNode.Node, paramClone)) paramClone = replacement;
+                                else paramNode.Node.Replace(replacement);
+                            }
+                            if (paramErrorJson == null)
+                            {
+                                // Feed the substituted args into the $ref stage below.
+                                argsToken = paramClone;
+                                argsJson = paramClone.ToString(Formatting.None);
+                            }
+                        }
+
+                        if (paramErrorJson != null)
+                        {
+                            failedCount++;
+                            results.Add(new JObject
+                            {
+                                ["index"] = i,
+                                ["skill"] = stepSkillName,
+                                ["status"] = "error",
+                                ["error"] = BuildErrorPayload(paramErrorJson),
+                            });
+                            if (!continueOnError && !dryRun) halted = true;
+                            RecordBatchStep(stepSkillName, agentId, dryRun, false, "SEMANTIC_INVALID", stepSw.ElapsedMilliseconds);
+                            continue;
+                        }
+                    }
+                }
+
+                // ---- Inter-step $ref references (v2) ----
+                List<BatchRefNode> refNodes = null;          // dryRun bookkeeping
+                HashSet<string> strippedRefParams = null;    // dryRun: params removed from the validation body
+                bool wholeArgsFromRef = false;               // dryRun: the args root itself is a $ref
+                List<string> refWarnings = null;             // dryRun: structural findings
+                if (argsToken is JContainer)
+                {
+                    if (dryRun)
+                    {
+                        refNodes = FindBatchRefNodes(argsToken);
+                        if (refNodes.Count > 0)
+                        {
+                            refWarnings = new List<string>();
+                            foreach (var refNode in refNodes)
+                                ValidateBatchRefStructural(refNode.RefString, i, steps, refWarnings);
+
+                            // References carry no real value during a dry-run. Params holding a
+                            // $ref are removed from the validation body — leaving the placeholder
+                            // objects in would only produce TYPE_MISMATCH noise. The resulting
+                            // MISSING_PARAM / semantic gaps are reconciled after DryRun returns
+                            // (see AdjustDryRunPayloadForRefs).
+                            strippedRefParams = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            foreach (var refNode in refNodes)
+                            {
+                                if (refNode.TopLevelParam == null) wholeArgsFromRef = true;
+                                else strippedRefParams.Add(refNode.TopLevelParam);
+                            }
+                            if (wholeArgsFromRef || !(argsToken is JObject argsObj))
+                            {
+                                argsJson = "{}";
+                            }
+                            else
+                            {
+                                var strippedArgs = (JObject)argsObj.DeepClone();
+                                foreach (var refNode in refNodes)
+                                {
+                                    if (refNode.TopLevelParam != null)
+                                        strippedArgs.Remove(refNode.TopLevelParam);
+                                }
+                                argsJson = strippedArgs.ToString(Formatting.None);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Resolve against earlier step results on a deep copy; the original
+                        // request body is never mutated.
+                        var argsClone = argsToken.DeepClone();
+                        var cloneRefs = FindBatchRefNodes(argsClone);
+                        if (cloneRefs.Count > 0)
+                        {
+                            string refErrorJson = null;
+                            foreach (var refNode in cloneRefs)
+                            {
+                                if (!TryResolveBatchRef(refNode.RefString, stepResults, i, steps.Count,
+                                        out var resolved, out var reason, out var referencedStep))
+                                {
+                                    refErrorJson = SkillErrorResponse.Build(
+                                        SkillErrorCode.SemanticInvalid,
+                                        $"steps[{i}]: cannot resolve $ref '{refNode.RefString ?? "(non-string)"}' — {reason}",
+                                        skill: stepSkillName,
+                                        details: new { @ref = refNode.RefString, referencedStep, reason },
+                                        retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                                    break;
+                                }
+                                var replacement = resolved.DeepClone();
+                                if (ReferenceEquals(refNode.Node, argsClone)) argsClone = replacement;
+                                else refNode.Node.Replace(replacement);
+                            }
+                            if (refErrorJson != null)
+                            {
+                                failedCount++;
+                                results.Add(new JObject
+                                {
+                                    ["index"] = i,
+                                    ["skill"] = stepSkillName,
+                                    ["status"] = "error",
+                                    ["error"] = BuildErrorPayload(refErrorJson),
+                                });
+                                if (!continueOnError) halted = true;
+                                RecordBatchStep(stepSkillName, agentId, dryRun, false, "SEMANTIC_INVALID", stepSw.ElapsedMilliseconds);
+                                continue;
+                            }
+                            argsJson = argsClone.ToString(Formatting.None);
+                        }
+                    }
+                }
+
+                string stepJson;
+                try
+                {
+                    if (dryRun)
+                    {
+                        stepJson = SkillRouter.DryRun(stepSkillName, argsJson);
+                    }
+                    else
+                    {
+                        if (batchDiff != null && SkillRouter.TryGetSkill(stepSkillName, out var diffSkill) && !diffSkill.ReadOnly)
+                        {
+                            try { SkillSceneDiff.CaptureBatchStepBefore(batchDiff, JObject.Parse(argsJson)); }
+                            catch { batchDiff.HadWritableSteps = true; }
+                        }
+                        stepJson = SkillRouter.Execute(stepSkillName, argsJson);
+                        // Steps share one POST job, so the per-request invalidation in
+                        // ProcessJobQueue never runs between them — without this, a step
+                        // can't find objects created by an earlier step in the same batch.
+                        GameObjectFinder.InvalidateCache();
+                        SkillsLogger.LogAgent(agentId, $"{stepSkillName} (batch {i + 1}/{steps.Count})");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    stepJson = SkillErrorResponse.Build(
+                        SkillErrorCode.Internal,
+                        ex.Message,
+                        skill: stepSkillName,
+                        details: new { type = ex.GetType().Name },
+                        retryStrategy: SkillErrorResponse.RetryWaitAndRetry);
+                    SkillsLogger.LogWarning($"Batch step {i} '{stepSkillName}' error: {ex.Message}");
+                }
+
+                JObject stepPayload;
+                try { stepPayload = JObject.Parse(stepJson); }
+                catch { stepPayload = new JObject { ["status"] = "error", ["error"] = stepJson }; }
+
+                string stepStatus = stepPayload["status"]?.ToString();
+
+                if (dryRun)
+                {
+                    // $ref params were stripped from the validation body — reconcile the payload
+                    // (missingParams filter, semantic downgrade, refsValidated) BEFORE reading
+                    // its 'valid' verdict.
+                    if (refNodes != null && refNodes.Count > 0)
+                        AdjustDryRunPayloadForRefs(stepPayload, refNodes, strippedRefParams, wholeArgsFromRef, refWarnings);
+
+                    // DryRun responses carry status:"dryRun" + valid:bool; unknown skills come
+                    // back as status:"error". Validation failures never halt a dry-run batch.
+                    bool stepValid = string.Equals(stepStatus, "dryRun", StringComparison.OrdinalIgnoreCase) &&
+                        stepPayload["valid"]?.Type == JTokenType.Boolean && stepPayload["valid"].ToObject<bool>();
+                    if (stepValid)
+                    {
+                        executedCount++;
+                        results.Add(new JObject { ["index"] = i, ["skill"] = stepSkillName, ["status"] = "success", ["result"] = stepPayload });
+                    }
+                    else
+                    {
+                        failedCount++;
+                        results.Add(new JObject { ["index"] = i, ["skill"] = stepSkillName, ["status"] = "error", ["error"] = stepPayload });
+                    }
+                    RecordBatchStep(stepSkillName, agentId, dryRun, stepValid, stepValid ? null : "DRYRUN_INVALID", stepSw.ElapsedMilliseconds);
+                    continue;
+                }
+
+                if (string.Equals(stepStatus, "error", StringComparison.OrdinalIgnoreCase))
+                {
+                    failedCount++;
+                    results.Add(new JObject { ["index"] = i, ["skill"] = stepSkillName, ["status"] = "error", ["error"] = stepPayload });
+
+                    // Authorization-type responses can never be skipped: the caller must handle
+                    // the grant/confirmation flow, so the batch stops here even with
+                    // continueOnError=true. The full payload above carries the grant token.
+                    string errorCode = stepPayload["errorCode"]?.ToString();
+                    bool authorizationRequired =
+                        string.Equals(errorCode, "MODE_RESTRICTED", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(errorCode, "CONFIRMATION_REQUIRED", StringComparison.OrdinalIgnoreCase);
+
+                    if (authorizationRequired || !continueOnError)
+                        halted = true;
+                    RecordBatchStep(stepSkillName, agentId, dryRun, false, errorCode, stepSw.ElapsedMilliseconds);
+                    continue;
+                }
+
+                // status:"success" (or any non-error shape) — unwrap the inner result;
+                // the entry-level status field already expresses success.
+                executedCount++;
+                var unwrappedResult = stepPayload.TryGetValue("result", out var innerResult) ? innerResult : stepPayload;
+                stepResults[i] = unwrappedResult;
+                if (batchDiff != null)
+                    SkillSceneDiff.TrackBatchStepResult(batchDiff, unwrappedResult);
+                results.Add(new JObject
+                {
+                    ["index"] = i,
+                    ["skill"] = stepSkillName,
+                    ["status"] = "success",
+                    ["result"] = unwrappedResult,
+                });
+                RecordBatchStep(stepSkillName, agentId, dryRun, true, null, stepSw.ElapsedMilliseconds);
+            }
+
+            bool rolledBack = false;
+            if (transactional && failedCount > 0)
+            {
+                // All-or-nothing: any failure (incl. authorization interrupts — the failed
+                // step's entry above still carries the grant token untouched) reverts every
+                // step executed since the batch fence, without leaving redo entries.
+                Undo.RevertAllDownToGroup(txStartGroup);
+                GameObjectFinder.InvalidateCache();
+                rolledBack = true;
+
+                int revertedSteps = 0;
+                foreach (var entry in results)
+                {
+                    if (!string.Equals(entry["status"]?.ToString(), "success", StringComparison.Ordinal))
+                        continue;
+                    entry["status"] = "rolled_back";
+                    revertedSteps++;
+                    // AssetDatabase disk writes are not fully covered by the undo stack —
+                    // flag those rollbacks as partial instead of over-promising.
+                    string entrySkill = entry["skill"]?.ToString();
+                    if (!string.IsNullOrEmpty(entrySkill) &&
+                        SkillRouter.TryGetSkill(entrySkill, out var entryInfo) && entryInfo.MutatesAssets)
+                    {
+                        entry["rollbackReliability"] = "partial";
+                    }
+                }
+                SkillsLogger.Log($"Transactional batch rolled back {revertedSteps} executed step(s) after a failed step (undo group {txStartGroup}).");
+            }
+
+            var response = new JObject
+            {
+                ["status"] = failedCount == 0 ? "completed" : (transactional ? "rolled_back" : "partial"),
+                ["dryRun"] = dryRun,
+            };
+            if (transactional)
+            {
+                response["transactional"] = true;
+                response["rolledBack"] = rolledBack;
+            }
+            response["executed"] = executedCount;
+            response["failed"] = failedCount;
+            response["results"] = new JArray(results);
+            if (batchDiff != null)
+                response["sceneDiff"] = SkillSceneDiff.BuildBatch(batchDiff);
+            return response;
+        }
+
+        /// <summary>One $param name aggregated across a step sequence (macro-library introspection).</summary>
+        internal sealed class BatchParamDeclaration
+        {
+            public string Name;
+            public bool HasDefault;      // every node referencing this name carries an inline default
+            public JToken DefaultValue;  // first inline default seen (display only)
+        }
+
+        /// <summary>
+        /// Aggregates the $param slots declared across a whole step sequence, keyed by name and in
+        /// first-occurrence order. A name counts as having a default only when EVERY node
+        /// referencing it carries an inline "default" — a single bare {"$param":"x"} slot makes the
+        /// value mandatory. Malformed slots (non-string $param name) are skipped here; execution
+        /// reports them per step. String-typed args are not scanned, mirroring execution.
+        /// </summary>
+        internal static List<BatchParamDeclaration> CollectBatchParamDeclarations(JArray steps)
+        {
+            var byName = new Dictionary<string, BatchParamDeclaration>(StringComparer.Ordinal);
+            var ordered = new List<BatchParamDeclaration>();
+            if (steps == null)
+                return ordered;
+
+            foreach (var step in steps)
+            {
+                if (!(step is JObject stepObj)
+                    || !stepObj.TryGetValue("args", StringComparison.OrdinalIgnoreCase, out var args)
+                    || !(args is JContainer))
+                    continue;
+
+                foreach (var node in FindBatchParamNodes(args, out _))
+                {
+                    if (node.ParamName == null)
+                        continue;
+                    if (!byName.TryGetValue(node.ParamName, out var decl))
+                    {
+                        decl = new BatchParamDeclaration
+                        {
+                            Name = node.ParamName,
+                            HasDefault = node.HasDefault,
+                            DefaultValue = node.DefaultValue,
+                        };
+                        byName[node.ParamName] = decl;
+                        ordered.Add(decl);
+                    }
+                    else if (!node.HasDefault)
+                    {
+                        decl.HasDefault = false;
+                    }
+                    else if (decl.DefaultValue == null)
+                    {
+                        decl.DefaultValue = node.DefaultValue;
+                    }
+                }
+            }
+            return ordered;
+        }
+
+        private static string GetBatchStepSkillName(JToken stepToken)
+        {
+            if (stepToken is JObject step &&
+                step.TryGetValue("skill", StringComparison.OrdinalIgnoreCase, out var skillToken) &&
+                skillToken != null && skillToken.Type != JTokenType.Null)
+            {
+                return skillToken.ToString();
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Resolves ?mode= / ?dryRun= for /skills/batch. Batch accepts dryRun/transactional
+        /// (single-skill requests accept dryRun/plan instead — see TryResolveRequestMode, which
+        /// keeps rejecting 'transactional' so its INVALID_MODE validValues stay accurate).
+        /// Returns false (and writes the error response) on any unrecognized value.
+        /// </summary>
+        private static bool TryResolveBatchRequestMode(RequestJob job, Dictionary<string, string> qs, out bool dryRun, out bool transactional)
+        {
+            dryRun = false;
+            transactional = false;
+
+            if (qs.TryGetValue("mode", out var modeValue) && !string.IsNullOrWhiteSpace(modeValue))
+            {
+                if (modeValue.Equals("dryRun", StringComparison.OrdinalIgnoreCase))
+                {
+                    dryRun = true;
+                    return true;
+                }
+                if (modeValue.Equals("transactional", StringComparison.OrdinalIgnoreCase))
+                {
+                    transactional = true;
+                    return true;
+                }
+
+                bool isPlan = modeValue.Equals("plan", StringComparison.OrdinalIgnoreCase);
+                job.StatusCode = 400;
+                job.ResponseJson = SkillErrorResponse.Build(
+                    SkillErrorCode.InvalidMode,
+                    isPlan
+                        ? "Batch supports '?mode=dryRun' (validates every step without executing) and '?mode=transactional' (all-or-nothing with rollback); 'plan' is not available for /skills/batch."
+                        : $"Unknown mode '{modeValue}' — request was NOT executed.",
+                    skill: "skills_batch",
+                    details: new
+                    {
+                        received = modeValue,
+                        validValues = new[] { "dryRun", "transactional" },
+                        hint = "Use '?mode=dryRun' to validate without executing, '?mode=transactional' for all-or-nothing execution with rollback, or omit '?mode=' entirely to execute fail-fast.",
+                    },
+                    retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                return false;
+            }
+
+            if (qs.TryGetValue("dryRun", out var dryRunVal) && !string.IsNullOrWhiteSpace(dryRunVal))
+            {
+                if (dryRunVal.Equals("true", StringComparison.OrdinalIgnoreCase))
+                {
+                    dryRun = true;
+                    return true;
+                }
+                if (dryRunVal.Equals("false", StringComparison.OrdinalIgnoreCase))
+                    return true; // explicit false = execute for real
+
+                job.StatusCode = 400;
+                job.ResponseJson = SkillErrorResponse.Build(
+                    SkillErrorCode.InvalidMode,
+                    $"Invalid dryRun value '{dryRunVal}' — request was NOT executed.",
+                    skill: "skills_batch",
+                    details: new
+                    {
+                        received = dryRunVal,
+                        validValues = new[] { "true", "false" },
+                        hint = "Use '?dryRun=true' (or '?mode=dryRun') to validate without executing; omit the parameter to execute for real.",
+                    },
+                    retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Transactional batches promise all-or-nothing via the editor undo stack, so anything
+        /// that would break that promise is rejected up front (400 SEMANTIC_INVALID) instead of
+        /// failing mid-flight: unknown/malformed steps, skills that may trigger a domain reload
+        /// (a reload wipes the undo stack), and continueOnError=true (a transaction is
+        /// fail-fast by definition). Returns true when the batch was rejected.
+        /// </summary>
+        private static bool RejectTransactionalPrecheck(RequestJob job, JArray steps, bool continueOnError)
+        {
+            if (continueOnError)
+            {
+                job.StatusCode = 400;
+                job.ResponseJson = SkillErrorResponse.Build(
+                    SkillErrorCode.SemanticInvalid,
+                    "'continueOnError=true' conflicts with '?mode=transactional': a transaction is all-or-nothing, so execution can never continue past a failed step. Remove one of the two.",
+                    skill: "skills_batch",
+                    details: new { mode = "transactional", continueOnError = true },
+                    retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                return true;
+            }
+
+            var violations = new List<(int step, string skill, string reason)>();
+            for (int i = 0; i < steps.Count; i++)
+            {
+                string name = GetBatchStepSkillName(steps[i]);
+                string reason = null;
+                if (string.IsNullOrWhiteSpace(name))
+                    reason = "step is not an object with a non-empty 'skill' field";
+                else if (!SkillRouter.TryGetSkill(name, out var info))
+                    reason = "unknown skill";
+                else if (info.MayTriggerReload)
+                    reason = "the skill declares MayTriggerReload — a domain reload wipes the editor undo stack, so the transactional rollback promise cannot be kept";
+
+                if (reason != null)
+                    violations.Add((i, name, reason));
+            }
+
+            if (violations.Count == 0)
+                return false;
+
+            var first = violations[0];
+            job.StatusCode = 400;
+            job.ResponseJson = SkillErrorResponse.Build(
+                SkillErrorCode.SemanticInvalid,
+                $"Transactional batch rejected before execution: steps[{first.step}] ('{first.skill ?? "?"}') — {first.reason}." +
+                (violations.Count > 1 ? $" {violations.Count - 1} more violation(s) listed in details." : string.Empty),
+                skill: "skills_batch",
+                details: new
+                {
+                    mode = "transactional",
+                    violations = violations.Select(v => new { v.step, v.skill, v.reason }).ToArray(),
+                },
+                retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+            return true;
+        }
+
+        // ===== Static $param substitution (batch v2) =====
+
+        /// <summary>
+        /// A {"$param":"name"} / {"$param":"name","default":X} slot found inside a step's args.
+        /// ParamName is null when the $param value is not a JSON string (reported as malformed at
+        /// resolve time). Unlike BatchRefNode there is no TopLevelParam: $param carries a real
+        /// value in every mode, so nothing is stripped from the dry-run validation body.
+        /// </summary>
+        private sealed class BatchParamNode
+        {
+            public JObject Node;
+            public string ParamName;
+            public bool HasDefault;
+            public JToken DefaultValue;
+        }
+
+        /// <summary>
+        /// An object node is a parameter node iff "$param" is its ONLY property (a bare slot), or
+        /// its EXACTLY two properties are "$param" + "default" (a slot with a fallback). Objects
+        /// that merely contain "$param" among other keys are payload data and stay untouched —
+        /// mirrors IsBatchRefNode. paramName is null when the $param value is not a JSON string.
+        /// </summary>
+        private static bool IsBatchParamNode(JObject obj, out string paramName, out bool hasDefault, out JToken defaultValue)
+        {
+            paramName = null;
+            hasDefault = false;
+            defaultValue = null;
+
+            if (obj.Count == 1)
+            {
+                var prop = (JProperty)obj.First;
+                if (!string.Equals(prop.Name, "$param", StringComparison.Ordinal))
+                    return false;
+                paramName = prop.Value?.Type == JTokenType.String ? prop.Value.ToString() : null;
+                return true;
+            }
+
+            if (obj.Count == 2)
+            {
+                JProperty paramProp = null, defaultProp = null;
+                foreach (var prop in obj.Properties())
+                {
+                    if (string.Equals(prop.Name, "$param", StringComparison.Ordinal)) paramProp = prop;
+                    else if (string.Equals(prop.Name, "default", StringComparison.Ordinal)) defaultProp = prop;
+                }
+                if (paramProp == null || defaultProp == null)
+                    return false;
+                paramName = paramProp.Value?.Type == JTokenType.String ? paramProp.Value.ToString() : null;
+                hasDefault = true;
+                defaultValue = defaultProp.Value;
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Collects every $param slot in a step's args (any depth). paramRefConflict is set to the
+        /// first node carrying BOTH "$param" and "$ref" (a node is one or the other, never both)
+        /// so the caller can reject it SEMANTIC_INVALID; the search stops at that node.
+        /// </summary>
+        private static List<BatchParamNode> FindBatchParamNodes(JToken argsRoot, out JObject paramRefConflict)
+        {
+            var found = new List<BatchParamNode>();
+            paramRefConflict = null;
+            CollectBatchParamNodes(argsRoot, found, ref paramRefConflict);
+            return found;
+        }
+
+        private static void CollectBatchParamNodes(JToken token, List<BatchParamNode> found, ref JObject paramRefConflict)
+        {
+            if (paramRefConflict != null)
+                return;
+
+            if (token is JObject obj)
+            {
+                bool hasParam = false, hasRef = false;
+                foreach (var prop in obj.Properties())
+                {
+                    if (string.Equals(prop.Name, "$param", StringComparison.Ordinal)) hasParam = true;
+                    else if (string.Equals(prop.Name, "$ref", StringComparison.Ordinal)) hasRef = true;
+                }
+                if (hasParam && hasRef)
+                {
+                    paramRefConflict = obj;
+                    return;
+                }
+                if (hasParam && IsBatchParamNode(obj, out var paramName, out var hasDefault, out var defaultValue))
+                {
+                    found.Add(new BatchParamNode
+                    {
+                        Node = obj,
+                        ParamName = paramName,
+                        HasDefault = hasDefault,
+                        DefaultValue = defaultValue,
+                    });
+                    return;
+                }
+                foreach (var prop in obj.Properties())
+                    CollectBatchParamNodes(prop.Value, found, ref paramRefConflict);
+            }
+            else if (token is JArray arr)
+            {
+                foreach (var item in arr)
+                    CollectBatchParamNodes(item, found, ref paramRefConflict);
+            }
+        }
+
+        /// <summary>
+        /// Resolves one slot's value: the batch "params" object wins when it holds the name
+        /// (case-sensitive), else the node's inline "default", else the step fails
+        /// SEMANTIC_INVALID ("not provided and no default"). A non-string $param name is malformed.
+        /// </summary>
+        private static bool TryResolveBatchParam(BatchParamNode node, JObject batchParams, out JToken value, out string reason)
+        {
+            value = null;
+            reason = null;
+
+            if (node.ParamName == null)
+            {
+                reason = "the $param value must be a string naming a batch parameter";
+                return false;
+            }
+            if (batchParams != null && batchParams.TryGetValue(node.ParamName, StringComparison.Ordinal, out var provided))
+            {
+                value = provided;
+                return true;
+            }
+            if (node.HasDefault)
+            {
+                value = node.DefaultValue ?? JValue.CreateNull();
+                return true;
+            }
+            reason = "not provided and no default";
+            return false;
+        }
+
+        // ===== Inter-step $ref references (batch v2) =====
+
+        /// <summary>
+        /// A {"$ref":"$N.path"} node found inside a step's args. RefString is null when the
+        /// $ref value is not a JSON string (reported as malformed at resolve time).
+        /// TopLevelParam is the args property whose subtree contains the node, or null when
+        /// the node IS the args root.
+        /// </summary>
+        private sealed class BatchRefNode
+        {
+            public JObject Node;
+            public string RefString;
+            public string TopLevelParam;
+        }
+
+        /// <summary>
+        /// An object node is a reference iff "$ref" is its ONLY property; objects that merely
+        /// contain a "$ref" key among others are payload data and stay untouched.
+        /// </summary>
+        private static bool IsBatchRefNode(JObject obj, out string refString)
+        {
+            refString = null;
+            if (obj.Count != 1)
+                return false;
+            var prop = (JProperty)obj.First;
+            if (!string.Equals(prop.Name, "$ref", StringComparison.Ordinal))
+                return false;
+            refString = prop.Value?.Type == JTokenType.String ? prop.Value.ToString() : null;
+            return true;
+        }
+
+        private static List<BatchRefNode> FindBatchRefNodes(JToken argsRoot)
+        {
+            var found = new List<BatchRefNode>();
+            CollectBatchRefNodes(argsRoot, argsRoot, found);
+            return found;
+        }
+
+        private static void CollectBatchRefNodes(JToken token, JToken root, List<BatchRefNode> found)
+        {
+            if (token is JObject obj)
+            {
+                if (IsBatchRefNode(obj, out var refString))
+                {
+                    found.Add(new BatchRefNode
+                    {
+                        Node = obj,
+                        RefString = refString,
+                        TopLevelParam = GetTopLevelParamName(obj, root),
+                    });
+                    return;
+                }
+                foreach (var prop in obj.Properties())
+                    CollectBatchRefNodes(prop.Value, root, found);
+            }
+            else if (token is JArray arr)
+            {
+                foreach (var item in arr)
+                    CollectBatchRefNodes(item, root, found);
+            }
+        }
+
+        private static string GetTopLevelParamName(JToken node, JToken root)
+        {
+            JToken cur = node;
+            while (cur != null && !ReferenceEquals(cur, root) && !ReferenceEquals(cur.Parent, root))
+                cur = cur.Parent;
+            return cur is JProperty prop ? prop.Name : null;
+        }
+
+        /// <summary>
+        /// Parses "$N", "$N.path" or "$N[…]" — N is the 0-based step index; the remainder is a
+        /// Newtonsoft SelectToken path into that step's unwrapped result.
+        /// </summary>
+        private static bool TryParseBatchRef(string refString, out int stepIndex, out string selectPath, out string parseError)
+        {
+            stepIndex = -1;
+            selectPath = null;
+            parseError = null;
+
+            if (string.IsNullOrEmpty(refString) || refString[0] != '$')
+            {
+                parseError = "the $ref value must be a string like \"$0\", \"$0.instanceId\" or \"$1.items[0].path\"";
+                return false;
+            }
+
+            int i = 1;
+            while (i < refString.Length && char.IsDigit(refString[i]))
+                i++;
+            if (i == 1 || !int.TryParse(refString.Substring(1, i - 1), out stepIndex))
+            {
+                stepIndex = -1;
+                parseError = "no step index after '$' (expected \"$N\" with N = 0-based index of an earlier step)";
+                return false;
+            }
+
+            if (i == refString.Length)
+                return true; // "$N" — the whole unwrapped result
+
+            char next = refString[i];
+            if (next == '.')
+            {
+                selectPath = refString.Substring(i + 1);
+                if (selectPath.Length > 0)
+                    return true;
+                parseError = "empty path after '.'";
+                return false;
+            }
+            if (next == '[')
+            {
+                selectPath = refString.Substring(i);
+                return true;
+            }
+
+            parseError = $"unexpected character '{next}' after the step index";
+            return false;
+        }
+
+        /// <summary>
+        /// Resolves one reference against the unwrapped results of already-executed steps.
+        /// Fails (with a structured reason) on: malformed ref, index outside the batch,
+        /// forward reference (N >= current step), referenced step not completed successfully,
+        /// or a SelectToken path with no match.
+        /// </summary>
+        private static bool TryResolveBatchRef(string refString, JToken[] stepResults, int currentIndex, int stepCount,
+            out JToken resolved, out string reason, out int referencedStep)
+        {
+            resolved = null;
+            reason = null;
+
+            if (!TryParseBatchRef(refString, out referencedStep, out var selectPath, out var parseError))
+            {
+                reason = parseError;
+                return false;
+            }
+
+            if (referencedStep >= stepCount)
+            {
+                reason = $"step index {referencedStep} is out of range (batch has {stepCount} steps)";
+                return false;
+            }
+            if (referencedStep >= currentIndex)
+            {
+                reason = $"forward reference — steps[{referencedStep}] does not run before steps[{currentIndex}]; $refs may only point to earlier steps";
+                return false;
+            }
+            if (stepResults[referencedStep] == null)
+            {
+                reason = $"steps[{referencedStep}] did not complete successfully, so its result is not available";
+                return false;
+            }
+
+            if (selectPath == null)
+            {
+                resolved = stepResults[referencedStep];
+                return true;
+            }
+
+            try
+            {
+                resolved = stepResults[referencedStep].SelectToken(selectPath, errorWhenNoMatch: false);
+            }
+            catch (Exception ex)
+            {
+                reason = $"invalid SelectToken path '{selectPath}': {ex.Message}";
+                return false;
+            }
+            if (resolved == null)
+            {
+                reason = $"path '{selectPath}' matched nothing in the result of steps[{referencedStep}]";
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Dry-run structural validation of one reference (no real values exist to resolve):
+        /// index in range and pointing at an earlier step, referenced skill known, first path
+        /// segment present in the referenced skill's declared Outputs. All findings are
+        /// warnings — Outputs metadata may be incomplete, and a dry-run batch never halts.
+        /// </summary>
+        private static void ValidateBatchRefStructural(string refString, int currentIndex, JArray steps, List<string> warnings)
+        {
+            string label = $"$ref '{refString ?? "(non-string)"}'";
+            if (!TryParseBatchRef(refString, out var refStep, out var selectPath, out var parseError))
+            {
+                warnings.Add($"{label}: malformed ({parseError}) — this step will fail at execution.");
+                return;
+            }
+            if (refStep >= steps.Count)
+            {
+                warnings.Add($"{label}: step index {refStep} is out of range (batch has {steps.Count} steps) — this step will fail at execution.");
+                return;
+            }
+            if (refStep >= currentIndex)
+            {
+                warnings.Add($"{label}: forward reference (steps[{refStep}] does not run before steps[{currentIndex}]) — this step will fail at execution.");
+                return;
+            }
+
+            string refSkillName = GetBatchStepSkillName(steps[refStep]);
+            if (string.IsNullOrWhiteSpace(refSkillName) || !SkillRouter.TryGetSkill(refSkillName, out var refSkill))
+            {
+                warnings.Add($"{label}: referenced steps[{refStep}] has no known skill ('{refSkillName}') — this step will fail at execution.");
+                return;
+            }
+
+            if (selectPath == null)
+                return;
+            var outputs = SkillRouter.GetEffectiveOutputs(refSkill);
+            if (outputs == null || outputs.Length == 0)
+                return; // no declared outputs to check against
+            string firstSegment = FirstSelectTokenSegment(selectPath);
+            if (firstSegment == null)
+                return; // "[0]…" indexes into the result root; nothing to name-check
+
+            foreach (var output in outputs)
+            {
+                if (string.Equals(output, firstSegment, StringComparison.OrdinalIgnoreCase))
+                    return;
+            }
+            warnings.Add($"{label}: field '{firstSegment}' is not among the declared outputs of '{refSkillName}' [{string.Join(", ", outputs)}] — declared Outputs may be incomplete, so this is only a warning; verify at execution.");
+        }
+
+        private static string FirstSelectTokenSegment(string selectPath)
+        {
+            if (string.IsNullOrEmpty(selectPath) || selectPath[0] == '[')
+                return null;
+            int cut = selectPath.IndexOfAny(new[] { '.', '[' });
+            return cut < 0 ? selectPath : selectPath.Substring(0, cut);
+        }
+
+        /// <summary>
+        /// Post-processes a step's DryRun payload after its $ref params were stripped from the
+        /// validation body: drops MISSING_PARAM entries caused by the stripping, downgrades the
+        /// step's semanticErrors to warnings (semantic checks ran without the reference values,
+        /// so both pass and fail verdicts would be guesses), recomputes 'valid' from what is
+        /// left, and attaches refsValidated so callers see which params got structural-only
+        /// treatment.
+        /// </summary>
+        private static void AdjustDryRunPayloadForRefs(JObject stepPayload, List<BatchRefNode> refNodes,
+            HashSet<string> strippedParams, bool wholeArgsFromRef, List<string> refWarnings)
+        {
+            var refsValidated = new JArray();
+            foreach (var refNode in refNodes)
+            {
+                refsValidated.Add(new JObject
+                {
+                    ["param"] = refNode.TopLevelParam ?? "(args)",
+                    ["ref"] = refNode.RefString,
+                    ["structural"] = true,
+                });
+            }
+            stepPayload["refsValidated"] = refsValidated;
+
+            if (!(stepPayload["validation"] is JObject validation))
+                return; // error payload (unknown skill etc.) — refsValidated attached, nothing to adjust
+
+            var addedWarnings = new List<string>(refWarnings);
+
+            if (validation["missingParams"] is JArray missing && missing.Count > 0)
+            {
+                for (int m = missing.Count - 1; m >= 0; m--)
+                {
+                    string param = missing[m]?.ToString();
+                    if (wholeArgsFromRef || (param != null && strippedParams.Contains(param)))
+                        missing.RemoveAt(m);
+                }
+                if (missing.Count == 0)
+                    validation["missingParams"] = null;
+            }
+
+            if (validation["semanticErrors"] is JArray semantic && semantic.Count > 0)
+            {
+                foreach (var item in semantic)
+                    addedWarnings.Add($"semantic check not confirmable while '$ref' params are unresolved (structural-only): {item.ToString(Formatting.None)}");
+                validation["semanticErrors"] = null;
+            }
+
+            if (addedWarnings.Count > 0)
+            {
+                if (!(validation["warnings"] is JArray warningsArr))
+                {
+                    warningsArr = new JArray();
+                    validation["warnings"] = warningsArr;
+                }
+                foreach (var warning in addedWarnings)
+                    warningsArr.Add(warning);
+            }
+
+            stepPayload["valid"] =
+                IsNullOrEmptyJArray(validation["missingParams"]) &&
+                IsNullOrEmptyJArray(validation["unknownParams"]) &&
+                IsNullOrEmptyJArray(validation["typeErrors"]) &&
+                IsNullOrEmptyJArray(validation["semanticErrors"]);
+        }
+
+        private static bool IsNullOrEmptyJArray(JToken token) => !(token is JArray arr) || arr.Count == 0;
 
         /// <summary>
         /// Routes GET /jobs and GET /jobs/{id}[/logs] to BatchPersistence without going
@@ -2208,3 +3863,4 @@ namespace UnitySkills
     }
 }
 
+// Producer:Betsy

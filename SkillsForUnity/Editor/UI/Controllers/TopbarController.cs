@@ -25,8 +25,6 @@ namespace UnitySkills
 
         private readonly VisualElement _root;
         private readonly UnitySkillsWindow _window;
-        private readonly bool _useNativeEmojiPermBadge;
-
         private VisualElement _topbarElement;
         private VisualElement _statusDot;
         private TextField     _urlField;
@@ -44,8 +42,6 @@ namespace UnitySkills
         {
             _root = root;
             _window = window;
-            _useNativeEmojiPermBadge = ShouldUseNativeEmojiPermBadge();
-
             _topbarElement = _root.Q<VisualElement>("topbar");
             _statusDot    = _root.Q<VisualElement>("status-dot");
             _urlField     = _root.Q<TextField>("url-field");
@@ -55,10 +51,7 @@ namespace UnitySkills
             _permBadge    = _root.Q<Button>("perm-mode-badge");
             _settingsBtn  = _root.Q<Button>("open-settings-btn");
 
-            if (!_useNativeEmojiPermBadge)
-                BuildPermBadgeContent();
-            else if (_permBadge != null)
-                _permBadge.AddToClassList("perm-mode-badge--native");
+            BuildPermBadgeContent();
             ApplySettingsIcon();
             BindEvents();
             UpdateLiveData(); // initial paint
@@ -126,21 +119,13 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Replace the placeholder ⚙ char with Unity's built-in Settings icon.
+        /// Apply Unity's built-in Settings icon.
         /// Tried in order: d_SettingsIcon, SettingsIcon, _Popup. The last one
         /// always exists as a final fallback.
         /// </summary>
         private void ApplySettingsIcon()
         {
-            if (_settingsBtn == null) return;
-            var icon = EditorGUIUtility.IconContent("d_SettingsIcon")?.image
-                       ?? EditorGUIUtility.IconContent("SettingsIcon")?.image
-                       ?? EditorGUIUtility.IconContent("_Popup")?.image;
-            if (icon == null) return;
-
-            _settingsBtn.text = "";
-            _settingsBtn.style.backgroundImage = new StyleBackground((Texture2D)icon);
-            _settingsBtn.style.backgroundSize = new BackgroundSize(BackgroundSizeType.Contain);
+            UISkillsEditorIcons.Apply(_settingsBtn, "d_SettingsIcon", "SettingsIcon", "_Popup");
         }
 
         private void BuildPermBadgeContent()
@@ -158,23 +143,6 @@ namespace UnitySkills
             _permBadgeLabel = new Label { name = "perm-mode-badge-label" };
             _permBadgeLabel.AddToClassList("perm-mode-badge__label");
             _permBadge.Add(_permBadgeLabel);
-        }
-
-        private static bool ShouldUseNativeEmojiPermBadge()
-        {
-            int major;
-            return TryGetUnityMajorVersion(out major) && major >= 6000;
-        }
-
-        private static bool TryGetUnityMajorVersion(out int major)
-        {
-            major = 0;
-            string version = Application.unityVersion;
-            if (string.IsNullOrEmpty(version)) return false;
-
-            int dot = version.IndexOf('.');
-            string majorText = dot > 0 ? version.Substring(0, dot) : version;
-            return int.TryParse(majorText, out major);
         }
 
         private void BindEvents()
@@ -261,29 +229,6 @@ namespace UnitySkills
             if (_permBadge == null) return;
             var mode = SkillsModeManager.CurrentMode;
             string label;
-
-            if (_useNativeEmojiPermBadge)
-            {
-                switch (mode)
-                {
-                    case SkillsOperatingMode.Approval:
-                        int pending = SkillsModeManager.PendingGrantRequests.Count;
-                        label = pending > 0 ? $"🔐 Approval ⚠{pending}" : "🔐 Approval";
-                        break;
-                    case SkillsOperatingMode.Auto:
-                        label = "⚡ Auto";
-                        break;
-                    case SkillsOperatingMode.Bypass:
-                        label = "🟢 Bypass";
-                        break;
-                    default:
-                        label = mode.ToString();
-                        break;
-                }
-
-                if (_permBadge.text != label) _permBadge.text = label;
-                return;
-            }
 
             switch (mode)
             {
@@ -382,3 +327,5 @@ namespace UnitySkills
         }
     }
 }
+
+// Producer:Betsy

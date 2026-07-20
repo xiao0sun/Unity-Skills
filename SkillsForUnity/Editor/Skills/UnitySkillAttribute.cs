@@ -51,6 +51,7 @@ namespace UnitySkills
         Netcode,
         YooAsset,
         DOTween,
+        PrimeTween,
         Graphics,
         Volume,
         URP,
@@ -144,3 +145,5 @@ namespace UnitySkills
         }
     }
 }
+
+// Producer:Betsy
