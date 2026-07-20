@@ -298,6 +298,54 @@ namespace UnitySkills.Tests.Core
         }
 
         [Test]
+        public void TestRecovery_PlayMode_PrefersPersistedRunnerJobId()
+        {
+            const string persistedRunnerJobId = "runner-playmode-persisted";
+            var job = CreateTestJob(Guid.NewGuid().ToString("N").Substring(0, 8), "reconnecting", new Dictionary<string, object>());
+            job.metadata["testMode"] = "PlayMode";
+            job.metadata["runnerJobId"] = persistedRunnerJobId;
+
+            var resolved = AsyncJobService.TryResolveTestRunnerJobIdForRecovery(
+                job,
+                Array.Empty<string>(),
+                out var runnerJobId);
+
+            Assert.That(resolved, Is.True);
+            Assert.That(runnerJobId, Is.EqualTo(persistedRunnerJobId));
+        }
+
+        [Test]
+        public void TestRecovery_PlayMode_RecoversMissingRunnerJobIdFromSingleActiveRun()
+        {
+            const string activeRunnerJobId = "runner-playmode-active";
+            var job = CreateTestJob(Guid.NewGuid().ToString("N").Substring(0, 8), "reconnecting", new Dictionary<string, object>());
+            job.metadata["testMode"] = "PlayMode";
+
+            var resolved = AsyncJobService.TryResolveTestRunnerJobIdForRecovery(
+                job,
+                new[] { activeRunnerJobId },
+                out var runnerJobId);
+
+            Assert.That(resolved, Is.True);
+            Assert.That(runnerJobId, Is.EqualTo(activeRunnerJobId));
+        }
+
+        [Test]
+        public void TestRecovery_DoesNotGuessWhenMultipleRunnerJobsAreActive()
+        {
+            var job = CreateTestJob(Guid.NewGuid().ToString("N").Substring(0, 8), "reconnecting", new Dictionary<string, object>());
+            job.metadata["testMode"] = "PlayMode";
+
+            var resolved = AsyncJobService.TryResolveTestRunnerJobIdForRecovery(
+                job,
+                new[] { "runner-a", "runner-b" },
+                out var runnerJobId);
+
+            Assert.That(resolved, Is.False);
+            Assert.That(runnerJobId, Is.Null);
+        }
+
+        [Test]
         public void TestSmokeSkills_RunAsync_ReturnsJob()
         {
             var json = ToJObject(TestSkills.TestSmokeSkills(

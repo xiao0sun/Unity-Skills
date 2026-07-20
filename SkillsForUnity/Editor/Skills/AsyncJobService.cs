@@ -15,6 +15,8 @@ namespace UnitySkills
     internal static class AsyncJobService
     {
         private const int TestStartTimeoutSeconds = 90;
+        private const int TestRecoveryAttachGraceSeconds = 10;
+        private const int TestRecoveryResultTimeoutSeconds = 300;
         private const int MaxConcurrentActiveTestJobs = 1;
 
         private sealed class TestRuntimeContext
@@ -25,6 +27,7 @@ namespace UnitySkills
 
         private sealed class InternalTestRunnerState
         {
+            public string JobId;
             public bool IsRunning;
             public int TaskIndex;
         }
@@ -47,6 +50,7 @@ namespace UnitySkills
             try
             {
                 BatchPersistence.EnsureLoaded();
+                RestorePersistedTestRuntimeContexts();
                 EditorApplication.update += ProcessJobs;
             }
             catch (Exception ex)
@@ -251,6 +255,10 @@ namespace UnitySkills
                 job.metadata["runnerJobId"] = runnerJobId;
                 BatchPersistence.UpsertJob(job);
             }
+            // PlayMode enters a new script domain almost immediately after Execute returns.
+            // Persist the Test Framework job id now so the new domain can reattach callbacks
+            // to the original execution instead of losing the only correlation handle.
+            BatchPersistence.FlushIfDirty();
             return true;
         }
 
@@ -751,6 +759,16 @@ namespace UnitySkills
                     return;
                 }
 
+                if (GetMetadataBool(job, "callbacksReattachedAfterReload", false) &&
+                    DateTimeOffset.UtcNow.ToUnixTimeSeconds() - job.updatedAt > TestRecoveryResultTimeoutSeconds)
+                {
+                    FailJob(job.jobId,
+                        "Unity Test Runner state disappeared before the reattached callback delivered a final result.",
+                        "failed_reload_result_timeout");
+                    CleanupTestRuntime(job.jobId);
+                    return;
+                }
+
                 if (job.status == "running" &&
                     string.Equals(job.currentStage, "starting", StringComparison.OrdinalIgnoreCase) &&
                     DateTimeOffset.UtcNow.ToUnixTimeSeconds() - job.updatedAt > TestStartTimeoutSeconds)
@@ -765,14 +783,27 @@ namespace UnitySkills
             {
                 var testMode = GetMetadataString(job, "testMode", "EditMode");
                 var elapsed = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - job.startedAt;
+                var recoveryWait = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - job.updatedAt;
 
-                // PlayMode tests cannot recover after Domain Reload (Unity limitation)
-                // Also fail if more than 5 minutes have elapsed
+                // Unity Test Framework persists TestJobData and resumes the original execution
+                // after a script-domain reload. Re-register our global callback against that
+                // runner job so PlayMode results keep flowing into the original UnitySkills job.
+                if (TryReattachPersistedTestRuntime(job))
+                    return;
+
+                // Initialization order between packages is not guaranteed. Give the Test
+                // Framework holder a few editor updates to restore its serialized run list.
+                if (recoveryWait < TestRecoveryAttachGraceSeconds)
+                    return;
+
+                // EditMode has a safe restart fallback. PlayMode must not be restarted because
+                // that would execute gameplay tests twice; fail only when the original runner
+                // really cannot be correlated after the grace window.
                 if (string.Equals(testMode, "PlayMode", StringComparison.OrdinalIgnoreCase) || elapsed > 300)
                 {
                     FailJob(job.jobId,
-                        $"Test run ({testMode}) cannot recover after domain reload.",
-                        "failed_reload_unrecoverable");
+                        $"Test run ({testMode}) could not find its persisted Unity Test Runner execution after domain reload.",
+                        "failed_reload_runner_missing");
                     return;
                 }
 
@@ -1107,27 +1138,127 @@ namespace UnitySkills
             return false;
         }
 
-        private static bool TryGetInternalTestRunnerState(string runnerJobId, out InternalTestRunnerState state)
+        private static void RestorePersistedTestRuntimeContexts()
         {
-            state = null;
-            if (string.IsNullOrWhiteSpace(runnerJobId))
+            foreach (var job in BatchPersistence.ListJobs(100))
+            {
+                if (job == null ||
+                    !string.Equals(job.kind, "test", StringComparison.OrdinalIgnoreCase) ||
+                    !string.Equals(job.status, "reconnecting", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                TryReattachPersistedTestRuntime(job);
+            }
+        }
+
+        private static bool TryReattachPersistedTestRuntime(BatchJobRecord job)
+        {
+            if (job == null || IsTerminal(job.status))
+                return false;
+            if (TestRuntimeJobs.ContainsKey(job.jobId))
+                return true;
+
+            var activeRunnerStates = GetInternalTestRunnerStates()
+                .Where(state => state.IsRunning)
+                .ToArray();
+            if (!TryResolveTestRunnerJobIdForRecovery(
+                    job,
+                    activeRunnerStates.Select(state => state.JobId),
+                    out var runnerJobId))
+            {
+                return false;
+            }
+
+            var runnerState = activeRunnerStates.FirstOrDefault(state =>
+                string.Equals(state.JobId, runnerJobId, StringComparison.OrdinalIgnoreCase));
+
+            var api = ScriptableObject.CreateInstance<TestRunnerApi>();
+            var callbacks = new TestCallbacks(job.jobId);
+            api.RegisterCallbacks(callbacks);
+            TestRuntimeJobs[job.jobId] = new TestRuntimeContext
+            {
+                Api = api,
+                Callbacks = callbacks
+            };
+
+            job.metadata["runnerJobId"] = runnerJobId;
+            job.metadata["callbacksReattachedAfterReload"] = true;
+            var stage = runnerState == null
+                ? "reattaching_callbacks"
+                : MapInternalTestRunnerStage(runnerState.TaskIndex);
+            var progress = runnerState == null
+                ? Math.Max(job.progress, 5)
+                : MapInternalTestRunnerProgress(runnerState.TaskIndex);
+            Transition(job, "running", stage, progress,
+                "Reattached UnitySkills callbacks to the resumed Unity Test Runner execution.",
+                "test_reload_reattached");
+            BatchPersistence.FlushIfDirty();
+            return true;
+        }
+
+        internal static bool TryResolveTestRunnerJobIdForRecovery(
+            BatchJobRecord job,
+            IEnumerable<string> activeRunnerJobIds,
+            out string runnerJobId)
+        {
+            runnerJobId = null;
+            if (job == null)
                 return false;
 
+            var activeIds = (activeRunnerJobIds ?? Enumerable.Empty<string>())
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var persistedRunnerJobId = GetMetadataString(job, "runnerJobId");
+            if (!string.IsNullOrWhiteSpace(persistedRunnerJobId))
+            {
+                // TestRunnerApi callbacks are global: a new API instance receives results
+                // from an execution started by an old instance. The framework's serialized
+                // run list may not be visible yet during package initialization, so a durable
+                // runner id is sufficient to reattach immediately.
+                runnerJobId = persistedRunnerJobId;
+                return true;
+            }
+
+            // UnitySkills serializes its own test runs, and enforces one active test job.
+            // This fallback repairs jobs created by older versions that did not flush the
+            // Test Framework guid before PlayMode triggered the domain reload.
+            if (activeIds.Length != 1)
+                return false;
+
+            runnerJobId = activeIds[0];
+            return true;
+        }
+
+        private static bool TryGetInternalTestRunnerState(string runnerJobId, out InternalTestRunnerState state)
+        {
+            state = GetInternalTestRunnerStates().FirstOrDefault(candidate =>
+                string.Equals(candidate.JobId, runnerJobId, StringComparison.OrdinalIgnoreCase));
+            return state != null;
+        }
+
+        private static InternalTestRunnerState[] GetInternalTestRunnerStates()
+        {
+            var states = new List<InternalTestRunnerState>();
             try
             {
                 var assembly = typeof(TestRunnerApi).Assembly;
                 var holderType = assembly.GetType("UnityEditor.TestTools.TestRunner.TestRun.TestJobDataHolder");
                 if (holderType == null)
-                    return false;
+                    return states.ToArray();
 
-                var instanceProperty = holderType.GetProperty("instance", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+                var instanceProperty = holderType.GetProperty(
+                    "instance",
+                    BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.FlattenHierarchy);
                 var holder = instanceProperty?.GetValue(null);
                 if (holder == null)
-                    return false;
+                    return states.ToArray();
 
                 var testRunsField = holderType.GetField("TestRuns", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                 if (!(testRunsField?.GetValue(holder) is System.Collections.IEnumerable testRuns))
-                    return false;
+                    return states.ToArray();
 
                 foreach (var testRun in testRuns)
                 {
@@ -1137,26 +1268,26 @@ namespace UnitySkills
                     var testRunType = testRun.GetType();
                     var guidField = testRunType.GetField("guid", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                     var guid = guidField?.GetValue(testRun)?.ToString();
-                    if (!string.Equals(guid, runnerJobId, StringComparison.OrdinalIgnoreCase))
+                    if (string.IsNullOrWhiteSpace(guid))
                         continue;
 
                     var isRunningField = testRunType.GetField("isRunning", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
                     var taskIndexField = testRunType.GetField("taskIndex", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
 
-                    state = new InternalTestRunnerState
+                    states.Add(new InternalTestRunnerState
                     {
+                        JobId = guid,
                         IsRunning = isRunningField != null && Convert.ToBoolean(isRunningField.GetValue(testRun)),
                         TaskIndex = taskIndexField != null ? Convert.ToInt32(taskIndexField.GetValue(testRun)) : 0
-                    };
-                    return true;
+                    });
                 }
             }
             catch
             {
-                return false;
+                return states.ToArray();
             }
 
-            return false;
+            return states.ToArray();
         }
 
         private static string MapInternalTestRunnerStage(int taskIndex)
