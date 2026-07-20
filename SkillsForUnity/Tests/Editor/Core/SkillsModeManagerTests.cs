@@ -20,10 +20,10 @@ namespace UnitySkills.Tests.Core
     /// - TryGrantAndReturnArgs (方案 B 一步执行) + ConsumeOneShotBypass
     /// - 老 GrantedSkills EditorPrefs → 新 AllowlistSkills 迁移幂等
     ///
-    /// Side-effects: every test SetUp wipes UnitySkills_* EditorPrefs and resets the
-    /// in-memory grant table + on-disk audit log. Legacy install marker keys are
-    /// cleared but NOT restored — if a developer ran the production package on this
-    /// machine before, the OneTimeSetUp warning lists the keys that get wiped.
+    /// Side-effects: every test temporarily clears the relevant UnitySkills_* EditorPrefs
+    /// and resets the in-memory grant table + on-disk audit log. Persistent preferences
+    /// are snapshotted before each test and restored in TearDown so running the suite does
+    /// not change the Editor's operating mode, allowlist, or legacy install settings.
     /// </summary>
     [TestFixture]
     public class SkillsModeManagerTests
@@ -43,26 +43,166 @@ namespace UnitySkills.Tests.Core
         };
 
         private const string PrefKeyMode = "UnitySkills_OperatingMode";
+        private const string PrefKeyPanelApproval = "UnitySkills_PanelApprovalRequired";
         private const string PrefKeyAllowlist = "UnitySkills_AllowlistSkills";
         private const string PrefKeyMigrationDone = "UnitySkills_AllowlistMigratedFromGranted";
         private const string PrefKeyLegacyGranted = "UnitySkills_GrantedSkills";
 
-        [OneTimeSetUp]
-        public void OneTimeSetUp()
+        private enum EditorPrefValueType
         {
-            var existing = LegacyInstallKeys.Where(EditorPrefs.HasKey).ToList();
-            if (existing.Count > 0)
+            Bool,
+            Int,
+            String,
+        }
+
+        private sealed class EditorPrefSpec
+        {
+            public readonly string Key;
+            public readonly EditorPrefValueType ValueType;
+
+            public EditorPrefSpec(string key, EditorPrefValueType valueType)
             {
-                UnityEngine.Debug.LogWarning(
-                    "[SkillsModeManagerTests] Legacy UnitySkills_* prefs detected. " +
-                    "Tests in this fixture clear them and they will NOT be restored: "
-                    + string.Join(", ", existing));
+                Key = key;
+                ValueType = valueType;
+            }
+
+            public object Read()
+            {
+                switch (ValueType)
+                {
+                    case EditorPrefValueType.Bool: return EditorPrefs.GetBool(Key);
+                    case EditorPrefValueType.Int: return EditorPrefs.GetInt(Key);
+                    case EditorPrefValueType.String: return EditorPrefs.GetString(Key);
+                    default: throw new System.ArgumentOutOfRangeException();
+                }
+            }
+
+            public void Write(object value)
+            {
+                switch (ValueType)
+                {
+                    case EditorPrefValueType.Bool:
+                        EditorPrefs.SetBool(Key, (bool)value);
+                        break;
+                    case EditorPrefValueType.Int:
+                        EditorPrefs.SetInt(Key, (int)value);
+                        break;
+                    case EditorPrefValueType.String:
+                        EditorPrefs.SetString(Key, (string)value);
+                        break;
+                    default:
+                        throw new System.ArgumentOutOfRangeException();
+                }
+            }
+        }
+
+        private sealed class EditorPrefSnapshot
+        {
+            private sealed class Entry
+            {
+                public EditorPrefSpec Spec;
+                public bool Existed;
+                public object Value;
+            }
+
+            private readonly Entry[] _entries;
+
+            private EditorPrefSnapshot(Entry[] entries)
+            {
+                _entries = entries;
+            }
+
+            public static EditorPrefSnapshot Capture(EditorPrefSpec[] specs)
+            {
+                var entries = new Entry[specs.Length];
+                for (var i = 0; i < specs.Length; i++)
+                {
+                    var spec = specs[i];
+                    var existed = EditorPrefs.HasKey(spec.Key);
+                    var entry = new Entry
+                    {
+                        Spec = spec,
+                        Existed = existed,
+                        Value = existed ? spec.Read() : null,
+                    };
+                    entries[i] = entry;
+                }
+
+                return new EditorPrefSnapshot(entries);
+            }
+
+            public void Restore()
+            {
+                foreach (var entry in _entries)
+                {
+                    if (!entry.Existed)
+                    {
+                        EditorPrefs.DeleteKey(entry.Spec.Key);
+                        continue;
+                    }
+
+                    entry.Spec.Write(entry.Value);
+                }
+            }
+
+            public void AssertMatchesCurrent()
+            {
+                foreach (var entry in _entries)
+                {
+                    Assert.AreEqual(entry.Existed, EditorPrefs.HasKey(entry.Spec.Key),
+                        $"EditorPrefs key presence changed: {entry.Spec.Key}");
+                    if (!entry.Existed) continue;
+                    Assert.AreEqual(entry.Value, entry.Spec.Read(),
+                        $"EditorPrefs value changed: {entry.Spec.Key}");
+                }
+            }
+        }
+
+        private static readonly EditorPrefSpec[] PersistentPreferenceSpecs =
+        {
+            new EditorPrefSpec(PrefKeyMode, EditorPrefValueType.String),
+            new EditorPrefSpec(PrefKeyPanelApproval, EditorPrefValueType.Bool),
+            new EditorPrefSpec(PrefKeyAllowlist, EditorPrefValueType.String),
+            new EditorPrefSpec(PrefKeyMigrationDone, EditorPrefValueType.Bool),
+            new EditorPrefSpec(PrefKeyLegacyGranted, EditorPrefValueType.String),
+            new EditorPrefSpec("UnitySkills_RequireConfirmation", EditorPrefValueType.Bool),
+            new EditorPrefSpec("UnitySkills_PreferredPort", EditorPrefValueType.Int),
+            new EditorPrefSpec("UnitySkills_LogLevel", EditorPrefValueType.Int),
+            new EditorPrefSpec("UnitySkills_Language", EditorPrefValueType.Int),
+            new EditorPrefSpec("UnitySkills_RequestTimeoutMinutes", EditorPrefValueType.Int),
+            new EditorPrefSpec("UnitySkills_KeepAliveIntervalSeconds", EditorPrefValueType.Int),
+            new EditorPrefSpec("UnitySkills_AutoInstallPackagesOnStartup", EditorPrefValueType.Bool),
+        };
+
+        private EditorPrefSnapshot _fixturePreferences;
+        private EditorPrefSnapshot _persistentPreferences;
+
+        [OneTimeSetUp]
+        public void CaptureFixturePreferences()
+        {
+            _fixturePreferences = EditorPrefSnapshot.Capture(PersistentPreferenceSpecs);
+        }
+
+        [OneTimeTearDown]
+        public void VerifyAndRestoreFixturePreferences()
+        {
+            try
+            {
+                _fixturePreferences?.AssertMatchesCurrent();
+            }
+            finally
+            {
+                _fixturePreferences?.Restore();
+                SkillsModeManager.ReloadPersistentStateForTests();
+                _fixturePreferences = null;
             }
         }
 
         [SetUp]
         public void SetUp()
         {
+            _persistentPreferences = EditorPrefSnapshot.Capture(PersistentPreferenceSpecs);
+
             // Force IsExistingInstall() == false so the default mode getter returns
             // Auto unless a test explicitly opts back into "old install" state.
             foreach (var k in LegacyInstallKeys) EditorPrefs.DeleteKey(k);
@@ -73,9 +213,18 @@ namespace UnitySkills.Tests.Core
         [TearDown]
         public void TearDown()
         {
-            foreach (var k in LegacyInstallKeys) EditorPrefs.DeleteKey(k);
-            SkillsModeManager.ResetForTests();
-            SkillsAuditLog.ResetForTests();
+            try
+            {
+                foreach (var k in LegacyInstallKeys) EditorPrefs.DeleteKey(k);
+                SkillsModeManager.ResetForTests();
+                SkillsAuditLog.ResetForTests();
+            }
+            finally
+            {
+                _persistentPreferences?.Restore();
+                SkillsModeManager.ReloadPersistentStateForTests();
+                _persistentPreferences = null;
+            }
         }
 
         // ─────────────────────────────────────────────────────────────────

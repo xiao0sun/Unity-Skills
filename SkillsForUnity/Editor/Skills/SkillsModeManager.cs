@@ -588,6 +588,22 @@ namespace UnitySkills
             RaiseChanged();
         }
 
+        /// <summary>
+        /// Test-only: discard transient caches after a fixture restores the real EditorPrefs
+        /// snapshot. Unlike <see cref="ResetForTests"/>, this method never writes or deletes
+        /// persistent user settings.
+        /// </summary>
+        internal static void ReloadPersistentStateForTests()
+        {
+            _grants.Clear();
+            lock (_allowlistLock)
+            {
+                _allowlist = null;
+            }
+            _currentOneShotSkill = null;
+            RaiseChanged();
+        }
+
         /// <summary>Look up a pending grant entry by token (internal — used by SkillRouter to surface argsSummary).</summary>
         internal static GrantRequest PeekPending(string token)
         {
