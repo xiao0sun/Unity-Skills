@@ -24,10 +24,18 @@ namespace UnitySkills.Tests.Core
     /// and resets the in-memory grant table + on-disk audit log. Persistent preferences
     /// are snapshotted before each test and restored in TearDown so running the suite does
     /// not change the Editor's operating mode, allowlist, or legacy install settings.
+    /// Existing-install behavior is additionally simulated with
+    /// SkillsModeManager.ExistingInstallOverrideForTests so it never leaks between tests.
     /// </summary>
     [TestFixture]
     public class SkillsModeManagerTests
     {
+        private const string PrefKeyMode = "UnitySkills_OperatingMode";
+        private const string PrefKeyPanelApproval = "UnitySkills_PanelApprovalRequired";
+        private const string PrefKeyAllowlist = "UnitySkills_AllowlistSkills";
+        private const string PrefKeyMigrationDone = "UnitySkills_AllowlistMigratedFromGranted";
+        private const string PrefKeyLegacyGranted = "UnitySkills_GrantedSkills";
+
         // Pre-v1.9 EditorPrefs keys that mark an "existing install" (plan section 10
         // / SkillsModeManager.IsExistingInstall). Presence of any of these flips the
         // default mode from Auto (fresh install) to Bypass (upgrade-compat).
@@ -41,12 +49,6 @@ namespace UnitySkills.Tests.Core
             "UnitySkills_KeepAliveIntervalSeconds",
             "UnitySkills_AutoInstallPackagesOnStartup",
         };
-
-        private const string PrefKeyMode = "UnitySkills_OperatingMode";
-        private const string PrefKeyPanelApproval = "UnitySkills_PanelApprovalRequired";
-        private const string PrefKeyAllowlist = "UnitySkills_AllowlistSkills";
-        private const string PrefKeyMigrationDone = "UnitySkills_AllowlistMigratedFromGranted";
-        private const string PrefKeyLegacyGranted = "UnitySkills_GrantedSkills";
 
         private enum EditorPrefValueType
         {
@@ -193,6 +195,7 @@ namespace UnitySkills.Tests.Core
             finally
             {
                 _fixturePreferences?.Restore();
+                SkillsModeManager.ExistingInstallOverrideForTests = null;
                 SkillsModeManager.ReloadPersistentStateForTests();
                 _fixturePreferences = null;
             }
@@ -207,6 +210,7 @@ namespace UnitySkills.Tests.Core
             // Auto unless a test explicitly opts back into "old install" state.
             foreach (var k in LegacyInstallKeys) EditorPrefs.DeleteKey(k);
             SkillsModeManager.ResetForTests();
+            SkillsModeManager.ExistingInstallOverrideForTests = false;
             SkillsAuditLog.ResetForTests();
         }
 
@@ -222,9 +226,22 @@ namespace UnitySkills.Tests.Core
             finally
             {
                 _persistentPreferences?.Restore();
+                SkillsModeManager.ExistingInstallOverrideForTests = null;
                 SkillsModeManager.ReloadPersistentStateForTests();
                 _persistentPreferences = null;
             }
+        }
+
+        private static void RestoreString(string key, bool existed, string value)
+        {
+            if (existed) EditorPrefs.SetString(key, value);
+            else EditorPrefs.DeleteKey(key);
+        }
+
+        private static void RestoreBool(string key, bool existed, bool value)
+        {
+            if (existed) EditorPrefs.SetBool(key, value);
+            else EditorPrefs.DeleteKey(key);
         }
 
         // ─────────────────────────────────────────────────────────────────
@@ -601,9 +618,7 @@ namespace UnitySkills.Tests.Core
         [Test]
         public void CurrentMode_OldInstall_NoExplicitMode_DefaultsToBypass()
         {
-            // SetUp already cleared every legacy + mode key. Plant just one legacy
-            // marker — IsExistingInstall uses HasKey only, value doesn't matter.
-            EditorPrefs.SetInt("UnitySkills_PreferredPort", 12345);
+            SkillsModeManager.ExistingInstallOverrideForTests = true;
 
             Assert.AreEqual(SkillsOperatingMode.Bypass, SkillsModeManager.CurrentMode);
             // Getter must NOT write PrefKeyMode as a side effect — that would prevent

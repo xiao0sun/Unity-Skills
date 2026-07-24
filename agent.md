@@ -3,11 +3,11 @@
 > **本文件面向"开发这个项目的 AI"**，非"调用该项目 REST API 的 AI"。
 > 后者请读 `SkillsForUnity/unity-skills~/SKILL.md`。
 
-通过 REST API 让 AI 直接控制 Unity 编辑器。738 个 REST Skills + 23 个 Advisory 模块。
+通过 REST API 让 AI 直接控制 Unity 编辑器。740 个 REST Skills + 23 个 Advisory 模块。
 
 | 项目 | 值 |
 |------|----|
-| 版本 | 2.2.0 |
+| 版本 | 2.2.1 |
 | 技术栈 | C# (Unity Editor Plugin) + Python (Client) |
 | Unity | 2022.3+（已验证 Unity 6 / 6000.x） |
 | 协议 | MIT |
@@ -24,7 +24,7 @@ AI Agent ──HTTP──▶ unity_skills.py ──POST localhost:8090-8100─�
                                                         │
                                               SkillRouter (反射发现 [UnitySkill])
                                                         │
-                                              52 个 *Skills.cs (738 Skills)
+                                              52 个 *Skills.cs (740 Skills)
                                                         │
                                          WorkflowManager (持久化撤销/回滚)
                                          RegistryService (多实例发现)
@@ -57,7 +57,7 @@ Unity-Skills/
 │   │   │   ├── GameObjectFinder.cs       # 统一查找器 (name/instanceId/path)
 │   │   │   ├── BatchExecutor.cs          # 批量操作框架
 │   │   │   ├── SkillInstaller.cs         # AI 工具一键安装
-│   │   │   └── *Skills.cs × 52           # 功能模块 (共 738 Skills)
+│   │   │   └── *Skills.cs × 52           # 功能模块 (共 740 Skills)
 │   │   └── UI/                           # Editor UI (USS + UXML + EditorWindow)
 │   │       ├── UnitySkillsWindow.{cs,uxml,uss}    # 主窗口
 │   │       ├── AuditLogWindow.{uxml,uss}          # 审计窗口
@@ -112,7 +112,7 @@ public static object SkillName(string name, float x = 0f) { ... }
 - **NeverInSemi 自动判定**：`SkillOperation.Delete` / `MayEnterPlayMode=true` / `MayTriggerReload=true` / `RiskLevel="high"` 会自动判为 Approval 模式必拦——元数据决定一切，不要靠运行时另写拦截逻辑。
 - **错误返回用 `SkillErrorResponse.Build(code, msg, ...)` 而非抛异常**：业务错误必须构造结构化响应（含 `errorCode` / `suggestedFixes` / `retryStrategy`）。仅当错误真的属于"框架级未知异常"时才向上抛由 SkillRouter 包装。
 - **参数校验链**：用 `Validate.Required(x, "x") is object err` 模式，提前 return err。
-- **撤销 / 工作流快照**：写型操作必须 `Undo.RegisterCreatedObjectUndo` / `Undo.RegisterCompleteObjectUndo`；`TracksWorkflow=true` 的 skill 内调用 `WorkflowManager.SnapshotXxx(...)`。
+- **撤销 / 工作流快照**：写型操作必须 `Undo.RegisterCreatedObjectUndo` / `Undo.RegisterCompleteObjectUndo`；`TracksWorkflow=true` 的 skill 内调用 `WorkflowManager.SnapshotXxx(...)`。快照分级为 `SnapshotType`（Modified/Created/Deleted/Moved/Setting）：新建存创建态、移动保留完整操作顺序、删除完整备份文件/非空目录/场景层级、设置类经 `WorkflowSettingRestorerRegistry` 注册回退。主文件与 `.meta` 独立内容寻址（`fileHash` / `metaFileHash`），base64 不再内嵌进 `workflow_history.json`（schemaVersion 4）；自动清理不得删除仍被历史引用的 blob，限制值 `0` 表示不限制。
 - **批处理范式**：成对提供 `xxx` 和 `xxx_batch`（后者用 `BatchExecutor.Execute<TItem>(items, perItem, idFn)`）。
 
 ### 3. 公共辅助层（禁止重写）
@@ -168,19 +168,19 @@ public static object SkillName(string name, float x = 0f) { ... }
 
 ---
 
-## Skills 模块 (52 个功能模块, 738 Skills)
+## Skills 模块 (52 个功能模块, 740 Skills)
 
 | 模块 | 数量 | 模块 | 数量 | 模块 | 数量 |
 |------|:----:|------|:----:|------|:----:|
 | YooAsset* | 40 | Cinemachine | 34 | Netcode* | 33 |
 | UI | 29 | UIToolkit | 25 | ShaderGraph | 23 |
-| Workflow | 23 | ProBuilder* | 22 | XR* | 22 |
+| Workflow | 24 | ProBuilder* | 22 | XR* | 22 |
 | Batch | 22 | DOTween* | 21 | Material | 21 |
 | PrimeTween* | 5 | PostProcess† | 10 | GameObject | 19 |
 | Perception | 18 | Volume† | 9 | URP† | 7 |
 | Decal† | 7 | Test | 13 | Editor | 14 |
 | Script | 12 | Timeline | 12 | Physics | 12 |
-| Asset | 11 | AssetImport | 11 | Camera | 12 |
+| Asset | 12 | AssetImport | 11 | Camera | 12 |
 | Package | 11 | Prefab | 11 | Shader | 11 |
 | Graphics | 11 | Animator | 10 | Audio | 10 |
 | Cleaner | 10 | Component | 14 | Console | 10 |

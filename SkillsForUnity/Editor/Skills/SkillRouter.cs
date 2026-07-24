@@ -44,6 +44,9 @@ namespace UnitySkills
             public MethodInfo Method;
             public ParameterInfo[] Parameters;
             public bool TracksWorkflow;
+            // True when the skill captures its own workflow snapshots; skips the generic
+            // pre-execution snapshot in TrySnapshotTargetsFromArgs to avoid redundant backups.
+            public bool SkipAutoPresnapshot;
             // Intent-level metadata (v1.7)
             public SkillCategory Category;
             public SkillOperation Operation;
@@ -73,6 +76,12 @@ namespace UnitySkills
 
         private static volatile Dictionary<string, SkillInfo> _skills;
         private static volatile bool _initialized;
+
+        // Dirty tracking for manual (workflow_begin_task) recording sessions: the (taskId,
+        // snapshotCount) captured at the last SaveHistory. Lets each tracked skill skip a
+        // redundant save when nothing was snapshotted since the previous save.
+        private static string _lastSavedTaskId;
+        private static int _lastSavedSnapshotCount = -1;
         private static string _cachedManifest;
         private static string _cachedSchema;
         private static Dictionary<string, List<SkillInfo>> _outputIndex;
@@ -367,6 +376,7 @@ namespace UnitySkills
                             Method = method,
                             Parameters = parameters,
                             TracksWorkflow = attr.TracksWorkflow,
+                            SkipAutoPresnapshot = attr.SkipAutoPresnapshot,
                             Category = attr.Category,
                             Operation = attr.Operation,
                             Tags = attr.Tags,
@@ -479,8 +489,12 @@ namespace UnitySkills
             }
 
             bool autoStartedWorkflow = false;
+            // EndTask() persistence cost for the auto-workflow path, attached to the success
+            // envelope as workflowEndMs. Null on every other path so output stays byte-identical.
+            long? workflowEndMs = null;
             var wrapWithUndoTransaction = !skill.ReadOnly && !_transactionlessSkills.Contains(name);
             int undoGroup = -1;
+            int workflowSnapshotCountBefore = WorkflowManager.CurrentTask?.snapshots?.Count ?? 0;
             // Attribute changes made by this call (including frame-end ObjectChangeEvents) to
             // REST in the persistent editor-change journal.
             EditorChangeTrackerService.BeginRestExecution();
@@ -579,8 +593,10 @@ namespace UnitySkills
                     autoStartedWorkflow = true;
                 }
 
-                // Auto-snapshot target objects BEFORE skill execution for rollback support
-                if (WorkflowManager.IsRecording)
+                // Auto-snapshot target objects BEFORE skill execution for rollback support.
+                // Skills that manage their own purpose-built snapshots opt out via
+                // SkipAutoPresnapshot to avoid producing a redundant generic backup.
+                if (WorkflowManager.IsRecording && !skill.SkipAutoPresnapshot)
                 {
                     TrySnapshotTargetsFromArgs(args);
                 }
@@ -613,7 +629,9 @@ namespace UnitySkills
                             // Nothing was invoked yet; unwind the bookkeeping opened above,
                             // mirroring the catch handlers below.
                             if (autoStartedWorkflow && WorkflowManager.IsRecording)
-                                WorkflowManager.EndTask();
+                                WorkflowManager.AbortTask();
+                            else if (WorkflowManager.IsRecording)
+                                WorkflowManager.TruncateCurrentTask(workflowSnapshotCountBefore);
                             if (undoGroup >= 0)
                                 UnityEditor.Undo.RevertAllInCurrentGroup();
 
@@ -633,15 +651,40 @@ namespace UnitySkills
                 if (!skill.ReadOnly)
                     UnityEditor.Undo.FlushUndoRecordObjects();
 
+                if (SkillResultHelper.TryGetError(result, out string errorText))
+                {
+                    if (autoStartedWorkflow && WorkflowManager.IsRecording)
+                        WorkflowManager.AbortTask();
+                    else if (WorkflowManager.IsRecording)
+                        WorkflowManager.TruncateCurrentTask(workflowSnapshotCountBefore);
+
+                    if (undoGroup >= 0)
+                        UnityEditor.Undo.RevertAllInCurrentGroup();
+
+                    return SkillErrorResponse.Build(
+                        SkillErrorCode.SkillError,
+                        errorText,
+                        skill: name,
+                        retryStrategy: SkillErrorResponse.Abort);
+                }
+
                 // ========== AUTO WORKFLOW END ==========
                 if (autoStartedWorkflow)
                 {
+                    // EndTask holds sole persistence responsibility for the auto-workflow path
+                    // (it calls SaveHistory internally). Measure that cost for telemetry.
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
                     WorkflowManager.EndTask();
-                    WorkflowManager.SaveHistory();
+                    sw.Stop();
+                    workflowEndMs = sw.ElapsedMilliseconds;
                 }
                 else if (WorkflowManager.IsRecording)
                 {
-                    WorkflowManager.SaveHistory();
+                    // Manual (workflow_begin_task) session: every tracked skill would otherwise
+                    // save on each call. Skip the save when no new snapshot landed since the last
+                    // one for the current task.
+                    if (ManualSessionIsDirty(WorkflowManager.CurrentTask))
+                        WorkflowManager.SaveHistory();
                 }
                 // ========================================
 
@@ -655,16 +698,6 @@ namespace UnitySkills
                     // explicitly so editor_undo/editor_redo target the completed mutation.
                     if (!skill.ReadOnly)
                         UnityEditor.Undo.IncrementCurrentGroup();
-                }
-
-                // Return a normalized error payload when a skill reports a logical failure.
-                if (SkillResultHelper.TryGetError(result, out string errorText))
-                {
-                    return SkillErrorResponse.Build(
-                        SkillErrorCode.SkillError,
-                        errorText,
-                        skill: name,
-                        retryStrategy: SkillErrorResponse.Abort);
                 }
 
                 // Semantic diff post-capture + compare (?diff=1). Attached to the success envelope
@@ -696,18 +729,20 @@ namespace UnitySkills
                             ["hint"] = "Result is truncated. To see all items, pass 'verbose=true' parameter."
                         };
 
-                        return SerializeSuccessResponse(wrapper, sceneDiff);
+                        return SerializeSuccessResponse(wrapper, sceneDiff, workflowEndMs);
                     }
                 }
 
                 // Full Mode (verbose=true OR small result) - Return original result as is
-                return SerializeSuccessResponse(result, sceneDiff);
+                return SerializeSuccessResponse(result, sceneDiff, workflowEndMs);
             }
             catch (TargetInvocationException ex)
             {
                 // Clean up auto-started workflow on error
                 if (autoStartedWorkflow && WorkflowManager.IsRecording)
-                    WorkflowManager.EndTask();
+                    WorkflowManager.AbortTask();
+                else if (WorkflowManager.IsRecording)
+                    WorkflowManager.TruncateCurrentTask(workflowSnapshotCountBefore);
 
                 if (undoGroup >= 0)
                 {
@@ -740,7 +775,9 @@ namespace UnitySkills
             {
                 // Clean up auto-started workflow on error
                 if (autoStartedWorkflow && WorkflowManager.IsRecording)
-                    WorkflowManager.EndTask();
+                    WorkflowManager.AbortTask();
+                else if (WorkflowManager.IsRecording)
+                    WorkflowManager.TruncateCurrentTask(workflowSnapshotCountBefore);
 
                 if (undoGroup >= 0)
                 {
@@ -843,7 +880,7 @@ namespace UnitySkills
             }
         }
 
-        private static string SerializeSuccessResponse(object result, JToken sceneDiff = null)
+        private static string SerializeSuccessResponse(object result, JToken sceneDiff = null, long? workflowEndMs = null)
         {
             var jsonResult = NormalizeSuccessResult(result);
 
@@ -859,23 +896,28 @@ namespace UnitySkills
                         if (notice != null)
                         {
                             obj["serverAvailability"] = JToken.FromObject(notice);
-                            return BuildSuccessEnvelope(obj, sceneDiff);
+                            return BuildSuccessEnvelope(obj, sceneDiff, workflowEndMs);
                         }
                     }
                 }
                 catch { }
             }
 
-            return BuildSuccessEnvelope(jsonResult, sceneDiff);
+            return BuildSuccessEnvelope(jsonResult, sceneDiff, workflowEndMs);
         }
 
-        // Serializes the success envelope. sceneDiff (?diff=1) is appended as a top-level field
-        // only when non-null; the null path is byte-identical to the pre-diff output.
-        private static string BuildSuccessEnvelope(JToken result, JToken sceneDiff)
+        // Serializes the success envelope. sceneDiff (?diff=1) and workflowEndMs (auto-workflow
+        // EndTask persistence cost, ms) are each appended as top-level fields only when present;
+        // when both are absent the output is byte-identical to the pre-diff envelope.
+        private static string BuildSuccessEnvelope(JToken result, JToken sceneDiff, long? workflowEndMs = null)
         {
-            if (sceneDiff == null)
+            if (sceneDiff == null && workflowEndMs == null)
                 return JsonConvert.SerializeObject(new { status = "success", result }, _jsonSettings);
-            return JsonConvert.SerializeObject(new { status = "success", result, sceneDiff }, _jsonSettings);
+            if (workflowEndMs == null)
+                return JsonConvert.SerializeObject(new { status = "success", result, sceneDiff }, _jsonSettings);
+            if (sceneDiff == null)
+                return JsonConvert.SerializeObject(new { status = "success", result, workflowEndMs = workflowEndMs.Value }, _jsonSettings);
+            return JsonConvert.SerializeObject(new { status = "success", result, sceneDiff, workflowEndMs = workflowEndMs.Value }, _jsonSettings);
         }
 
         // Builds the sceneDiff payload for a successful ?diff=1 execution. Read-only skills report
@@ -1111,13 +1153,18 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// A parameter is truly required only if it has no default value and cannot accept null
-        /// (non-nullable value type). Reference types silently receive null when omitted.
+        /// Explicit same-name RequiresInput metadata overrides an optional CLR default. Otherwise,
+        /// a parameter is required only when it has no default and cannot accept null.
         /// </summary>
-        private static bool IsParameterRequired(ParameterInfo p)
+        private static bool IsParameterRequired(SkillInfo skill, ParameterInfo p)
         {
+            if (skill?.RequiresInput?.Any(required =>
+                    string.Equals(required, p.Name, StringComparison.OrdinalIgnoreCase)) == true)
+                return true;
             if (p.HasDefaultValue) return false;
-            return p.ParameterType.IsValueType && Nullable.GetUnderlyingType(p.ParameterType) == null;
+            if (p.ParameterType.IsValueType && Nullable.GetUnderlyingType(p.ParameterType) == null)
+                return true;
+            return false;
         }
 
         private static string[] FormatOperation(SkillOperation op)
@@ -1271,7 +1318,7 @@ namespace UnitySkills
             {
                 name = p.Name,
                 type = GetJsonType(p.ParameterType),
-                required = IsParameterRequired(p),
+                required = IsParameterRequired(skill, p),
                 defaultValue = p.HasDefaultValue ? p.DefaultValue?.ToString() : null
             }).ToList();
 
@@ -1707,24 +1754,24 @@ namespace UnitySkills
                         validation.TypeErrors.Add(new { parameter = p.Name, expectedType = GetJsonType(p.ParameterType), error = ex.Message });
                     }
                 }
+                else if (IsParameterRequired(skill, p))
+                {
+                    validation.MissingParams.Add(p.Name);
+                }
                 else if (p.HasDefaultValue)
                 {
                     invoke[i] = p.DefaultValue;
                 }
-                else if (!IsParameterRequired(p))
-                {
-                    invoke[i] = null;
-                }
                 else
                 {
-                    validation.MissingParams.Add(p.Name);
+                    invoke[i] = null;
                 }
 
                 validation.ParameterDetails.Add(new
                 {
                     name = p.Name,
                     type = GetJsonType(p.ParameterType),
-                    required = IsParameterRequired(p),
+                    required = IsParameterRequired(skill, p),
                     provided,
                     defaultValue = p.HasDefaultValue ? p.DefaultValue?.ToString() : null
                 });
@@ -2292,6 +2339,27 @@ namespace UnitySkills
         /// Target locating is delegated to <see cref="CollectTargetsFromArgs"/> so the semantic-diff
         /// pre-capture reuses the exact same object set, order and best-effort semantics.
         /// </summary>
+        /// <summary>
+        /// Returns true when the current manual (workflow_begin_task) recording session has
+        /// something new to persist since the last SaveHistory — i.e. a different task is active,
+        /// or the active task gained snapshots. Advances the saved marker whenever it reports true
+        /// so the next call compares against this save point. Best-effort: on any anomaly (null
+        /// task) it defaults to saving so we never silently drop history.
+        /// </summary>
+        private static bool ManualSessionIsDirty(WorkflowTask currentTask)
+        {
+            if (currentTask == null)
+                return true; // shouldn't happen while IsRecording; save defensively
+
+            int count = currentTask.snapshots?.Count ?? 0;
+            if (currentTask.id == _lastSavedTaskId && count == _lastSavedSnapshotCount)
+                return false;
+
+            _lastSavedTaskId = currentTask.id;
+            _lastSavedSnapshotCount = count;
+            return true;
+        }
+
         private static void TrySnapshotTargetsFromArgs(JObject args)
         {
             try

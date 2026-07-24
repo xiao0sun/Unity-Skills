@@ -111,7 +111,8 @@ namespace UnitySkills
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
 
-            if (File.Exists(filePath))
+            bool overwriting = File.Exists(filePath);
+            if (overwriting)
             {
                 var existing = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(filePath);
                 if (existing != null) WorkflowManager.SnapshotObject(existing);
@@ -119,6 +120,13 @@ namespace UnitySkills
 
             File.WriteAllText(filePath, content, SkillsCommon.Utf8NoBom);
             AssetDatabase.ImportAsset(filePath);
+
+            // New files get a Created snapshot (undo = delete) so they are as reversible as overwrites.
+            if (!overwriting)
+            {
+                var created = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(filePath);
+                if (created != null) WorkflowManager.SnapshotCreatedAsset(created);
+            }
 
             return new { success = true, path = filePath, lines = content.Split('\n').Length };
         }
@@ -128,17 +136,15 @@ namespace UnitySkills
             Tags = new[] { "delete", "uss", "uxml", "file" },
             Outputs = new[] { "deleted" },
             RequiresInput = new[] { "filePath" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, SkipAutoPresnapshot = true)]
         public static object UitkDeleteFile(string filePath)
         {
             if (Validate.SafePath(filePath, "filePath", isDelete: true) is object pathErr) return pathErr;
             if (!File.Exists(filePath))
                 return new { error = $"File not found: {filePath}" };
 
-            var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(filePath);
-            if (asset != null) WorkflowManager.SnapshotObject(asset);
-
-            AssetDatabase.DeleteAsset(filePath);
+            if (!WorkflowManager.DeleteAssetToTrash(filePath))
+                return new { error = $"Failed to delete file: {filePath}" };
             return new { success = true, deleted = filePath };
         }
 
