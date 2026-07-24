@@ -30,19 +30,12 @@ namespace UnitySkills.Tests.Core
         [Test]
         public void CustomFont_ContainsEveryFixedUiCharacter()
         {
-#if UNITY_6000_0_OR_NEWER
             var font = AssetDatabase.LoadAssetAtPath<Font>(UISkillsFont.TtfPath);
             Assert.That(font, Is.Not.Null);
-#else
-            var fontAsset = AssetDatabase.LoadAssetAtPath<FontAsset>(UISkillsFont.FontAssetPath);
-#endif
+
             var characters = UISkillsFontAssetBaker.CollectUiCharacters();
             var missing = characters
-#if UNITY_6000_0_OR_NEWER
                 .Where(value => !font.HasCharacter(value))
-#else
-                .Where(value => !fontAsset.HasCharacter(value, false, false))
-#endif
                 .Distinct()
                 .ToArray();
 
@@ -54,24 +47,22 @@ namespace UnitySkills.Tests.Core
         [Test]
         public void Apply_UsesVersionCompatibleCustomFontAndIsIdempotent()
         {
-#if UNITY_6000_0_OR_NEWER
             var expected = AssetDatabase.LoadAssetAtPath<Font>(UISkillsFont.TtfPath);
-#else
-            var expected = AssetDatabase.LoadAssetAtPath<FontAsset>(UISkillsFont.FontAssetPath);
-#endif
             var root = new VisualElement();
             root.style.unityFontDefinition = new StyleFontDefinition(StyleKeyword.Null);
 
             UISkillsFont.Apply(root);
             UISkillsFont.Apply(root);
 
-            Assert.That(root.style.unityFont.keyword, Is.EqualTo(StyleKeyword.Null));
 #if UNITY_6000_0_OR_NEWER
+            Assert.That(root.style.unityFont.keyword, Is.EqualTo(StyleKeyword.Null));
             Assert.That(root.style.unityFontDefinition.value.font, Is.SameAs(expected));
             Assert.That(root.style.unityFontDefinition.value.fontAsset, Is.Null);
 #else
-            Assert.That(root.style.unityFontDefinition.value.fontAsset, Is.SameAs(expected));
-            Assert.That(root.style.unityFontDefinition.value.font, Is.Null);
+            // 2022 binds the dynamic Font directly so glyphs rasterize at target pixel
+            // size (crisp on HiDPI); the definition must stay cleared to not override it.
+            Assert.That(root.style.unityFontDefinition.keyword, Is.EqualTo(StyleKeyword.Null));
+            Assert.That(root.style.unityFont.value, Is.SameAs(expected));
 #endif
         }
 
@@ -81,11 +72,7 @@ namespace UnitySkills.Tests.Core
             var root = new VisualElement();
             UISkillsFont.Apply(root);
 
-#if UNITY_6000_0_OR_NEWER
             UISkillsFont.Apply(root, (Font)null);
-#else
-            UISkillsFont.Apply(root, (FontAsset)null);
-#endif
 
             Assert.That(root.style.unityFont.keyword, Is.EqualTo(StyleKeyword.Null));
             Assert.That(root.style.unityFontDefinition.keyword, Is.EqualTo(StyleKeyword.Null));
@@ -95,18 +82,16 @@ namespace UnitySkills.Tests.Core
 
 #if !UNITY_6000_0_OR_NEWER
         [Test]
-        public void AppliedFontAsset_SurvivesImmediateUnusedAssetCleanup()
+        public void AppliedFont_SurvivesImmediateUnusedAssetCleanup()
         {
             var root = new VisualElement();
             UISkillsFont.Apply(root);
 
             EditorUtility.UnloadUnusedAssetsImmediate();
 
-            var fontAsset = root.style.unityFontDefinition.value.fontAsset;
-            Assert.That(fontAsset, Is.Not.Null);
-            Assert.That(fontAsset.material, Is.Not.Null);
-            Assert.That(fontAsset.atlasTextures[0], Is.Not.Null);
-            Assert.That(fontAsset.material.mainTexture, Is.SameAs(fontAsset.atlasTextures[0]));
+            var font = root.style.unityFont.value;
+            Assert.That((bool)font, Is.True,
+                "Bound dynamic Font must survive an immediate unused-asset sweep");
         }
 #endif
 

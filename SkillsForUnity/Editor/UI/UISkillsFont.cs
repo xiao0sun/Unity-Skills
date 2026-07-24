@@ -8,9 +8,12 @@ namespace UnitySkills
     /// <summary>
     /// Applies the package's CJK font to UnitySkills editor windows.
     ///
-    /// Unity 6's Advanced Text Generator requires a dynamic font backed by the source
-    /// Font. Unity 2022 instead uses the pre-baked, persistent FontAsset because it can
-    /// unload runtime-created atlas resources while TextElement meshes still use them.
+    /// Unity 6's Advanced Text Generator requires a FontDefinition backed by the source
+    /// Font. Unity 2022 binds the source Font directly via unityFont instead: runtime
+    /// FontAssets can lose their atlas material while TextElement meshes still use them,
+    /// and the pre-baked static FontAsset (32pt sampling, low SDF padding) renders
+    /// visibly soft on HiDPI displays, while the dynamic Font path rasterizes glyphs at
+    /// the exact target pixel size and stays crisp.
     /// </summary>
     [InitializeOnLoad]
     internal static class UISkillsFont
@@ -20,11 +23,7 @@ namespace UnitySkills
         internal const string FontAssetPath =
             "Packages/com.besty.unity-skills/Editor/UI/Fonts/UnitySkillsCN-UI.asset";
 
-#if UNITY_6000_0_OR_NEWER
         private static Font _cjkFont;
-#else
-        private static FontAsset _cjkFont;
-#endif
         private static bool _warned;
 
         static UISkillsFont()
@@ -32,7 +31,6 @@ namespace UnitySkills
             EditorApplication.delayCall += ReapplyToOpenWindows;
         }
 
-#if UNITY_6000_0_OR_NEWER
         private static Font GetFont()
         {
             if (_cjkFont != null)
@@ -44,25 +42,6 @@ namespace UnitySkills
 
             return _cjkFont;
         }
-#else
-        private static FontAsset GetFontAsset()
-        {
-            if (_cjkFont != null)
-                return _cjkFont;
-
-            var candidate = AssetDatabase.LoadAssetAtPath<FontAsset>(FontAssetPath);
-            if (!IsPersistentAndComplete(candidate))
-            {
-                if (!_warned)
-                    WarnOnce(
-                        $"Pre-baked CJK FontAsset is missing or incomplete; using editor default: {FontAssetPath}");
-                return null;
-            }
-
-            _cjkFont = candidate;
-            return _cjkFont;
-        }
-#endif
 
         private static void WarnOnce(string message)
         {
@@ -112,36 +91,28 @@ namespace UnitySkills
             if (root == null)
                 return;
 
-#if UNITY_6000_0_OR_NEWER
             Apply(root, GetFont());
-#else
-            Apply(root, GetFontAsset());
-#endif
         }
 
-#if UNITY_6000_0_OR_NEWER
         internal static void Apply(VisualElement root, Font font)
         {
             if (root == null)
                 return;
 
+#if UNITY_6000_0_OR_NEWER
             root.style.unityFont = new StyleFont(StyleKeyword.Null);
             root.style.unityFontDefinition = font == null
                 ? new StyleFontDefinition(StyleKeyword.Null)
                 : new StyleFontDefinition(FontDefinition.FromFont(font));
-        }
 #else
-        internal static void Apply(VisualElement root, FontAsset fontAsset)
-        {
-            if (root == null)
-                return;
-
-            root.style.unityFont = new StyleFont(StyleKeyword.Null);
-            root.style.unityFontDefinition = fontAsset == null
-                ? new StyleFontDefinition(StyleKeyword.Null)
-                : new StyleFontDefinition(fontAsset);
-        }
+            // Direct dynamic-font binding: crisp at any DPI. unityFontDefinition must be
+            // cleared or it would take precedence over unityFont.
+            root.style.unityFontDefinition = new StyleFontDefinition(StyleKeyword.Null);
+            root.style.unityFont = font == null
+                ? new StyleFont(StyleKeyword.Null)
+                : new StyleFont(font);
 #endif
+        }
     }
 }
 
