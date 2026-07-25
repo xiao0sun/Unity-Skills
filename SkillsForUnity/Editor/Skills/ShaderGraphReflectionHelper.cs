@@ -2060,6 +2060,12 @@ namespace UnitySkills
                         return false;
                     InvokeNodeUpdate(node);
                     return true;
+                case "ExponentialNode":
+                    // ShaderGraph 14 的 ExponentialNode 用 m_ExponentialBase 存放 BaseE / Base2
+                    if (!TrySetEnumMember(node, "m_ExponentialBase", settingsObject["base"]?.ToString(), out error))
+                        return false;
+                    InvokeNodeUpdate(node);
+                    return true;
                 default:
                     error = $"Node settings are not supported for '{descriptor.NodeType}'";
                     return false;
