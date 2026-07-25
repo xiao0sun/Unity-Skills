@@ -1937,6 +1937,58 @@ namespace UnitySkills
             }
         }
 
+        /// <summary>
+        /// 把常量节点的 m_Value 推回它的输入槽。
+        ///
+        /// ShaderGraph 的 Vector1/2/3/4Node 把实际取值存在各自的输入槽里；节点上的
+        /// m_Value 只在构造时用来初始化槽（见 Vector1Node.UpdateNodeAfterDeserialization
+        /// 里的 AddSlot(..., m_Value)）。代码生成与反序列化读的都是槽，因此只写 m_Value
+        /// 不会影响编译结果——图上看着是对的，编译出来仍是旧值，且不报任何错。
+        /// </summary>
+        private static void SyncInputSlotsFromNodeSetting(object node)
+        {
+            if (node == null)
+                return;
+
+            float[] components;
+            switch (node.GetType().Name)
+            {
+                case "Vector1Node":
+                    components = new[] { Convert.ToSingle(GetMemberValue(node, "m_Value"), CultureInfo.InvariantCulture) };
+                    break;
+                case "Vector2Node":
+                {
+                    var value = (Vector2)GetMemberValue(node, "m_Value");
+                    components = new[] { value.x, value.y };
+                    break;
+                }
+                case "Vector3Node":
+                {
+                    var value = (Vector3)GetMemberValue(node, "m_Value");
+                    components = new[] { value.x, value.y, value.z };
+                    break;
+                }
+                case "Vector4Node":
+                {
+                    var value = (Vector4)GetMemberValue(node, "m_Value");
+                    components = new[] { value.x, value.y, value.z, value.w };
+                    break;
+                }
+                default:
+                    return;
+            }
+
+            // 这些节点的输入槽 id 从 1 开始，依次对应 X/Y/Z/W。
+            var slots = GetNodeSlots(node, true);
+            for (var i = 0; i < slots.Length; i++)
+            {
+                var slotId = Convert.ToInt32(GetMemberValue(slots[i], "id"), CultureInfo.InvariantCulture);
+                if (slotId < 1 || slotId > components.Length)
+                    continue;
+                TrySetSlotValue(slots[i], components[slotId - 1], out _);
+            }
+        }
+
         private static void SyncNodeSettingFromInputSlot(object node, int slotId, object slot)
         {
             switch (node.GetType().Name)
@@ -2034,18 +2086,26 @@ namespace UnitySkills
                     return TrySetColorNodeValue(node, settingsObject["value"], out error);
                 case "Vector1Node":
                     SetMemberValue(node, "m_Value", ConvertToFloat(settingsObject["value"]));
+                    // m_Value 只是槽的初始值来源，必须同步推回槽，否则编译结果不变
+                    SyncInputSlotsFromNodeSetting(node);
                     InvokeNodeUpdate(node);
                     return true;
                 case "Vector2Node":
                     SetMemberValue(node, "m_Value", ConvertToVector2(settingsObject["value"]));
+                    // m_Value 只是槽的初始值来源，必须同步推回槽，否则编译结果不变
+                    SyncInputSlotsFromNodeSetting(node);
                     InvokeNodeUpdate(node);
                     return true;
                 case "Vector3Node":
                     SetMemberValue(node, "m_Value", ConvertToVector3(settingsObject["value"]));
+                    // m_Value 只是槽的初始值来源，必须同步推回槽，否则编译结果不变
+                    SyncInputSlotsFromNodeSetting(node);
                     InvokeNodeUpdate(node);
                     return true;
                 case "Vector4Node":
                     SetMemberValue(node, "m_Value", ConvertToVector4(settingsObject["value"], 4));
+                    // m_Value 只是槽的初始值来源，必须同步推回槽，否则编译结果不变
+                    SyncInputSlotsFromNodeSetting(node);
                     InvokeNodeUpdate(node);
                     return true;
                 case "UVNode":
