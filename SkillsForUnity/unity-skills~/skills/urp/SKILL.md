@@ -1,7 +1,15 @@
 ---
 name: unity-urp
-description: Manage the Universal Render Pipeline (URP) — URP assets, the renderer, and renderer features. Use when configuring the URP asset, adding or editing renderer features, or adjusting URP rendering settings, even if the user just says "URP配置" or "渲染特性". 管理通用渲染管线(URP:URP 资产、渲染器、渲染器特性);当用户要配置 URP 资产、添加或编辑渲染器特性、或调整 URP 渲染设置时使用。
+description: Manage the Universal Render Pipeline (URP)
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Configuring the URP asset
+- Adding or editing renderer features
+- Adjusting URP rendering settings
+- 配置 URP 资产、添加或编辑渲染器特性、调整 URP 渲染设置
 
 # URP Skills
 

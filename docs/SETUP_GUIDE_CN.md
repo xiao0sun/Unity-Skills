@@ -46,6 +46,8 @@ Window → UnitySkills          (或按 Alt+Shift+U)
 [UnitySkills] REST Server started at http://localhost:8090/
 ```
 
+如需每次打开此项目时自动启动服务器，请开启 **设置 → 服务器 → 编辑器启动时运行**。该选项默认关闭。注意它需要 **编译后自动重启** 同时开启，否则服务器在首次改动脚本触发域重载后不会恢复。
+
 验证：
 
 ```bash
@@ -90,6 +92,7 @@ references/                 # Unity 开发参考文档
 | Antigravity | `.agents/skills/` | `~/.gemini/antigravity/skills/` |
 | Codex | `.agents/skills/`（与 Antigravity 共享） | `~/.agents/skills/` |
 | Cursor | `.cursor/skills/` | `~/.cursor/skills/` |
+| OpenCode | `.opencode/skills/` | `~/.config/opencode/skills/` |
 
 ### 支持的 AI 工具
 
@@ -101,6 +104,7 @@ references/                 # Unity 开发参考文档
 | **Claude Code** | ✅ | 智能 Skill 意图识别 |
 | **Codex** | ✅ | `$skill` 显式调用 + 隐式意图识别；自动扫描 `.agents/skills/` |
 | **Cursor** | ✅ | 自动扫描 `.cursor/skills/` 和 `.agents/skills/`；支持 `/skill-name` 显式触发；可在 设置 → Rules 查看已加载技能 |
+| **OpenCode** | ✅ | 原生扫描工作区 `.opencode/skills/` 和全局 `~/.config/opencode/skills/` |
 
 > ⚠️ **通用兼容性**：UnitySkills 遵循开放的 Skill 标准。**任何能读取 markdown 文件并发送 HTTP 请求的 AI 工具**都可以使用 UnitySkills — 不限于上述列表。只需将 `unity-skills~/` 目录内容复制到你的工具的 skill 或 prompt 位置，确保工具能访问 `http://localhost:8090` 即可。
 
@@ -109,6 +113,8 @@ references/                 # Unity 开发参考文档
 ## 4. 操作模式 (v1.9.0+)
 
 UnitySkills 在**服务端**真正做权限拦截（不再只是 AI 路由建议），对齐 Claude Code permission modes。模式切换统一从 `Window → UnitySkills` 的 ⚙ 设置按钮 → **Server** 区完成。
+
+> 操作模式只是治理层的四道之一 —— 另外三道是执行前的 `?mode=dryRun` 预演、执行后的 JSONL 审计留痕，以及出错后的类型化工作流回滚。四者如何配合见 [README](../README_CN.md) 的**「为什么选 UnitySkills：治理层」**一节。
 
 | 模式 | 默认场景 | 行为 |
 |------|----------|------|

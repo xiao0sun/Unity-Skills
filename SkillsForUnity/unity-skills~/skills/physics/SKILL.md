@@ -1,7 +1,16 @@
 ---
 name: unity-physics
-description: Run Unity physics queries and configure physics at editor time — raycasts, overlap checks, gravity, and physics settings. Use when casting rays, testing overlaps, querying colliders, or adjusting gravity/physics settings, even if the user just says "射线检测" or "物理设置". 执行 Unity 物理查询并在编辑器期配置物理(raycast、overlap 检测、重力、物理设置);当用户要发射射线、检测重叠、查询碰撞体、或调整重力/物理设置时使用。
+description: Run Unity physics queries and configure physics
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Casting rays
+- Testing overlaps
+- Querying colliders
+- Adjusting gravity/physics settings
+- 发射射线、检测重叠、查询碰撞体、调整重力/物理设置
 
 # Physics Skills
 
@@ -184,3 +193,13 @@ if result.get("hit"):
 ## Exact Signatures
 
 Exact names, parameters, defaults, and returns are defined by `GET /skills/schema` or `unity_skills.get_skill_schema()`, not by this file.
+
+## Common Errors
+
+Full transport-level codes (COMPILING/RATE_LIMIT etc.) → ../../references/protocol-error-codes.md
+
+| Error | Trigger | Fix |
+|---|---|---|
+| `SEMANTIC_INVALID` | An invalid value was supplied, such as a zero direction vector, a name containing path separators, or an out-of-range parameter. | Provide a non-zero direction, remove path separators from the material name, and clamp values to the valid range. |
+| `TARGET_NOT_FOUND` | The target GameObject has no `Collider`, or the requested `PhysicMaterial` asset could not be loaded. | Add a collider via `component_add` or verify the material path with `asset_find`, then retry. |
+| `MISSING_PARAM` | A required parameter is missing, such as `name` in `physics_create_material`. | Provide the parameter named in the error; use `mode=dryRun` for the schema. |

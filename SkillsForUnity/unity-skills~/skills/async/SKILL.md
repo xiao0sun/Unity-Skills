@@ -1,7 +1,14 @@
 ---
 name: unity-async
-description: Advises on Unity async and lifecycle strategy — choosing among Update, coroutines, UniTask, and timers, plus cleanup and cancellation. Use when deciding how to write async code, choosing between coroutine and UniTask, scheduling timers, or handling cancellation and cleanup, even if the user just asks "异步怎么写" or "用协程还是UniTask". 为 Unity 异步与生命周期策略提供建议(在 Update、协程、UniTask、定时器间取舍,以及清理与取消);当用户要决定异步代码怎么写、在协程与 UniTask 间选择、调度定时器或处理取消与清理时使用。
+description: Advise on Unity async and lifecycle strategy
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Choosing Update/coroutine/UniTask/timer
+- Handling cancellation and cleanup
+- 在 Update/协程/UniTask/定时器间取舍、处理取消与清理
 
 # Unity Async Strategy
 

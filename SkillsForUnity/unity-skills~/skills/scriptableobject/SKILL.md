@@ -1,7 +1,15 @@
 ---
 name: unity-scriptableobject
-description: Manage ScriptableObject assets — create, read, modify, delete, duplicate, find, and list SO assets. Use when creating or editing ScriptableObject data assets, finding SO instances, or scripting SO management, even if the user just says "配置表" or "SO资产". 管理 ScriptableObject 资产(创建、读取、修改、删除、复制、查找、列出 SO 资产);当用户要创建或编辑 ScriptableObject 数据资产、查找 SO 实例、或脚本化管理 SO 时使用。
+description: Manage ScriptableObject assets
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Creating or editing SO data assets
+- Finding SO instances
+- Scripting SO management
+- 创建或编辑 ScriptableObject 数据资产、查找 SO 实例、脚本化管理 SO
 
 # ScriptableObject Skills
 

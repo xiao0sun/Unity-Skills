@@ -59,8 +59,7 @@ namespace UnitySkills
             if (Validate.Required(propertyName, "propertyName") is object propertyErr) return propertyErr;
 
             var results = new List<object>();
-            
-            // Resolve Type
+
             var type = GetTypeByName(componentName);
             if (type == null) 
                 return new { success = false, error = $"Component type '{componentName}' not found. Try: Light, MeshRenderer, Camera, etc." };
@@ -119,7 +118,7 @@ namespace UnitySkills
             if (selected.Count == 0) 
                 return new { success = false, error = "No GameObjects selected. Select objects in Hierarchy first." };
 
-            // Workflow 鏀寔
+            // Workflow 支持
             foreach (var go in selected)
                 WorkflowManager.SnapshotObject(go.transform);
 
@@ -244,7 +243,6 @@ namespace UnitySkills
             WorkflowManager.SnapshotObject(comp);
             Undo.RecordObject(comp, "Smart Bind");
 
-            // Element Type
             var elementType = isArray ? fieldType.GetElementType() : fieldType.GetGenericArguments()[0];
 
             // Convert GameObjects to ElementType
@@ -273,7 +271,6 @@ namespace UnitySkills
                 }
             }
 
-            // Set value
             if (isArray)
             {
                 var array = System.Array.CreateInstance(elementType, convertedList.Count);
@@ -513,7 +510,8 @@ namespace UnitySkills
             Category = SkillCategory.Smart, Operation = SkillOperation.Modify | SkillOperation.Delete,
             Tags = new[] { "replace", "prefab", "swap", "substitute" },
             Outputs = new[] { "replaced", "prefab" },
-            RequiresInput = new[] { "selection", "prefabPath" })]
+            RequiresInput = new[] { "selection", "prefabPath" },
+            RiskLevel = "high")]
         public static object SmartReplaceObjects(string prefabPath)
         {
             var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);

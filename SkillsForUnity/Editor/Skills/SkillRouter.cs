@@ -47,7 +47,7 @@ namespace UnitySkills
             // True when the skill captures its own workflow snapshots; skips the generic
             // pre-execution snapshot in TrySnapshotTargetsFromArgs to avoid redundant backups.
             public bool SkipAutoPresnapshot;
-            // Intent-level metadata (v1.7)
+            // Intent-level metadata
             public SkillCategory Category;
             public SkillOperation Operation;
             public string[] Tags;
@@ -62,7 +62,7 @@ namespace UnitySkills
             public bool SupportsDryRun;
             public string RiskLevel;
             public string[] RequiresPackages;
-            // Permission mode (v1.9). Defaults to FullAuto so unannotated skills go through
+            // Permission mode. Defaults to FullAuto so unannotated skills go through
             // the Approval gate; SemiAuto must be explicitly opted in via [UnitySkill(Mode=...)].
             public SkillMode Mode;
             // Cached to avoid repeated allocations per Execute/DryRun call
@@ -91,9 +91,19 @@ namespace UnitySkills
         // filtered variants (?category=… etc.) were rebuilt + re-serialized on every request —
         // the very path agents use to save tokens (scoped is ~24KB vs ~618KB full). Content is
         // byte-deterministic per query until skills change, so caching is safe; cleared on
-        // Refresh() (domain reload / skill add-remove).
+        // Refresh() (domain reload / skill add-remove). Only recognized filter keys reach the
+        // cache key (see StripUnrecognizedFilterKeys) so an unbounded query param (e.g. a
+        // cache-busting ?nonce=N) can't mint a fresh multi-hundred-KB entry per request; entry
+        // count is additionally hard-capped by MaxCacheEntries as a second line of defense.
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _filteredOutputCache =
             new System.Collections.Concurrent.ConcurrentDictionary<string, string>();
+
+        // Hard cap shared by _filteredOutputCache and _etagCache. Both are read on the HTTP
+        // thread and written on the main thread; a capacity check + Clear() needs no extra lock
+        // (ConcurrentDictionary.Clear() is thread-safe) and keeps the eviction policy as simple
+        // as "reset the whole cache" — real-world callers cycle through a small closed set of
+        // category/tag/summary combos, so this only guards against pathological query variation.
+        private const int MaxCacheEntries = 256;
 
         /// <summary>Number of registered skills. Avoids parsing manifest just for a count.</summary>
         public static int SkillCount
@@ -110,10 +120,38 @@ namespace UnitySkills
         private static readonly HashSet<string> _reservedBodyParameters = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "verbose",
+            "offset",
+            "limit",
+            "pageOffset",
+            "pageLimit",
             "_confirm"
         };
 
         private const string EntityIdParameterName = "entityId";
+
+        private const string PrefKeySummaryAutoTruncate = "UnitySkills_SummaryAutoTruncate";
+        private static bool? _summaryAutoTruncate;
+
+        /// <summary>
+        /// Opt-in switch for Summary Mode auto-truncation. Off by default: non-verbose
+        /// results pass through untouched unless the caller explicitly pages with
+        /// pageOffset/pageLimit. When enabled, non-verbose page arrays with more than
+        /// 10 items are truncated to the first page with isTruncated metadata.
+        /// </summary>
+        public static bool SummaryAutoTruncate
+        {
+            get
+            {
+                if (!_summaryAutoTruncate.HasValue)
+                    _summaryAutoTruncate = EditorPrefs.GetBool(PrefKeySummaryAutoTruncate, false);
+                return _summaryAutoTruncate.Value;
+            }
+            set
+            {
+                _summaryAutoTruncate = value;
+                EditorPrefs.SetBool(PrefKeySummaryAutoTruncate, value);
+            }
+        }
 
         private static readonly string[] _entityIdPathFallbackParameters =
         {
@@ -551,7 +589,7 @@ namespace UnitySkills
                         retryStrategy: SkillErrorResponse.RetryFixAndRetry);
                 }
 
-                // Permission mode gate (v1.9). Runs before the high-risk confirmation gate so
+                // Permission mode gate. Runs before the high-risk confirmation gate so
                 // a FullAuto skill that is also high-risk surfaces MODE_RESTRICTED first; the
                 // ConfirmationToken step only matters once the skill is allowed to run at all.
                 var modeGate = ApplyModeGate(skill, name, validation);
@@ -646,12 +684,78 @@ namespace UnitySkills
                     args.Remove("verbose");
                 }
 
+                // Pagination control for Summary Mode.
+                // Skipped when the skill declares a parameter of the same name: 'limit' belongs to
+                // asset_find/light_find_all/... and must reach the skill as its own argument rather
+                // than being consumed as envelope paging (which would also wrap small results).
+                int? offset = null;
+                int? limit = null;
+
+                if (args.TryGetValue("pageOffset", StringComparison.OrdinalIgnoreCase, out var pageOffsetToken))
+                {
+                    if (!TryReadPagingArg(pageOffsetToken, "pageOffset", 0, out var value, out var error))
+                    {
+                        UnwindBeforeInvoke(autoStartedWorkflow, workflowSnapshotCountBefore, undoGroup);
+                        return SkillErrorResponse.Build(SkillErrorCode.TypeMismatch, error, skill: name,
+                            retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                    }
+                    offset = value;
+                    args.Remove("pageOffset");
+                }
+
+                if (args.TryGetValue("pageLimit", StringComparison.OrdinalIgnoreCase, out var pageLimitToken))
+                {
+                    if (!TryReadPagingArg(pageLimitToken, "pageLimit", 1, out var value, out var error))
+                    {
+                        UnwindBeforeInvoke(autoStartedWorkflow, workflowSnapshotCountBefore, undoGroup);
+                        return SkillErrorResponse.Build(SkillErrorCode.TypeMismatch, error, skill: name,
+                            retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                    }
+                    limit = value;
+                    args.Remove("pageLimit");
+                }
+
+                if (!offset.HasValue && !SkillDeclaresParameter(skill, "offset") &&
+                    args.TryGetValue("offset", StringComparison.OrdinalIgnoreCase, out var offsetToken))
+                {
+                    if (!TryReadPagingArg(offsetToken, "offset", minValue: 0, out var offsetValue, out var offsetError))
+                    {
+                        // Nothing was invoked yet; unwind the bookkeeping opened above.
+                        UnwindBeforeInvoke(autoStartedWorkflow, workflowSnapshotCountBefore, undoGroup);
+                        return SkillErrorResponse.Build(
+                            SkillErrorCode.TypeMismatch,
+                            offsetError,
+                            skill: name,
+                            details: new { typeErrors = new object[] { new { parameter = "offset", expectedType = "integer", error = offsetError } } },
+                            retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                    }
+                    offset = offsetValue;
+                    args.Remove("offset");
+                }
+
+                if (!limit.HasValue && !SkillDeclaresParameter(skill, "limit") &&
+                    args.TryGetValue("limit", StringComparison.OrdinalIgnoreCase, out var limitToken))
+                {
+                    if (!TryReadPagingArg(limitToken, "limit", minValue: 1, out var limitValue, out var limitError))
+                    {
+                        UnwindBeforeInvoke(autoStartedWorkflow, workflowSnapshotCountBefore, undoGroup);
+                        return SkillErrorResponse.Build(
+                            SkillErrorCode.TypeMismatch,
+                            limitError,
+                            skill: name,
+                            details: new { typeErrors = new object[] { new { parameter = "limit", expectedType = "integer", error = limitError } } },
+                            retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                    }
+                    limit = limitValue;
+                    args.Remove("limit");
+                }
+
                 var result = skill.Method.Invoke(null, invoke);
 
                 if (!skill.ReadOnly)
                     UnityEditor.Undo.FlushUndoRecordObjects();
 
-                if (SkillResultHelper.TryGetError(result, out string errorText))
+                if (SkillResultHelper.TryGetErrorContext(result, out var errorContext))
                 {
                     if (autoStartedWorkflow && WorkflowManager.IsRecording)
                         WorkflowManager.AbortTask();
@@ -661,11 +765,23 @@ namespace UnitySkills
                     if (undoGroup >= 0)
                         UnityEditor.Undo.RevertAllInCurrentGroup();
 
+                    // Every business error in the fleet funnels through here. Whatever the skill
+                    // declared for itself wins field by field; the classifier fills the gaps so the
+                    // ~700 skills that only return { error = "..." } still get a code and a retry
+                    // strategy instead of a uniform SKILL_ERROR + abort. A declared errorCode also
+                    // steers the remaining fields, so a partial declaration stays self-consistent.
+                    var classified = errorContext.Code.HasValue
+                        ? SkillErrorClassifier.ForCode(errorContext.Code.Value, errorContext.Message)
+                        : SkillErrorClassifier.Classify(errorContext.Message);
+
                     return SkillErrorResponse.Build(
-                        SkillErrorCode.SkillError,
-                        errorText,
+                        errorContext.Code ?? classified.Code,
+                        errorContext.Message,
                         skill: name,
-                        retryStrategy: SkillErrorResponse.Abort);
+                        suggestedFixes: errorContext.SuggestedFixes ?? classified.SuggestedFixes,
+                        relatedSkills: errorContext.RelatedSkills ?? classified.RelatedSkills,
+                        retryStrategy: errorContext.RetryStrategy ?? classified.RetryStrategy,
+                        extra: errorContext.Extra);
                 }
 
                 // ========== AUTO WORKFLOW END ==========
@@ -708,26 +824,80 @@ namespace UnitySkills
 
                 if (!verbose && result != null)
                 {
-                    // "Summary Mode" Logic
+                    // "Summary Mode" Logic with Pagination
                     // 1. Convert result to JToken to inspect it
                     var jsonResult = JToken.FromObject(result);
 
-                    // 2. Check if it's a large Array (> 10 items)
-                    if (jsonResult is JArray arr && arr.Count > 10)
+                    var arr = FindPageArray(jsonResult, out var arrayProperty);
+                    if (arr != null && ((SummaryAutoTruncate && arr.Count > 10) || offset.HasValue || limit.HasValue))
                     {
-                        var truncatedItems = new JArray();
-                        for (int i = 0; i < 5; i++) truncatedItems.Add(arr[i]);
+                        int startIndex = offset ?? 0;
+                        int pageSize = limit ?? 5;
 
-                        // Return a wrapper object instead of the list
-                        // This keeps 'items' clean (same type) while providing meta info
+                        // Clamp to valid range
+                        if (startIndex >= arr.Count)
+                        {
+                            // offset beyond array bounds — return empty page
+                            var emptyWrapper = new JObject
+                            {
+                                ["isTruncated"] = true,
+                                ["totalCount"] = arr.Count,
+                                ["offset"] = startIndex,
+                                ["limit"] = pageSize,
+                                ["showing"] = 0,
+                                ["items"] = new JArray(),
+                                ["hint"] = $"Offset {startIndex} is beyond array bounds (totalCount: {arr.Count}). To see items, pass a lower 'pageOffset' value."
+                            };
+                            if (arrayProperty != null)
+                            {
+                                var preserved = (JObject)jsonResult.DeepClone();
+                                preserved[arrayProperty] = new JArray();
+                                foreach (var property in emptyWrapper.Properties().Where(property => property.Name != "items"))
+                                    preserved[property.Name] = property.Value;
+                                return SerializeSuccessResponse(preserved, sceneDiff, workflowEndMs);
+                            }
+                            return SerializeSuccessResponse(emptyWrapper, sceneDiff, workflowEndMs);
+                        }
+
+                        int endIndex = (int)Math.Min((long)startIndex + pageSize, arr.Count);
+                        int actualCount = endIndex - startIndex;
+
+                        var paginatedItems = new JArray();
+                        for (int i = startIndex; i < endIndex; i++)
+                            paginatedItems.Add(arr[i]);
+
+                        bool hasMore = endIndex < arr.Count;
+                        int? nextOffset = hasMore ? (int?)endIndex : null;
+
+                        // Return a wrapper object with pagination metadata
                         var wrapper = new JObject
                         {
                             ["isTruncated"] = true,
                             ["totalCount"] = arr.Count,
-                            ["showing"] = 5,
-                            ["items"] = truncatedItems,
-                            ["hint"] = "Result is truncated. To see all items, pass 'verbose=true' parameter."
+                            ["offset"] = startIndex,
+                            ["limit"] = pageSize,
+                            ["showing"] = actualCount,
+                            ["items"] = paginatedItems
                         };
+
+                        if (hasMore)
+                        {
+                            wrapper["nextOffset"] = nextOffset;
+                            wrapper["hint"] = $"Showing items {startIndex}-{endIndex - 1} of {arr.Count}. To see more, pass 'pageOffset={nextOffset}' (or 'verbose=true' for all items).";
+                        }
+                        else
+                        {
+                            wrapper["hint"] = $"Showing items {startIndex}-{endIndex - 1} of {arr.Count} (last page).";
+                        }
+
+                        if (arrayProperty != null)
+                        {
+                            var preserved = (JObject)jsonResult.DeepClone();
+                            preserved[arrayProperty] = paginatedItems;
+                            foreach (var property in wrapper.Properties().Where(property => property.Name != "items"))
+                                preserved[property.Name] = property.Value;
+                            return SerializeSuccessResponse(preserved, sceneDiff, workflowEndMs);
+                        }
 
                         return SerializeSuccessResponse(wrapper, sceneDiff, workflowEndMs);
                     }
@@ -1133,6 +1303,7 @@ namespace UnitySkills
                 _cachedSchema = null;
                 _outputIndex = null;
                 _filteredOutputCache.Clear();
+                _etagCache.Clear();
                 _workflowTrackedSkills = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             }
             Initialize();
@@ -1194,10 +1365,33 @@ namespace UnitySkills
         /// </summary>
         public static string GetFilteredSchema(string queryString) => BuildFilteredOutput(queryString, "schema");
 
+        // Query keys BuildFilteredOutput actually filters/branches on. Anything else (typos,
+        // cache-busting nonces, client-side tracking params, …) is dropped before it can reach
+        // the cache key — otherwise every distinct unrecognized value mints its own permanent
+        // ~618KB cache entry (see MaxCacheEntries comment above _filteredOutputCache).
+        private static readonly HashSet<string> _recognizedFilterKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "category", "operation", "tags", "readonly", "q", "summary", "includeSchema", "brief"
+        };
+
+        private static Dictionary<string, string> StripUnrecognizedFilterKeys(Dictionary<string, string> filters)
+        {
+            if (filters.Count == 0 || filters.Keys.All(k => _recognizedFilterKeys.Contains(k)))
+                return filters;
+
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in filters)
+            {
+                if (_recognizedFilterKeys.Contains(kv.Key))
+                    result[kv.Key] = kv.Value;
+            }
+            return result;
+        }
+
         private static string BuildFilteredOutput(string queryString, string manifestType)
         {
             Initialize();
-            var filters = ParseQueryString(queryString);
+            var filters = StripUnrecognizedFilterKeys(ParseQueryString(queryString));
             if (filters.Count == 0)
                 return manifestType == "schema" ? GetSchema() : GetManifest();
 
@@ -1216,6 +1410,7 @@ namespace UnitySkills
                 (briefVal == "1" || briefVal.Equals("true", StringComparison.OrdinalIgnoreCase)))
             {
                 var briefJson = JsonConvert.SerializeObject(BuildBriefManifest(), _jsonSettings);
+                if (_filteredOutputCache.Count >= MaxCacheEntries) _filteredOutputCache.Clear();
                 _filteredOutputCache[cacheKey] = briefJson;
                 return briefJson;
             }
@@ -1257,6 +1452,7 @@ namespace UnitySkills
 
             var manifest = BuildManifest(results, filtered: true, filters, manifestType, summary);
             var json = JsonConvert.SerializeObject(manifest, _jsonSettings);
+            if (_filteredOutputCache.Count >= MaxCacheEntries) _filteredOutputCache.Clear();
             _filteredOutputCache[cacheKey] = json;
             return json;
         }
@@ -1307,6 +1503,79 @@ namespace UnitySkills
                 .Concat(new[] { EntityIdParameterName })
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+        }
+
+        /// <summary>
+        /// True when the skill itself declares a parameter with this name. Such names must reach
+        /// the skill as its own argument and must not be consumed as envelope-level paging.
+        /// </summary>
+        private static bool SkillDeclaresParameter(SkillInfo skill, string parameterName) =>
+            skill != null && ContainsParameter(skill.ParameterNames, parameterName);
+
+        /// <summary>
+        /// Reads an envelope paging argument ('offset'/'limit') as an integer >= minValue.
+        /// Accepts JSON numbers and their string forms ("10") so query-string callers work too.
+        /// </summary>
+        private static bool TryReadPagingArg(JToken token, string parameterName, int minValue, out int value, out string error)
+        {
+            value = 0;
+            error = null;
+
+            var raw = token.Type == JTokenType.Integer
+                ? token.ToString(Formatting.None)
+                : token.Type == JTokenType.String ? token.Value<string>()?.Trim() : null;
+            if (!int.TryParse(raw, System.Globalization.NumberStyles.Integer,
+                    System.Globalization.CultureInfo.InvariantCulture, out var parsed))
+            {
+                error = $"Parameter '{parameterName}' must be an integer, got: {token.ToString(Formatting.None)}";
+                return false;
+            }
+
+            if (parsed < minValue)
+            {
+                error = minValue <= 0
+                    ? $"Parameter '{parameterName}' must be a non-negative integer, got: {parsed}"
+                    : $"Parameter '{parameterName}' must be a positive integer, got: {parsed}";
+                return false;
+            }
+
+            value = parsed;
+            return true;
+        }
+
+        private static JArray FindPageArray(JToken result, out string propertyName)
+        {
+            propertyName = null;
+            if (result is JArray array)
+                return array;
+            if (!(result is JObject obj))
+                return null;
+
+            foreach (var name in new[] { "items", "assets", "objects", "groups", "entries" })
+            {
+                if (obj[name] is JArray nested)
+                {
+                    propertyName = name;
+                    return nested;
+                }
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Unwinds the workflow/undo bookkeeping opened before <c>Method.Invoke</c> when an
+        /// envelope-level argument turns out to be invalid and nothing was executed yet.
+        /// Mirrors the cleanup performed by the catch handlers in Execute.
+        /// </summary>
+        private static void UnwindBeforeInvoke(bool autoStartedWorkflow, int workflowSnapshotCountBefore, int undoGroup)
+        {
+            if (autoStartedWorkflow && WorkflowManager.IsRecording)
+                WorkflowManager.AbortTask();
+            else if (WorkflowManager.IsRecording)
+                WorkflowManager.TruncateCurrentTask(workflowSnapshotCountBefore);
+
+            if (undoGroup >= 0)
+                UnityEditor.Undo.RevertAllInCurrentGroup();
         }
 
         private static object[] BuildParameterSchema(SkillInfo skill)
@@ -1685,8 +1954,50 @@ namespace UnitySkills
             return FormatOperation(op);
         }
 
+        /// <summary>
+        /// Python-client helper function names that agents mistake for REST skill names, mapped to
+        /// the REST call that actually does the job. Keep in sync with the module-level defs in
+        /// <c>unity-skills~/scripts/unity_skills.py</c>.
+        ///
+        /// These need an exact table because the fuzzy fallback in <see cref="ResolveSkillNotFound"/>
+        /// structurally cannot reach them: a helper name shares no token with any registered skill,
+        /// so it is neither within edit distance 5 nor a substring of one — the caller gets an empty
+        /// suggestion list and no way to self-correct. Only the discovery/awareness helpers an agent
+        /// meets at session start are listed; the rest fall through to the fuzzy path as before.
+        /// </summary>
+        private static readonly Dictionary<string, string> k_ClientHelperRestEquivalents =
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                { "get_skill_schema",   "GET /skills/schema (add ?category=<Category> to scope it)" },
+                { "get_skills_summary", "GET /skills?summary=1" },
+                { "get_skills",         "GET /skills (or ?brief=1 for names only)" },
+                { "search_skills",      "GET /skills/recommend?intent=... (search_skills greps a local cache; it has no REST counterpart)" },
+                { "find_skills",        "GET /skills/recommend?intent=..." },
+                { "get_skill_chain",    "GET /skills/chain?output=<field>&maxDepth=<n>" },
+                { "health",             "GET /health" },
+                { "get_server_status",  "GET /health" },
+                { "is_unity_running",   "GET /health" },
+                { "wait_for_health",    "GET /health (poll it)" },
+                { "wait_for_unity",     "GET /health (poll it)" },
+                { "call_skill",         "POST /skill/<real skill name> — call_skill is the client wrapper, not a skill" },
+                { "dry_run_skill",      "POST /skill/<real skill name>?mode=dryRun" },
+                { "plan_skill",         "POST /skill/<real skill name>?mode=plan" },
+                { "plan_workflow",      "the 'workflow_plan' skill" },
+                { "create_script",      "the 'script_create' skill (note the word order)" },
+                { "diagnose",           "the 'unity_diagnose' skill" },
+                { "get_audit_log",      "GET /permission/audit" },
+            };
+
         internal static string ResolveSkillNotFound(string name)
         {
+            // A client-helper name can never fuzzy-match a skill — answer it with the REST
+            // equivalent before falling through to nearest-name search.
+            if (!string.IsNullOrEmpty(name) &&
+                k_ClientHelperRestEquivalents.TryGetValue(name, out var restEquivalent))
+            {
+                return SkillErrorResponse.ClientHelperNotASkill(name, restEquivalent);
+            }
+
             // Surface up to 5 nearest registered skill names so AI agents can self-correct typos.
             var nearest = _skills.Keys
                 .Select(k => new { Name = k, Distance = ComputeLevenshteinDistance(name ?? string.Empty, k) })
@@ -2317,7 +2628,6 @@ namespace UnitySkills
             var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             if (string.IsNullOrEmpty(qs)) return result;
 
-            // Remove leading '?'
             var raw = qs.StartsWith("?") ? qs.Substring(1) : qs;
             if (string.IsNullOrEmpty(raw)) return result;
 
@@ -2507,8 +2817,10 @@ namespace UnitySkills
 
         // ETag 缓存：键 = 输出缓存键，值 = (来源 json 引用, etag)。
         // SkillRouter 非 [InitializeOnLoad]、无静态持久化，域重载即整体重置，天然失效；
-        // Refresh()（skill 增删）重建后缓存 json 是新 string 实例，下方 ReferenceEquals
-        // 不匹配即自动重算——因此无需在 Refresh() 里挂清空钩子。
+        // Refresh()（skill 增删）重建后旧 entry 的 json 引用与新缓存串不再相等，下方
+        // ReferenceEquals 不匹配即自动重算并覆盖同 key——正确性本不依赖清空。但 Refresh() 仍
+        // 主动 Clear()，避免旧 entry（及其引用的大字符串）在多次 Refresh 间累积；同时用
+        // MaxCacheEntries 兜底防止任意路径下的无界膨胀。
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Json, string Etag)> _etagCache =
             new System.Collections.Concurrent.ConcurrentDictionary<string, (string Json, string Etag)>();
 
@@ -2527,29 +2839,49 @@ namespace UnitySkills
             if (!isSchema && !string.Equals(path, "/skills", StringComparison.OrdinalIgnoreCase))
                 return false;
 
-            string manifestType = isSchema ? "schema" : "manifest";
-            string cacheKey;
-
-            // 与 BuildFilteredOutput 的分流保持一致：query 为空或解析后无有效过滤键 → 全量缓存；
-            // 否则用同一把 BuildFilteredOutputCacheKey 生成的键读 _filteredOutputCache
-            // （两者键构造完全同源，大小写归一语义一致）。
-            var filters = string.IsNullOrEmpty(query) ? null : ParseQueryString(query);
-            if (filters == null || filters.Count == 0)
-            {
+            string cacheKey = BuildGetCacheKey(path, query, out bool isFullOutput);
+            if (isFullOutput)
                 json = isSchema ? _cachedSchema : _cachedManifest;
-                cacheKey = manifestType + "|__full__";
-            }
             else
-            {
-                cacheKey = BuildFilteredOutputCacheKey(filters, manifestType);
                 _filteredOutputCache.TryGetValue(cacheKey, out json);
-            }
 
             if (json == null)
                 return false;
 
             etag = GetOrComputeEtag(cacheKey, json);
             return true;
+        }
+
+        /// <summary>
+        /// 主线程慢路径专用：为刚构建好的 /skills 或 /skills/schema 输出取 ETag。与
+        /// <see cref="TryGetCachedGetResponse"/> 共用 <see cref="BuildGetCacheKey"/> 与
+        /// <see cref="GetOrComputeEtag"/>，所以同一份内容在慢路径与 HTTP 线程快路径上得到的
+        /// etag 完全一致——否则客户端会在两条路径间来回抖动，If-None-Match 永远命中不了 304。
+        /// json 为空（错误响应等）时返回 null，调用方不应发 ETag 头。
+        /// </summary>
+        internal static string GetEtagForCachedGet(string path, string query, string json)
+        {
+            if (string.IsNullOrEmpty(json))
+                return null;
+            return GetOrComputeEtag(BuildGetCacheKey(path, query, out _), json);
+        }
+
+        /// <summary>
+        /// 与 BuildFilteredOutput 的分流保持一致：query 为空或解析后无有效过滤键 → 全量缓存键
+        /// （isFullOutput=true）；否则用同一把 <see cref="BuildFilteredOutputCacheKey"/> 生成的
+        /// 键（两者键构造完全同源，大小写归一语义一致）。
+        /// </summary>
+        private static string BuildGetCacheKey(string path, string query, out bool isFullOutput)
+        {
+            string manifestType = string.Equals(path, "/skills/schema", StringComparison.OrdinalIgnoreCase)
+                ? "schema"
+                : "manifest";
+
+            var filters = string.IsNullOrEmpty(query) ? null : StripUnrecognizedFilterKeys(ParseQueryString(query));
+            isFullOutput = filters == null || filters.Count == 0;
+            return isFullOutput
+                ? manifestType + "|__full__"
+                : BuildFilteredOutputCacheKey(filters, manifestType);
         }
 
         /// <summary>
@@ -2562,6 +2894,7 @@ namespace UnitySkills
                 return entry.Etag;
 
             string etag = ComputeEtag(json);
+            if (_etagCache.Count >= MaxCacheEntries) _etagCache.Clear();
             _etagCache[cacheKey] = (json, etag);
             return etag;
         }
@@ -2581,6 +2914,27 @@ namespace UnitySkills
         #endregion
     }
 
+    /// <summary>
+    /// Everything the router could lift off a skill's error object. Only <see cref="Message"/> is
+    /// ever populated for the legacy <c>new { error = "..." }</c> shape; the rest are the opt-in
+    /// contract a skill may declare to override <see cref="SkillErrorClassifier"/>'s guess.
+    /// </summary>
+    internal sealed class SkillErrorContext
+    {
+        public string Message;
+        public SkillErrorCode? Code;
+        public string RetryStrategy;
+        public List<SuggestedFix> SuggestedFixes;
+        public List<string> RelatedSkills;
+
+        /// <summary>
+        /// Every other field the skill put on its error object (valid-value lists, docs URLs,
+        /// package ids, hints). Without this the classifier would answer with the message alone
+        /// and silently drop diagnostics the skill went out of its way to compute.
+        /// </summary>
+        public Dictionary<string, object> Extra;
+    }
+
     internal static class SkillResultHelper
     {
         public static bool TryGetError(object result, out string errorText)
@@ -2597,6 +2951,220 @@ namespace UnitySkills
 
             errorText = errorValue.ToString();
             return !string.IsNullOrWhiteSpace(errorText);
+        }
+
+        /// <summary>
+        /// Layer 1 of the router's error contract: lift the message plus any structured fields the
+        /// skill chose to declare (<c>errorCode</c>, <c>suggestedFixes</c>, <c>retryStrategy</c>,
+        /// <c>relatedSkills</c>). Recognises the same "is this an error?" condition as
+        /// <see cref="TryGetError(object, out string)"/>, so a skill that declares nothing extra
+        /// behaves exactly as before. Field extraction is exception-isolated — a malformed
+        /// declaration degrades to message-only rather than failing the response.
+        /// </summary>
+        public static bool TryGetErrorContext(object result, out SkillErrorContext context)
+        {
+            context = null;
+            if (!TryGetError(result, out string errorText))
+                return false;
+
+            context = new SkillErrorContext { Message = errorText };
+
+            try
+            {
+                if (TryGetMemberValue(result, "errorCode", out var codeValue) && codeValue != null &&
+                    SkillErrorCodeExtensions.TryParseWire(codeValue.ToString(), out var parsedCode))
+                    context.Code = parsedCode;
+
+                if (TryGetMemberValue(result, "retryStrategy", out var retryValue) && retryValue != null)
+                {
+                    var retry = retryValue.ToString().Trim();
+                    if (retry.Length > 0)
+                        context.RetryStrategy = retry;
+                }
+
+                if (TryGetMemberValue(result, "relatedSkills", out var relatedValue))
+                    context.RelatedSkills = ToStringList(relatedValue);
+
+                if (TryGetMemberValue(result, "suggestedFixes", out var fixesValue))
+                    context.SuggestedFixes = ToSuggestedFixes(fixesValue);
+
+                context.Extra = CollectExtraErrorFields(result);
+            }
+            catch (Exception ex)
+            {
+                SkillsLogger.LogVerbose($"Skill error context extraction failed, falling back to message only: {ex.Message}");
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Fields on a skill's error object that the response envelope already models. Everything
+        /// else is forwarded verbatim so skill-authored diagnostics survive classification.
+        /// </summary>
+        private static readonly HashSet<string> ReservedErrorFields = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "error", "errorCode", "retryStrategy", "relatedSkills", "suggestedFixes",
+            "status", "skill", "details", "retryAfterSeconds", "success"
+        };
+
+        /// <summary>
+        /// Collects the non-reserved members of a skill's error object. Anonymous types, dictionaries
+        /// and JObject are all supported because skills return all three shapes. Exception-isolated:
+        /// a member that cannot be read is skipped rather than failing the whole response.
+        /// </summary>
+        private static Dictionary<string, object> CollectExtraErrorFields(object result)
+        {
+            if (result == null) return null;
+            var extra = new Dictionary<string, object>();
+
+            try
+            {
+                if (result is JObject jsonObject)
+                {
+                    foreach (var pair in jsonObject)
+                    {
+                        if (ReservedErrorFields.Contains(pair.Key)) continue;
+                        extra[pair.Key] = pair.Value == null || pair.Value.Type == JTokenType.Null
+                            ? null
+                            : pair.Value.ToObject<object>();
+                    }
+                }
+                else if (result is IDictionary<string, object> dictionary)
+                {
+                    foreach (var pair in dictionary)
+                    {
+                        if (ReservedErrorFields.Contains(pair.Key)) continue;
+                        extra[pair.Key] = pair.Value;
+                    }
+                }
+                else
+                {
+                    var resultType = result.GetType();
+                    foreach (var property in resultType.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+                    {
+                        if (ReservedErrorFields.Contains(property.Name) ||
+                            property.GetIndexParameters().Length > 0)
+                            continue;
+                        try { extra[property.Name] = property.GetValue(result); }
+                        catch { }
+                    }
+                    foreach (var field in resultType.GetFields(BindingFlags.Public | BindingFlags.Instance))
+                    {
+                        if (ReservedErrorFields.Contains(field.Name) || extra.ContainsKey(field.Name))
+                            continue;
+                        try { extra[field.Name] = field.GetValue(result); }
+                        catch { }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                SkillsLogger.LogVerbose($"Skill error extra-field extraction failed: {ex.Message}");
+                return null;
+            }
+
+            return extra.Count > 0 ? extra : null;
+        }
+
+        /// <summary>Accepts string, string[], JArray or any sequence; returns null when empty.</summary>
+        private static List<string> ToStringList(object value)
+        {
+            if (value == null || value is JObject)
+                return null;
+
+            var items = new List<string>();
+
+            if (value is string single)
+            {
+                if (!string.IsNullOrWhiteSpace(single))
+                    items.Add(single);
+            }
+            else if (value is System.Collections.IEnumerable sequence)
+            {
+                foreach (var entry in sequence)
+                {
+                    var text = entry?.ToString();
+                    if (!string.IsNullOrWhiteSpace(text))
+                        items.Add(text);
+                }
+            }
+
+            return items.Count > 0 ? items : null;
+        }
+
+        /// <summary>
+        /// Accepts a single fix or a sequence of them, in either the rich shape
+        /// (<c>{ action, skill, args, reason }</c>) or a bare hint string.
+        /// </summary>
+        private static List<SuggestedFix> ToSuggestedFixes(object value)
+        {
+            if (value == null)
+                return null;
+
+            var fixes = new List<SuggestedFix>();
+
+            if (value is string || value is JObject || value is SuggestedFix)
+            {
+                var single = ToSuggestedFix(value);
+                if (single != null)
+                    fixes.Add(single);
+            }
+            else if (value is System.Collections.IEnumerable sequence)
+            {
+                foreach (var entry in sequence)
+                {
+                    var one = ToSuggestedFix(entry);
+                    if (one != null)
+                        fixes.Add(one);
+                }
+            }
+
+            return fixes.Count > 0 ? fixes : null;
+        }
+
+        private static SuggestedFix ToSuggestedFix(object entry)
+        {
+            if (entry == null)
+                return null;
+
+            if (entry is SuggestedFix typed)
+                return typed;
+
+            if (entry is string hint)
+                return string.IsNullOrWhiteSpace(hint) ? null : new SuggestedFix { action = "retry", reason = hint };
+
+            var token = entry as JToken ?? JToken.FromObject(entry);
+
+            if (token.Type == JTokenType.String)
+            {
+                var text = token.Value<string>();
+                return string.IsNullOrWhiteSpace(text) ? null : new SuggestedFix { action = "retry", reason = text };
+            }
+
+            if (!(token is JObject obj))
+                return null;
+
+            var fix = new SuggestedFix
+            {
+                action = ReadString(obj, "action"),
+                skill = ReadString(obj, "skill"),
+                reason = ReadString(obj, "reason"),
+            };
+
+            var argsToken = obj.GetValue("args", StringComparison.OrdinalIgnoreCase);
+            if (argsToken != null && argsToken.Type != JTokenType.Null)
+                fix.args = argsToken;
+
+            bool empty = string.IsNullOrEmpty(fix.action) && string.IsNullOrEmpty(fix.skill) &&
+                         string.IsNullOrEmpty(fix.reason) && fix.args == null;
+            return empty ? null : fix;
+        }
+
+        private static string ReadString(JObject obj, string name)
+        {
+            var token = obj.GetValue(name, StringComparison.OrdinalIgnoreCase);
+            return token == null || token.Type == JTokenType.Null ? null : token.ToString();
         }
 
         public static bool TryGetMemberValue(object result, string memberName, out object value)

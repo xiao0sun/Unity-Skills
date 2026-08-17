@@ -1,7 +1,16 @@
 ---
 name: unity-performance
-description: Advises on Unity performance red flags — Update/allocation/pooling/physics hot paths, frame drops, and GC pressure. Use when reviewing performance, diagnosing frame drops or stutter, reducing allocations, or planning pooling/optimization, even if the user just says "太卡了" or "怎么优化". 为 Unity 性能红线提供建议(Update/分配/对象池/物理热路径、掉帧、GC 压力);当用户要做性能审查、诊断掉帧或卡顿、减少内存分配、或规划对象池/优化时使用。
+description: Advise on Unity performance red flags
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Reviewing performance
+- Diagnosing frame drops
+- Reducing allocations
+- Planning pooling/optimization
+- 做性能审查、诊断掉帧或卡顿、减少内存分配、规划对象池/优化
 
 # Unity Performance Red Flags
 

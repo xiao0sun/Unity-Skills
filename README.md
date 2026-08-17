@@ -6,7 +6,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Unity-2022.3%2B-black?style=for-the-badge&logo=unity" alt="Unity">
-  <img src="https://img.shields.io/badge/Skills-740-green?style=for-the-badge" alt="Skills">
+  <img src="https://img.shields.io/badge/Skills-784-green?style=for-the-badge" alt="Skills">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-orange?style=for-the-badge" alt="License"></a>
   <a href="README_CN.md"><img src="https://img.shields.io/badge/README-中文-blue?style=for-the-badge" alt="中文"></a>
 </p>
@@ -23,6 +23,14 @@
 
 > The current official maintenance baseline is **Unity 2022.3+**. Some Unity 2021 compatibility logic may still remain in the codebase, but future feature work, regression testing, and adaptation will focus on **2022.3+ / Unity 6**.
 
+## 📈 Project Contribution Rankings
+
+<p align="center">
+  <a href="https://trendshift.io/repositories/27085?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-27085" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/27085/daily?language=C%23" alt="Besty0728%2FUnity-Skills | Trendshift" width="250" height="55"/></a>
+  <a href="https://trendshift.io/repositories/27085?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-27085" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/27085/weekly?language=C%23" alt="Besty0728%2FUnity-Skills | Trendshift" width="250" height="55"/></a>
+  <a href="https://trendshift.io/repositories/27085?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-27085" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/27085/monthly?language=C%23" alt="Besty0728%2FUnity-Skills | Trendshift" width="250" height="55"/></a>
+</p>
+
 ## 🤝 Acknowledgments
 This project is a deep refactoring and feature extension based on the excellent concept of [unity-mcp](https://github.com/CoplayDev/unity-mcp).
 
@@ -30,14 +38,38 @@ This project is a deep refactoring and feature extension based on the excellent 
 
 ## 🚀 Core Features
 
-- 🛠️ **740 REST Skills Comprehensive Toolkit**: Includes 52 functional source modules plus 23 advisory design modules, with Batch operations for multi-object control.
-- ⚡ **Revolutionary Efficiency Boost (v2.0.1+)**: Schema caching + exponential backoff polling + BATCH-FIRST guidance → **Token consumption ↓ 96%**, **simple tasks 4-6 calls → 1 call (↓ 75-83%)**. Current: v2.2.1.
+- 🛠️ **784 REST Skills Comprehensive Toolkit**: Includes 54 functional source modules plus 29 advisory design modules, with Batch operations for multi-object control.
+- ⚡ **Revolutionary Efficiency Boost (v2.0.1+)**: Schema caching + exponential backoff polling + BATCH-FIRST guidance → **Token consumption ↓ 96%**, **simple tasks 4-6 calls → 1 call (↓ 75-83%)**. Current: v2.6.0.
 - 🔐 **Three-Tier Permission Modes (v1.9.0+)**: Approval / Auto / Bypass with dual approval channels (Dialog / Panel), aligned with Claude Code permission modes; zero-impact upgrade for existing users.
-- 🤖 **4 Major IDEs Native Support**: Claude Code / Antigravity / Codex / Cursor — one-click install and use.
+- 🤖 **5 Major IDEs Native Support**: Claude Code / Antigravity / Codex / Cursor / OpenCode — one-click install and use.
 - 🛡️ **Transactional Atomicity**: Failed operations auto-rollback, leaving scenes clean and safe.
 - 🌍 **Multi-Instance Simultaneous Control**: Automatic port discovery and global registry for controlling multiple Unity projects at once.
 - 🔗 **Ultra-Stable Long Connections**: Configurable request timeout (default 15 minutes), automatic recovery after Domain Reload, with retry hints during script compilation/asset updates.
 - 🛡️ **Anti-Hallucination Guardrails**: Each Skill module includes DO NOT lists and routing rules to prevent calls to nonexistent commands or parameter errors.
+
+---
+
+## 🛡️ Built for Trust: The Governance Layer
+
+An AI driving the Editor writes to real scenes, prefabs and `.meta` files. The interesting question isn't whether it *can* — it's what happens when it gets something wrong. UnitySkills answers that at four points in the call lifecycle.
+
+- **Before execution — `?mode=dryRun` / `?mode=plan`**: `POST /skill/{name}?mode=dryRun` writes nothing and returns parameter validation (`missingParams` / `unknownParams` / `typeErrors` / `semanticErrors` / `warnings`) plus an impact estimate (`mutatesScene` / `mutatesAssets` / `mayTriggerReload` / `mayEnterPlayMode` / `riskLevel`). Skills with a semantic planner also return `steps` / `changes`.
+- **At execution — per-operation risk gating**: every skill declares `RiskLevel` / `Operation` / `MayEnterPlayMode` / `MayTriggerReload` in its `[UnitySkill]` metadata, and the server derives NeverInSemi from that metadata — gating never depends on the AI behaving well. **Allowlist** grants a persistent pass to individual skills; the optional `ConfirmationToken` handshake (off by default — ⚙ Settings → Runtime → Require Confirmation) adds one more gate on high-risk skills.
+- **After execution — JSONL audit trail**: every call, grant, revoke and blocked hit is appended to `Library/UnitySkillsAudit.jsonl` (1 MB rotation, primary + 3 historical files), browsable and filterable in the panel. Deleting audit entries is itself recorded, as `audit_deleted` / `audit_cleared`.
+- **After a mistake — typed, persistent snapshot rollback**: Workflow snapshots are typed (`Modified` / `Created` / `Deleted` / `Moved` / `Setting`), and the asset file and its `.meta` are content-addressed independently (`fileHash` / `metaFileHash`) under `Library/UnitySkills/`, so history survives Domain Reloads and editor restarts. `workflow_undo_task` rolls back one task, not the whole project.
+- **Batch as a transaction**: `POST /skills/batch` supports fail-fast or `continueOnError`, cross-step `$ref` to reuse an earlier step's output, rollback on failure, and `?diff=1` for the aggregated net change.
+
+### How this compares
+
+| Dimension | UnitySkills | Typical MCP bridge | Unity's official AI Assistant |
+| :--- | :--- | :--- | :--- |
+| **Permission granularity** | Per-operation: three modes (Approval / Auto / Bypass) + risk metadata on every skill + per-skill Allowlist | No permission model — once connected, the whole tool surface is callable | Per-client trust (Pending Connections → Allow / Revoke); after approval, calls are not distinguished by operation |
+| **Audit** | Structured JSONL for every call / grant / revoke / block, browsable in-panel; deletions are audited too | Process logs only; no structured per-call record | Surfaced as chat history and checkpoints rather than a per-operation audit record |
+| **Rollback granularity** | Per-task, five snapshot types, file and `.meta` content-addressed, persists across sessions | Relies on Unity's native Undo stack; not guaranteed to survive a Domain Reload | Project-wide checkpoints taken per prompt — restoring rewinds the entire project to that point |
+| **Pre-execution preview** | `?mode=dryRun` / `?mode=plan` — semantic parameter validation + impact estimate, nothing written | No equivalent found | No pre-execution parameter validation or impact preview found |
+| **Batch transactions** | `POST /skills/batch` — fail-fast / `continueOnError`, cross-step `$ref`, rollback, `?diff=1` net change | Per-call tool invocations, no transaction semantics | Not exposed as a batch transaction |
+
+> The **UnitySkills** column describes mechanisms that exist in this repository and can be checked against the source or by calling the endpoints. The other two columns reflect **public material and open-source repositories surveyed in 2026-07**; they characterise a class of tooling rather than any specific project, and those capabilities may have changed since.
 
 ---
 
@@ -63,7 +95,7 @@ UnitySkills ships with a true server-side permission system aligned with Claude 
 >
 > 🗑 The Skill Installer card shows a **per-scope uninstall** button that auto-adapts: disabled when nothing's installed, a single button labeled with its scope when only one is installed, and a dropdown (`Uninstall ▾`) listing Project / Global when both are installed.
 >
-> 23 advisory design modules (architecture, performance, design patterns, testability, package-specific source rules, etc.) are available in all modes and loaded on demand.
+> 29 advisory design modules (architecture, performance, design patterns, testability, package-specific source rules, etc.) are available in all modes and loaded on demand.
 
 ---
 
@@ -77,6 +109,7 @@ This project has been deeply optimized for the following environments to ensure 
 | **Claude Code** | ✅ Supported | Intelligent Skill intent recognition, supports complex multi-step automation. |
 | **Codex** | ✅ Supported | Supports `$skill` explicit invocation and implicit intent recognition. Shares `.agents/skills/` with Antigravity in workspace mode. |
 | **Cursor** | ✅ Supported | Auto-discovers `.cursor/skills/` and `.agents/skills/`; supports `/skill-name` explicit invocation; visible in Settings → Rules. |
+| **OpenCode** | ✅ Supported | Native `.opencode/skills/` workspace and `~/.config/opencode/skills/` global discovery. |
 
 ---
 
@@ -115,7 +148,7 @@ In Unity, open menu: `Window > UnitySkills` (or press <kbd>Alt</kbd>+<kbd>Shift<
 
 ### 3. One-Click AI Skills Configuration
 1. Open `Window > UnitySkills` and go to the **AI Config** tab.
-2. Select the corresponding terminal icon (Claude / Antigravity / Codex / Cursor).
+2. Select the corresponding terminal icon (Claude / Antigravity / Codex / Cursor / OpenCode).
 3. Click **"Install"** to complete the environment configuration without manual code copying.
 
 > The installer copies the `unity-skills~/` template directory from the package to the target location.
@@ -164,6 +197,7 @@ The following are verified default directories (if the tool has a custom path co
 - Antigravity: `~/.gemini/antigravity/skills/` (global) or `.agents/skills/` (workspace)
 - OpenAI Codex: `~/.agents/skills/` (global) or `.agents/skills/` (workspace, shared with Antigravity)
 - Cursor: `~/.cursor/skills/` (global) or `.cursor/skills/` (workspace); also auto-discovers `.agents/skills/`
+- OpenCode: `~/.config/opencode/skills/` (global) or `.opencode/skills/` (workspace)
 
 #### 🧩 Other Tools Supporting Skills
 If you're using other tools that support Skills, install according to the Skills root directory specified in that tool's documentation. As long as the **standard installation specification** is met (root directory contains `SKILL.md` and maintains `skills/`, `references/`, and `scripts/` structure), it will be correctly recognized.
@@ -173,16 +207,18 @@ If you're using other tools that support Skills, install according to the Skills
 ---
 
 <details>
-<summary><h2>📦 Skills Category Overview (740)</h2></summary>
+<summary><h2>📦 Skills Category Overview (784)</h2></summary>
 
 | Category | Count | Core Functions |
 | :--- | :---: | :--- |
 | **YooAsset** | 40 | Hot-update bundle builds/Collector full CRUD/BuildReport asset and dependency analysis/PlayMode runtime validation/Reporter-Debugger-AssetArtScanner tools |
-| **Workflow** | 24 | Persistent history/Tiered task snapshots/Content-addressed file store/Auto-clean/Session-level undo/Rollback/Clear history/Bookmarks/Batch query-preview-execute jobs |
+| **Behavior** | 10 | Unity Behavior graph assets/agents/blackboard variables (com.unity.behavior, reflection-based) |
+| **HybridCLR** | 12 | HybridCLR hot-update settings/codegen/DLL compile & copy pipeline (com.code-philosophy.hybridclr, reflection-based) |
+| **Workflow** | 40 | Persistent history/Tiered task snapshots/Content-addressed file store/Auto-clean/Session-level undo/Rollback/Clear history/Bookmarks/Batch query-preview-execute jobs |
 | **Cinemachine** | 34 | 2.x/3.x dual version auto-install/MixingCamera/ClearShot/TargetGroup/Spline |
-| **Netcode** | 33 | Netcode for GameObjects setup/prefabs/lifecycle/host-server-client workflows |
+| **Netcode** | 39 | Netcode for GameObjects setup/prefabs/lifecycle/host-server-client workflows/NGO 2.5+ attachable & component-controller helpers |
 | **UI** | 29 | Canvas/Button/Text/InputField/Dropdown/ScrollView/Layout/Alignment/Image and selectable utilities |
-| **UI Toolkit** | 25 | UXML/USS file management/UIDocument/PanelSettings full property read-write/Template generation/Structure inspection/Batch create |
+| **UI Toolkit** | 31 | UXML/USS file management/UIDocument/PanelSettings full property read-write/Template generation/Structure inspection/Batch create/Runtime data binding/UXML upgrade/World-space panels |
 | **ShaderGraph** | 23 | Shader Graph create/inspect/blackboard edit/constrained node editing |
 | **ProBuilder** | 22 | ProBuilder shape creation/face-edge operations/UV tools/pivot edits/batch creation/mesh combination |
 | **XR** | 22 | XR rig setup/interactors/interactables/teleportation/continuous move/UI/haptics/interaction layers |
@@ -191,12 +227,12 @@ If you're using other tools that support Skills, install according to the Skills
 | **GameObject** | 19 | Create/Find/Transform sync/Batch operations/Hierarchy management/Rename/Duplicate |
 | **Perception** | 18 | Scene summary/health checks/stack detection/context export/dependency analysis/hotspots/diff/tag-layer stats/performance hints |
 | **Volume** | 9 | VolumeProfile/Volume/VolumeComponent creation and parameter editing |
-| **Validation** | 10 | Project validation/Empty folder cleanup/Reference detection/Mesh collider/Shader errors |
+| **Validation** | 16 | Project validation/Empty folder cleanup/Reference detection/Mesh collider/Shader errors |
 | **URP** | 7 | URP asset/renderer/renderer feature inspection and edits |
 | **Decal** | 7 | URP Decal Projector create/inspect/configure/delete workflows |
 | **DOTween** | 21 | DOTweenAnimation editor-time setup and tuning |
 | **PrimeTween** | 5 | PrimeTween Free inspection, factory discovery, and runtime tween/sequence script generation |
-| **Editor** | 14 | Play mode runtime capture/Selection/Undo-Redo/Context retrieval/Change journal/Menu execution |
+| **Editor** | 16 | Play mode runtime capture/Frame stepping/Live state inspect/Selection/Undo-Redo/Context retrieval/Change journal/Menu execution |
 | **Physics** | 12 | Raycast/SphereCast/BoxCast/Physics materials/Layer collision matrix |
 | **Script** | 12 | C# script create/Read/Replace/List/Info/Rename/Move/Analyze |
 | **Timeline** | 12 | Track create/Delete/Clip management/Playback control/Binding/Duration |
@@ -213,7 +249,7 @@ If you're using other tools that support Skills, install according to the Skills
 | **Cleaner** | 10 | Unused assets/Duplicate files/Empty folders/Missing script fix/Dependency tree |
 | **Component** | 14 | Add/Remove/Property config/Batch operations/Copy/Enable-Disable |
 | **Console** | 10 | Log capture/Clear/Export/Statistics/Pause control/Collapse/Clear on play |
-| **Debug** | 10 | Error logs/Compile check/Stack trace/Assemblies/Define symbols/Memory info |
+| **Debug** | 11 | Error logs/Compile check/Stack trace/Assemblies/Define symbols/Memory info/Editor health diagnose |
 | **Event** | 11 | UnityEvent listener management/Batch add/Copy/State control/List |
 | **Light** | 10 | Light create/Type config/Intensity-Color/Batch toggle/Probe groups/Reflection probes/Lightmaps |
 | **Model** | 10 | Model import settings/Mesh info/Material mapping/Animation/Skeleton/Batch |
@@ -226,12 +262,12 @@ If you're using other tools that support Skills, install according to the Skills
 | **Terrain** | 10 | Terrain create/Heightmap/Perlin noise/Smooth/Flatten/Texture painting |
 | **Texture** | 10 | Texture import settings/Platform settings/Sprite/Type/Size search/Batch |
 | **Project** | 10 | Player builds/Render pipeline/Build settings/Package management/Layer/Tag/PlayerSettings/Quality |
+| **Addressables** | 8 | Addressable asset groups/Profiles/Labels/Build paths/Build/Entry add-remove (com.unity.addressables, reflection-based) |
 | **Sample** | 8 | Basic examples: Create/Delete/Transform/Scene info |
-| **Diagnose** | 1 | Aggregated Editor health snapshot (console/compile/workflow/server/jobs) |
 
 > ⚠️ Most modules support `*_batch` batch operations. When operating on multiple objects, prioritize batch Skills for better performance.
 >
-> 🧠 `unity-skills/skills/` also includes **23 advisory design modules** for architecture, script design, performance, maintainability, Inspector guidance, and package-specific source rules.
+> 🧠 `unity-skills/skills/` also includes **29 advisory design modules** for architecture, script design, performance, maintainability, Inspector guidance, and package-specific source rules.
 
 </details>
 
@@ -247,9 +283,9 @@ If you're using other tools that support Skills, install according to the Skills
 │   │   ├── SKILL.md                # Main Skill Definitions (AI-readable)
 │   │   ├── scripts/
 │   │   │   └── unity_skills.py     # Python Client Library
-│   │   ├── skills/                 # 71 module docs (48 REST/module docs + 23 advisory docs)
+│   │   ├── skills/                 # 79 module docs (50 REST/module docs + 29 advisory docs)
 │   │   └── references/             # Unity Development References
-│   └── Editor/Skills/              # Core Skill Logic (52 *Skills.cs files, 740 Skills)
+│   └── Editor/Skills/              # Core Skill Logic (54 functional source modules, 55 *Skills.cs files, 784 Skills)
 │       ├── SkillsHttpServer.cs     # HTTP Server Core (Producer-Consumer)
 │       ├── SkillRouter.cs          # Request Routing & Reflection-based Skill Discovery
 │       ├── WorkflowManager.cs      # Persistent Workflow (Task/Session/Snapshot)
@@ -261,7 +297,7 @@ If you're using other tools that support Skills, install according to the Skills
 │       ├── CinemachineSkills.cs    # Cinemachine 2.x/3.x (34 skills)
 │       ├── WorkflowSkills.cs       # Workflow Undo/Rollback (24 skills)
 │       ├── PerceptionSkills.cs     # Scene Understanding (18 skills)
-│       └── ...                     # 740 Skills source code
+│       └── ...                     # 784 Skills source code
 ├── docs/
 │   └── SETUP_GUIDE.md              # Complete Setup & Usage Guide
 ├── CHANGELOG.md                    # Version Update Log
@@ -274,9 +310,9 @@ If you're using other tools that support Skills, install according to the Skills
 
 <a href="https://www.star-history.com/?repos=Besty0728%2FUnity-Skills&type=date&logscale=&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Besty0728/Unity-Skills&type=date&theme=dark&logscale&legend=top-left&sealed_token=puHA56V-rw188klMvHmwK9HLr_ngIGDkOUeEYYDkfQK3jex-mQSY6gtQdUX5bpeyxWr5NL-itvG9WkEDtFn3BasAn6uuPtHh-qWIVrwRkXb6cGi5wYWeehiHyw-STZw9Aam6AX47PMNtw62yrm-WZOp7UaUFK96GqOHmKTDCcx9ryitoAMkHAcOO18sG" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Besty0728/Unity-Skills&type=date&logscale&legend=top-left&sealed_token=puHA56V-rw188klMvHmwK9HLr_ngIGDkOUeEYYDkfQK3jex-mQSY6gtQdUX5bpeyxWr5NL-itvG9WkEDtFn3BasAn6uuPtHh-qWIVrwRkXb6cGi5wYWeehiHyw-STZw9Aam6AX47PMNtw62yrm-WZOp7UaUFK96GqOHmKTDCcx9ryitoAMkHAcOO18sG" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Besty0728/Unity-Skills&type=date&logscale&legend=top-left&sealed_token=puHA56V-rw188klMvHmwK9HLr_ngIGDkOUeEYYDkfQK3jex-mQSY6gtQdUX5bpeyxWr5NL-itvG9WkEDtFn3BasAn6uuPtHh-qWIVrwRkXb6cGi5wYWeehiHyw-STZw9Aam6AX47PMNtw62yrm-WZOp7UaUFK96GqOHmKTDCcx9ryitoAMkHAcOO18sG" />
+   <source media="(prefers-color-scheme: dark)" srcset="docs/star-history-dark.svg" />
+   <source media="(prefers-color-scheme: light)" srcset="docs/star-history-light.svg" />
+   <img alt="Star History Chart" src="docs/star-history-light.svg" />
  </picture>
 </a>
 

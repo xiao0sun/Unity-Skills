@@ -1,7 +1,15 @@
 ---
 name: unity-timeline
-description: Edit Unity Timeline — create Timeline assets and add typed tracks (animation, activation, audio, signal, etc.). Use when building cutscenes or sequences, creating a Timeline asset, or adding tracks and clips, even if the user just says "时间轴" or "做个过场动画". 编辑 Unity Timeline(创建 Timeline 资产、添加带类型的轨道:动画、激活、音频、信号等);当用户要制作过场或序列、创建 Timeline 资产、或添加轨道与片段时使用。
+description: Edit Unity Timeline assets and tracks
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Building cutscenes or sequences
+- Creating Timeline assets
+- Adding tracks and clips
+- 制作过场或序列、创建 Timeline 资产、添加轨道与片段
 
 # Timeline Skills
 

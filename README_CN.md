@@ -6,7 +6,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/Unity-2022.3%2B-black?style=for-the-badge&logo=unity" alt="Unity">
-  <img src="https://img.shields.io/badge/Skills-740-green?style=for-the-badge" alt="Skills">
+  <img src="https://img.shields.io/badge/Skills-784-green?style=for-the-badge" alt="Skills">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-orange?style=for-the-badge" alt="License"></a>
   <a href="README.md"><img src="https://img.shields.io/badge/README-English-blue?style=for-the-badge" alt="English"></a>
 </p>
@@ -23,6 +23,14 @@
 
 > 当前官方维护基线为 **Unity 2022.3+**。仓库中仍可能保留部分对 Unity 2021 的兼容逻辑，但后续功能开发、回归验证与适配工作将以 **2022.3+ / Unity 6** 为主。
 
+## 📈 项目贡献排名
+
+<p align="center">
+  <a href="https://trendshift.io/repositories/27085?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-27085" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/27085/daily?language=C%23" alt="Besty0728%2FUnity-Skills | Trendshift" width="250" height="55"/></a>
+  <a href="https://trendshift.io/repositories/27085?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-27085" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/27085/weekly?language=C%23" alt="Besty0728%2FUnity-Skills | Trendshift" width="250" height="55"/></a>
+  <a href="https://trendshift.io/repositories/27085?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-27085" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/27085/monthly?language=C%23" alt="Besty0728%2FUnity-Skills | Trendshift" width="250" height="55"/></a>
+</p>
+
 ## 🤝 致谢
 本项目基于 [unity-mcp](https://github.com/CoplayDev/unity-mcp) 的优秀理念深度重构与功能扩展。
 
@@ -30,14 +38,38 @@
 
 ## 🚀 核心特性
 
-- 🛠️ **740 REST Skills 全能库**：包含 52 个功能源码模块和 23 个 advisory 设计模块，支持 Batch 批处理，一次操控多个对象。
-- ⚡ **调用效率革命性提升 (v2.0.1+)**：Schema 缓存 + 指数退避轮询 + BATCH-FIRST 引导 → **Token 消耗 ↓ 96%**，**简单任务 4-6 次调用 → 1 次（↓ 75-83%）**。当前：v2.2.1。
+- 🛠️ **784 REST Skills 全能库**：包含 54 个功能源码模块和 29 个 advisory 设计模块，支持 Batch 批处理，一次操控多个对象。
+- ⚡ **调用效率革命性提升 (v2.0.1+)**：Schema 缓存 + 指数退避轮询 + BATCH-FIRST 引导 → **Token 消耗 ↓ 96%**，**简单任务 4-6 次调用 → 1 次（↓ 75-83%）**。当前：v2.6.0。
 - 🔐 **三档权限模式 (v1.9.0+)**：Approval / Auto / Bypass，配合双轨审批渠道（Dialog / Panel），对齐 Claude Code permission modes；老用户升级零感知。
-- 🤖 **4 大 IDE 原生支持**：Claude Code / Antigravity / Codex / Cursor，一键安装即用。
+- 🤖 **5 大 IDE 原生支持**：Claude Code / Antigravity / Codex / Cursor / OpenCode，一键安装即用。
 - 🛡️ **事务原子性保障**：操作失败自动回滚，场景永不残留，确保流程安全。
 - 🌍 **多实例同时控制**：自动端口发现与全局注册表，支持同时操控多个 Unity 项目。
 - 🔗 **超长稳定连接**：请求超时可配（默认 15 分钟），Domain Reload 后自动恢复，脚本编译/资源重导入等短暂中断会提示重试。
 - 🛡️ **防幻觉 Guardrails**：每个 Skill 模块内置 DO NOT 清单和路由规则，防止 AI 调用不存在的命令或参数错误。
+
+---
+
+## 🛡️ 为什么选 UnitySkills：治理层
+
+AI 驱动编辑器，写的是真实的场景、Prefab 和 `.meta` 文件。真正的问题不是"它能不能做到"，而是"它做错时会发生什么"。UnitySkills 在调用生命周期的四个节点上回答这个问题。
+
+- **执行前 —— `?mode=dryRun` / `?mode=plan` 预演**：`POST /skill/{name}?mode=dryRun` 不落地任何改动，只返回参数校验（`missingParams` / `unknownParams` / `typeErrors` / `semanticErrors` / `warnings`）与影响预估（`mutatesScene` / `mutatesAssets` / `mayTriggerReload` / `mayEnterPlayMode` / `riskLevel`）；有语义 planner 的 skill 还会返回 `steps` / `changes`。
+- **执行时 —— 操作级风险拦截**：每个 skill 在 `[UnitySkill]` 元数据里声明 `RiskLevel` / `Operation` / `MayEnterPlayMode` / `MayTriggerReload`，服务端据此自动判定 NeverInSemi——拦不拦从不取决于 AI 是否自觉。**Allowlist** 可为单条 skill 持久放行；可选的 `ConfirmationToken` 二次确认（默认关闭，⚙ 设置 → Runtime → Require Confirmation）为高危 skill 再加一道闸。
+- **执行后 —— JSONL 审计留痕**：每次调用、授权、撤销、被拦命中都追加到 `Library/UnitySkillsAudit.jsonl`（1MB 滚动，主文件 + 3 份历史），可在面板内浏览与过滤；删除审计条目这个动作本身也会以 `audit_deleted` / `audit_cleared` 入账。
+- **出错后 —— 类型化持久快照回滚**：Workflow 快照分 `Modified` / `Created` / `Deleted` / `Moved` / `Setting` 五类，主文件与 `.meta` 各自独立内容寻址（`fileHash` / `metaFileHash`）落在 `Library/UnitySkills/`，跨 Domain Reload 与编辑器重启存活。`workflow_undo_task` 回退的是一个任务，不是整个项目。
+- **批量即事务**：`POST /skills/batch` 支持 fail-fast 或 `continueOnError`、跨步 `$ref` 引用前序步骤输出、失败回滚，以及 `?diff=1` 返回聚合后的净变化。
+
+### 横向对比
+
+| 维度 | UnitySkills | 典型 MCP 桥接方案 | Unity 官方 AI Assistant |
+| :--- | :--- | :--- | :--- |
+| **权限粒度** | 操作级：三档模式（Approval / Auto / Bypass）+ 每条 skill 的风险元数据 + 按 skill 的 Allowlist | 无权限模型，连上即可调用全部工具面 | 客户端级信任（Pending Connections → Allow / Revoke）；授权之后不再按操作区分 |
+| **审计** | 每次调用 / 授权 / 撤销 / 拦截写结构化 JSONL，面板内可浏览，删除动作同样入账 | 仅进程日志，无结构化的逐次调用留痕 | 以对话历史与 Checkpoints 呈现，而非逐操作的审计记录 |
+| **回滚粒度** | 任务级，五类快照，主文件与 `.meta` 内容寻址，跨会话持久 | 依赖 Unity 原生 Undo 栈，Domain Reload 后不保证仍可回退 | 每次 prompt 前对整项目打 Checkpoint，恢复即整项目回到该时点 |
+| **执行前预演** | `?mode=dryRun` / `?mode=plan`：参数语义校验 + 影响预估，不落地任何改动 | 调研未见对等能力 | 未见执行前的参数校验或影响预演 |
+| **批量事务** | `POST /skills/batch`：fail-fast / `continueOnError`、跨步 `$ref`、失败回滚、`?diff=1` 净变化 | 逐条工具调用，无事务语义 | 未以批量事务形式提供 |
+
+> **UnitySkills** 一列描述的都是本仓库中已实现、可对着源码或直接调端点核对的机制。另外两列基于 **2026-07 的公开资料与开源仓库调研**，描述的是一类方案的普遍形态而非某个具体项目，相关能力可能已经更新。
 
 ---
 
@@ -63,7 +95,7 @@ UnitySkills 引入真正的服务端权限系统，对齐 Claude Code permission
 >
 > 🗑 Skill Installer 卡片的"卸载"按钮按 scope 智能形变：未装为灰态；仅一处装则按钮自带 scope 标签直接卸载；两处都装则显示 `Uninstall ▾` 下拉，分别选择 Project / Global。
 >
-> 23 个 advisory 设计模块（架构、性能、设计模式、可测试性、包级源码规则等）在所有模式下均可用，按需自动加载。
+> 29 个 advisory 设计模块（架构、性能、设计模式、可测试性、包级源码规则等）在所有模式下均可用，按需自动加载。
 
 ---
 
@@ -77,6 +109,7 @@ UnitySkills 引入真正的服务端权限系统，对齐 Claude Code permission
 | **Claude Code** | ✅ 支持 | 智能识别 Skill 意图，支持复杂多步自动化。 |
 | **Codex** | ✅ 支持 | 支持 `$skill` 显式调用和隐式意图识别。工作区与 Antigravity 共享 `.agents/skills/`。 |
 | **Cursor** | ✅ 支持 | 自动扫描 `.cursor/skills/` 和 `.agents/skills/`；支持 `/skill-name` 显式触发；可在 设置 → Rules 查看已加载技能。 |
+| **OpenCode** | ✅ 支持 | 原生扫描工作区 `.opencode/skills/` 和全局 `~/.config/opencode/skills/`。 |
 
 ---
 
@@ -115,7 +148,7 @@ https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#v1.6.0
 
 ### 3. 一键配置 AI Skills
 1. 打开 `Window > UnitySkills`，切到 **AI Config** 标签页。
-2. 选择对应的终端图标（Claude / Antigravity / Codex / Cursor）。
+2. 选择对应的终端图标（Claude / Antigravity / Codex / Cursor / OpenCode）。
 3. 点击 **"Install"** 即可完成环境配置，无需手动拷贝代码。
 
 > 安装器会复制包内的 `unity-skills~/` 模板目录到目标位置。
@@ -164,6 +197,7 @@ https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#v1.6.0
 - Antigravity：`~/.gemini/antigravity/skills/`（全局）或 `.agents/skills/`（工作区）
 - OpenAI Codex：`~/.agents/skills/`（全局）或 `.agents/skills/`（工作区，与 Antigravity 共享）
 - Cursor：`~/.cursor/skills/`（全局）或 `.cursor/skills/`（工作区）；也会自动扫描 `.agents/skills/`
+- OpenCode：`~/.config/opencode/skills/`（全局）或 `.opencode/skills/`（工作区）
 
 #### 🧩 其他支持 Skills 的工具
 若你使用的是其他支持 Skills 的工具，请按照该工具文档指定的 Skills 根目录进行安装。只要满足**标准安装规范**（根目录包含 `SKILL.md` 并保持 `skills/`、`references/` 与 `scripts/` 结构），即可被正确识别。
@@ -173,16 +207,18 @@ https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#v1.6.0
 ---
 
 <details>
-<summary><h2>📦 Skills 分类概要 (740)</h2></summary>
+<summary><h2>📦 Skills 分类概要 (784)</h2></summary>
 
 | 分类 | 数量 | 核心功能 |
 | :--- | :---: | :--- |
 | **YooAsset** | 40 | 热更新打包/Collector 完整 CRUD/BuildReport 资产与依赖分析/PlayMode 运行时验证/Reporter-Debugger-AssetArtScanner 工具 |
-| **Workflow** | 24 | 持久化历史/分级任务快照/内容寻址文件存储/自动清理/会话级撤销/回滚/清空历史/书签/批量查询预览执行作业 |
+| **Behavior** | 10 | Unity Behavior 行为图资产/Agent 组件/黑板变量（com.unity.behavior，反射实现） |
+| **HybridCLR** | 12 | HybridCLR 热更新设置/代码生成/DLL 编译与拷贝流水线（com.code-philosophy.hybridclr，反射实现） |
+| **Workflow** | 40 | 持久化历史/分级任务快照/内容寻址文件存储/自动清理/会话级撤销/回滚/清空历史/书签/批量查询预览执行作业 |
 | **Cinemachine** | 34 | 2.x/3.x双版本自动安装/混合相机/ClearShot/TargetGroup/Spline |
-| **Netcode** | 33 | Netcode for GameObjects 设置/预制体/生命周期/Host-Server-Client 工作流 |
+| **Netcode** | 39 | Netcode for GameObjects 设置/预制体/生命周期/Host-Server-Client 工作流 /NGO 2.5+ 挂载与组件控制器 |
 | **UI** | 29 | Canvas/Button/Text/InputField/Dropdown/ScrollView/Layout/对齐/Image 与 Selectable 工具 |
-| **UI Toolkit** | 25 | UXML/USS文件管理/UIDocument/PanelSettings全属性读写/模板生成/结构检查/批量创建 |
+| **UI Toolkit** | 31 | UXML/USS文件管理/UIDocument/PanelSettings全属性读写/模板生成/结构检查/批量创建 /运行时数据绑定/UXML 升级/世界空间面板 |
 | **ShaderGraph** | 23 | Shader Graph 创建/检查/黑板编辑/受限节点编辑 |
 | **ProBuilder** | 22 | ProBuilder 形体创建/面边操作/UV工具/枢轴编辑/批量创建/网格合并 |
 | **XR** | 22 | XR rig 搭建/Interactor/Interactable/传送/连续移动/UI/触觉反馈/交互层配置 |
@@ -191,12 +227,12 @@ https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#v1.6.0
 | **GameObject** | 19 | 创建/查找/变换同步/批量操作/层级管理/重命名/复制 |
 | **Perception** | 18 | 场景摘要/健康检查/栈检测/上下文导出/依赖分析/热点发现/差异对比/Tag-Layer统计/性能提示 |
 | **Volume** | 9 | VolumeProfile/Volume/VolumeComponent 创建与参数编辑 |
-| **Validation** | 10 | 项目验证/空文件夹清理/引用检测/网格碰撞/Shader错误 |
+| **Validation** | 16 | 项目验证/空文件夹清理/引用检测/网格碰撞/Shader错误 |
 | **URP** | 7 | URP 资产/Renderer/Renderer Feature 检查与编辑 |
 | **Decal** | 7 | URP Decal Projector 创建/检查/配置/删除工作流 |
 | **DOTween** | 21 | DOTweenAnimation 编辑器期配置与调参 |
 | **PrimeTween** | 5 | PrimeTween Free 检查、工厂方法发现与运行时补间/序列脚本生成 |
-| **Editor** | 14 | Play 模式运行捕获/选择/撤销重做/上下文获取/变更日志/菜单执行 |
+| **Editor** | 16 | Play 模式运行捕获/逐帧步进/运行时状态查询/选择/撤销重做/上下文获取/变更日志/菜单执行 |
 | **Physics** | 12 | 射线检测/球形投射/盒形投射/物理材质/层碰撞矩阵 |
 | **Script** | 12 | C#脚本创建/读取/替换/列表/信息/重命名/移动/分析 |
 | **Timeline** | 12 | 轨道创建/删除/Clip管理/播放控制/绑定/时长设置 |
@@ -213,7 +249,7 @@ https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#v1.6.0
 | **Cleaner** | 10 | 未使用资源/重复文件/空文件夹/丢失脚本修复/依赖树 |
 | **Component** | 14 | 添加/移除/属性配置/批量操作/复制/启用禁用 |
 | **Console** | 10 | 日志捕获/清理/导出/统计/暂停控制/折叠/播放清除 |
-| **Debug** | 10 | 错误日志/编译检查/堆栈/程序集/定义符号/内存信息 |
+| **Debug** | 11 | 错误日志/编译检查/堆栈/程序集/定义符号/内存信息/编辑器健康诊断 |
 | **Event** | 11 | UnityEvent监听器管理/批量添加/复制/状态控制/列举 |
 | **Light** | 10 | 灯光创建/类型配置/强度颜色/批量开关/探针组/反射探针/光照贴图 |
 | **Model** | 10 | 模型导入设置/Mesh信息/材质映射/动画/骨骼/批量 |
@@ -226,12 +262,12 @@ https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#v1.6.0
 | **Terrain** | 10 | 地形创建/高度图/Perlin噪声/平滑/平坦化/纹理绘制 |
 | **Texture** | 10 | 纹理导入设置/平台设置/Sprite/类型/尺寸查找/批量 |
 | **Project** | 10 | Player 出包/渲染管线/构建设置/包管理/Layer/Tag/PlayerSettings/质量 |
+| **Addressables** | 8 | Addressable 资产组/Profiles/Labels/构建路径/构建/条目增删（com.unity.addressables，反射实现） |
 | **Sample** | 8 | 基础示例：创建/删除/变换/场景信息 |
-| **Diagnose** | 1 | 编辑器健康聚合快照（控制台/编译/工作流/服务器/作业） |
 
 > ⚠️ 大部分模块支持 `*_batch` 批量操作，操作多个物体时应优先使用批量 Skills 以提升性能。
 >
-> 🧠 `unity-skills/skills/` 目录下额外提供 **23 个 advisory 设计模块**，用于在脚本编写前辅助 AI 进行架构、性能、可维护性、Inspector 设计与包级源码规则决策。
+> 🧠 `unity-skills/skills/` 目录下额外提供 **29 个 advisory 设计模块**，用于在脚本编写前辅助 AI 进行架构、性能、可维护性、Inspector 设计与包级源码规则决策。
 
 </details>
 
@@ -247,9 +283,9 @@ https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#v1.6.0
 │   │   ├── SKILL.md                # 主 Skill 定义 (AI 读取)
 │   │   ├── scripts/
 │   │   │   └── unity_skills.py     # Python 客户端库
-│   │   ├── skills/                 # 71 个模块文档（48 个 REST/模块文档 + 23 个 advisory 文档）
+│   │   ├── skills/                 # 79 个模块文档（50 个 REST/模块文档 + 29 个 advisory 文档）
 │   │   └── references/             # Unity 开发参考文档
-│   └── Editor/Skills/              # 核心 Skill 逻辑 (52 个 *Skills.cs, 共 740 Skills)
+│   └── Editor/Skills/              # 核心 Skill 逻辑 (54 个功能模块，55 个 *Skills.cs，共 784 Skills)
 │       ├── SkillsHttpServer.cs     # HTTP 服务器核心 (Producer-Consumer)
 │       ├── SkillRouter.cs          # 请求路由 & 反射发现 Skills
 │       ├── WorkflowManager.cs      # 持久化工作流 (Task/Session/Snapshot)
@@ -261,7 +297,7 @@ https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#v1.6.0
 │       ├── CinemachineSkills.cs    # Cinemachine 2.x/3.x (34 skills)
 │       ├── WorkflowSkills.cs       # Workflow 撤销/回滚 (24 skills)
 │       ├── PerceptionSkills.cs     # 场景理解 (18 skills)
-│       └── ...                     # 740 Skills 源码
+│       └── ...                     # 784 Skills 源码
 ├── docs/
 │   └── SETUP_GUIDE.md              # 完整安装使用指南
 ├── CHANGELOG.md                    # 版本更新记录
@@ -274,9 +310,9 @@ https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#v1.6.0
 
 <a href="https://www.star-history.com/?repos=Besty0728%2FUnity-Skills&type=date&logscale=&legend=top-left">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Besty0728/Unity-Skills&type=date&theme=dark&logscale&legend=top-left&sealed_token=puHA56V-rw188klMvHmwK9HLr_ngIGDkOUeEYYDkfQK3jex-mQSY6gtQdUX5bpeyxWr5NL-itvG9WkEDtFn3BasAn6uuPtHh-qWIVrwRkXb6cGi5wYWeehiHyw-STZw9Aam6AX47PMNtw62yrm-WZOp7UaUFK96GqOHmKTDCcx9ryitoAMkHAcOO18sG" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Besty0728/Unity-Skills&type=date&logscale&legend=top-left&sealed_token=puHA56V-rw188klMvHmwK9HLr_ngIGDkOUeEYYDkfQK3jex-mQSY6gtQdUX5bpeyxWr5NL-itvG9WkEDtFn3BasAn6uuPtHh-qWIVrwRkXb6cGi5wYWeehiHyw-STZw9Aam6AX47PMNtw62yrm-WZOp7UaUFK96GqOHmKTDCcx9ryitoAMkHAcOO18sG" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Besty0728/Unity-Skills&type=date&logscale&legend=top-left&sealed_token=puHA56V-rw188klMvHmwK9HLr_ngIGDkOUeEYYDkfQK3jex-mQSY6gtQdUX5bpeyxWr5NL-itvG9WkEDtFn3BasAn6uuPtHh-qWIVrwRkXb6cGi5wYWeehiHyw-STZw9Aam6AX47PMNtw62yrm-WZOp7UaUFK96GqOHmKTDCcx9ryitoAMkHAcOO18sG" />
+   <source media="(prefers-color-scheme: dark)" srcset="docs/star-history-dark.svg" />
+   <source media="(prefers-color-scheme: light)" srcset="docs/star-history-light.svg" />
+   <img alt="Star History Chart" src="docs/star-history-light.svg" />
  </picture>
 </a>
 

@@ -1,7 +1,15 @@
 ---
 name: unity-bookmark
-description: Manage Scene View bookmarks — save the current selection plus camera pivot/rotation/size under a name, then jump back later. Use when saving or restoring Scene View viewpoints, bookmarking a camera angle, or navigating between saved scene locations, even if the user just says "标记视角" or "存个机位". 管理 Scene View 书签(以命名方式保存当前选中对象与相机 pivot/旋转/大小,之后快速跳回);当用户要保存或恢复场景视角、收藏某个机位、或在已存位置间切换时使用。
+description: Manage Scene View bookmarks and saved viewpoints
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Saving or restoring Scene View viewpoints
+- Bookmarking camera angles
+- Navigating saved scene locations
+- 保存或恢复场景视角、收藏机位、在已存位置间切换
 
 # Bookmark Skills
 
@@ -10,7 +18,7 @@ Save and recall Scene View camera positions.
 ## Guardrails
 
 **Operating Mode** (v1.9 three-tier):
-- **Approval** (default): `bookmark_set` / `bookmark_goto` / `bookmark_list` 都标 `SkillMode.SemiAuto`，Approval 模式下可直接执行，无需走 grant 协议。与 `workflow` 模块文档保持一致（C# `WorkflowSkills.cs` 内三者均为 SemiAuto）。
+- **Approval** (default): 只有 `bookmark_list` 标 `SkillMode.SemiAuto`（纯读），Approval 模式下可直接执行，无需走 grant 协议。`bookmark_set`（`Operation.Create`，写入书签表）与 `bookmark_goto`（`Operation.Execute`，改动编辑器选中对象与 Scene View 视角）都有副作用，走默认 `SkillMode.FullAuto`，Approval 模式下需 grant。与 `workflow` 模块文档保持一致（以 C# `WorkflowSkills.cs` 的特性标注为准）。
 - **Auto** / **Bypass**: SemiAuto and FullAuto run directly.
 - Auto-forbidden in this module: `bookmark_delete` (`SkillOperation.Delete`). Reachable only under Bypass mode or via a user-managed Allowlist entry; the grant flow returns `MODE_FORBIDDEN`. Bookmarks themselves are in-memory only — `bookmark_delete` only removes the entry, no asset I/O.
 

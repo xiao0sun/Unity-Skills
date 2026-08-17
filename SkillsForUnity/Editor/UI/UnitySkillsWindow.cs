@@ -9,7 +9,7 @@ using System.Collections.Generic;
 namespace UnitySkills
 {
     /// <summary>
-    /// Unity Editor Window — UnitySkills v2 layout.
+    /// Unity Editor Window — UnitySkills layout.
     /// Topbar (server status + URL + toggle + settings) — persistent.
     /// 4 tabs: Skills / AI Config / History / Analytics.
     /// Footer: version + live stats pill + segmented language switch.
@@ -20,7 +20,7 @@ namespace UnitySkills
         private const string UxmlPath = "Packages/com.besty.unity-skills/Editor/UI/UnitySkillsWindow.uxml";
         private const string UssPath  = "Packages/com.besty.unity-skills/Editor/UI/UnitySkillsWindow.uss";
 
-        // v1.9 一次性 first-run toast 标记。
+        // 一次性 first-run toast 标记。
         // 仅在 "新安装 + 未设过 OperatingMode" 时弹出，避免老用户/已配置用户被打扰。
         private const string PrefKeyFirstRunToast = "UnitySkills_FirstRunToastShown";
 
@@ -41,6 +41,7 @@ namespace UnitySkills
         private FooterController         _footer;
         private SettingsDrawerController _drawer;
         private PendingApprovalBannerController _pendingBanner;
+        private VersionUpdateBannerController _versionUpdateBanner;
         private SkillsTabController      _skillsController;
         private AIConfigTabController    _configController;
         private HistoryTabController     _historyController;
@@ -64,14 +65,14 @@ namespace UnitySkills
         [MenuItem("Window/UnitySkills", false, 1)]
         public static void ShowWindow()
         {
-            var window = GetWindow<UnitySkillsWindow>("UnitySkills");
+            var window = GetWindow<UnitySkillsWindow>(SkillsLocalization.Get("window_title"));
             window.minSize = new Vector2(420, 480);
         }
 
         private void OnEnable()
         {
             RefreshSkillsList();
-            // v1.9：模式/授权变化时联动 topbar/footer 的下次重绘，避免分别在每个子 Controller 里订阅。
+            // 模式/授权变化时联动 topbar/footer 的下次重绘，避免分别在每个子 Controller 里订阅。
             SkillsModeManager.OnChanged += Repaint;
             MaybeShowFirstRunToast();
         }
@@ -79,12 +80,16 @@ namespace UnitySkills
         private void OnDisable()
         {
             SkillsModeManager.OnChanged -= Repaint;
+            SkillsLocalization.LanguageChanged -= RefreshLocalization;
             _liveUpdateItem?.Pause();
             _liveUpdateItem = null;
         }
 
         public void CreateGUI()
         {
+            SkillsLocalization.LanguageChanged -= RefreshLocalization;
+            SkillsLocalization.LanguageChanged += RefreshLocalization;
+
             // Load USS first so :root variables resolve when UXML clones
             var uss = AssetDatabase.LoadAssetAtPath<StyleSheet>(UssPath);
             if (uss != null) rootVisualElement.styleSheets.Add(uss);
@@ -108,6 +113,7 @@ namespace UnitySkills
             _footer         = new FooterController(rootVisualElement, this);
             _drawer         = new SettingsDrawerController(rootVisualElement, this);
             _pendingBanner  = new PendingApprovalBannerController(rootVisualElement, this);
+            _versionUpdateBanner = new VersionUpdateBannerController(rootVisualElement);
 
             _skillsController  = new SkillsTabController(_tabContents[0], this);
             _configController  = new AIConfigTabController(_tabContents[1], this);
@@ -175,8 +181,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Called when user clicks a skill in Skills Tab — now stays within the
-        /// Skills tab (master-detail) instead of jumping to a separate "Test" tab.
+        /// Called when user clicks a skill in Skills Tab. Stays within the
+        /// Skills tab (master-detail) rather than a separate "Test" tab.
         /// Tab switch ensured here so external callers (legacy code paths) still work.
         /// </summary>
         public void SelectTestSkill(string skillName, string defaultParams)
@@ -193,6 +199,7 @@ namespace UnitySkills
         {
             _topbar?.UpdateLiveData();
             _footer?.UpdateLiveData();
+            _versionUpdateBanner?.UpdateLiveData();
         }
 
         // ----- Language switch (called by FooterController) -----
@@ -200,11 +207,12 @@ namespace UnitySkills
         {
             if (SkillsLocalization.Current == lang) return;
             SkillsLocalization.Current = lang;
-            RefreshLocalization();
         }
 
         public void RefreshLocalization()
         {
+            UISkillsFont.Apply(rootVisualElement);
+
             // Main tabs
             if (_tabButtons[0] != null) _tabButtons[0].text = SkillsLocalization.Get("tab_skills");
             if (_tabButtons[1] != null) _tabButtons[1].text = SkillsLocalization.Get("tab_ai_config");
@@ -215,6 +223,7 @@ namespace UnitySkills
             _footer?.RefreshLocalization();
             _drawer?.RefreshLocalization();
             _pendingBanner?.RefreshLocalization();
+            _versionUpdateBanner?.RefreshLocalization();
             _skillsController?.RefreshLocalization();
             _configController?.RefreshLocalization();
             _historyController?.RefreshLocalization();
@@ -277,7 +286,7 @@ namespace UnitySkills
             return null;
         }
 
-        // ===== v1.9 first-run permission toast =====
+        // ===== first-run permission toast =====
 
         private void MaybeShowFirstRunToast()
         {
@@ -292,21 +301,16 @@ namespace UnitySkills
 
             EditorApplication.delayCall += () =>
             {
-                string title = PermissionUiHelpers.L("perm_first_run_toast_title",
-                    "UnitySkills v1.9", "UnitySkills v1.9");
-                string msg = PermissionUiHelpers.L("perm_first_run_toast_msg",
-                    "Auto mode is the default for fresh installs (v1.9). FullAuto skills run directly; only high-risk operations (NeverInSemi) are blocked. Open the UnitySkills window and use the gear icon to switch to Approval (per-skill confirmation) or Bypass (allow all).",
-                    "新安装默认 Auto 自动模式（v1.9）。FullAuto skill 直接执行，仅高危操作（NeverInSemi）被拦截。打开 UnitySkills 主窗口，点击右上角设置齿轮抽屉，可切换到 Approval（逐项审批）或 Bypass（全部放行）。");
-                string openBtn = PermissionUiHelpers.L("perm_first_run_toast_open",
-                    "Open Permissions", "打开权限面板");
-                string okBtn = PermissionUiHelpers.L("perm_first_run_toast_dismiss",
-                    "OK", "知道了");
+                string title = SkillsLocalization.Get("perm_first_run_toast_title");
+                string msg = SkillsLocalization.Get("perm_first_run_toast_msg");
+                string openBtn = SkillsLocalization.Get("perm_first_run_toast_open");
+                string okBtn = SkillsLocalization.Get("perm_first_run_toast_dismiss");
 
                 if (EditorUtility.DisplayDialog(title, msg, openBtn, okBtn))
                 {
                     // 主窗口 + Settings 抽屉作为权限 UI 唯一入口。
                     // delayCall 让 CreateGUI 先完成，OpenSettings 才能拿到 drawer 引用。
-                    var window = GetWindow<UnitySkillsWindow>("UnitySkills");
+                    var window = GetWindow<UnitySkillsWindow>(SkillsLocalization.Get("window_title"));
                     window.minSize = new Vector2(420, 480);
                     EditorApplication.delayCall += () => window.OpenSettings();
                 }
@@ -315,23 +319,11 @@ namespace UnitySkills
     }
 
     /// <summary>
-    /// v1.9 权限/审计面板共享小工具。
+    /// 权限/审计面板共享小工具。
     /// 集中处理 Localization fallback 与"老安装"判定，让 EditorWindow 实现保持薄。
     /// </summary>
     internal static class PermissionUiHelpers
     {
-        /// <summary>
-        /// 先查 SkillsLocalization；如果 key 缺失（Get 返回 key 本身），按当前语言走 fallback。
-        /// 让 UI 不依赖其他 agent 补译 Localization.cs，后续补 key 自动生效。
-        /// </summary>
-        public static string L(string key, string enFallback, string cnFallback)
-        {
-            var v = SkillsLocalization.Get(key);
-            if (!string.Equals(v, key, StringComparison.Ordinal)) return v;
-            return SkillsLocalization.Current == SkillsLocalization.Language.Chinese
-                ? cnFallback : enFallback;
-        }
-
         /// <summary>
         /// 与 <c>SkillsModeManager</c> 内部 IsExistingInstall 同步的 UI 侧判定，
         /// 用于决定是否对老用户隐藏首启 toast；保持两侧 key 列表一致即可。
@@ -364,7 +356,7 @@ namespace UnitySkills
     }
 
     /// <summary>
-    /// v1.9 审计日志查看器 — UI Toolkit / UXML 实现的控制台风格列表。
+    /// 审计日志查看器 — UI Toolkit / UXML 实现的控制台风格列表。
     /// Toolbar(路径 + Reveal + Refresh) → Filter(搜索 + 类型下拉 + 计数) → ListView(图标+时间+徽章+摘要) → Detail(原始 JSON)。
     /// 入口：主窗口 → 齿轮 → Settings Drawer → Permissions 组 → [View Audit Log]。
     /// 未单独挂菜单，避免 Window/UnitySkills 子菜单泛滥。
@@ -373,10 +365,12 @@ namespace UnitySkills
     {
         private const string UxmlPath = "Packages/com.besty.unity-skills/Editor/UI/AuditLogWindow.uxml";
         private const string UssPath  = "Packages/com.besty.unity-skills/Editor/UI/AuditLogWindow.uss";
+        // 主题变量（--color-*）唯一源：主窗口 USS 先于本窗口 USS 加载（同 UnityCliWindow 范式）。
+        private const string ThemeUssPath = "Packages/com.besty.unity-skills/Editor/UI/UnitySkillsWindow.uss";
         private const int MaxEntries = 500;
 
         // 类型筛选下拉选项；"All" 表示不过滤。新事件类型在 AuditLog 添加后同步追加。
-        // v1.9 引入了 allowlist_* / grant_executed / audit_* 系列；revoke / revoke_all 保留以兼容旧日志。
+        // revoke / revoke_all 保留以兼容旧日志。
         private static readonly string[] _typeOptions = new[]
         {
             "All",
@@ -402,13 +396,31 @@ namespace UnitySkills
         public static void ShowWindow()
         {
             var w = GetWindow<UnitySkillsAuditWindow>(
-                PermissionUiHelpers.L("perm_audit_window_title", "UnitySkills Audit Log", "UnitySkills 审计日志"));
+                SkillsLocalization.Get("perm_audit_window_title"));
             w.minSize = new Vector2(720, 480);
             w.Focus();
         }
 
+        // ----- 语言跟随：主面板切换语言时整树重建（含窗口标题） -----
+
+        private void OnEnable() => SkillsLocalization.LanguageChanged += RebuildForLanguage;
+        private void OnDisable() => SkillsLocalization.LanguageChanged -= RebuildForLanguage;
+
+        private void RebuildForLanguage()
+        {
+            titleContent = new GUIContent(
+                SkillsLocalization.Get("perm_audit_window_title"));
+            rootVisualElement.Clear();
+            rootVisualElement.styleSheets.Clear();
+            CreateGUI();
+        }
+
         private void CreateGUI()
         {
+            var themeUss = AssetDatabase.LoadAssetAtPath<StyleSheet>(ThemeUssPath);
+            if (themeUss != null) rootVisualElement.styleSheets.Add(themeUss);
+            else Debug.LogWarning($"[UnitySkills] Failed to load theme USS: {ThemeUssPath}");
+
             var uss = AssetDatabase.LoadAssetAtPath<StyleSheet>(UssPath);
             if (uss != null) rootVisualElement.styleSheets.Add(uss);
             else Debug.LogWarning($"[UnitySkills] Failed to load Audit USS: {UssPath}");
@@ -438,11 +450,10 @@ namespace UnitySkills
             var pathLabel  = rootVisualElement.Q<Label>("audit-path-label");
 
             if (pathLabel != null)
-                pathLabel.text = PermissionUiHelpers.L("perm_log_path_label", "Log:", "日志：");
+                pathLabel.text = SkillsLocalization.Get("perm_log_path_label");
             if (revealBtn != null)
             {
-                revealBtn.text = PermissionUiHelpers.L("perm_open_in_explorer",
-                    "Reveal", "在资源管理器中打开");
+                revealBtn.text = SkillsLocalization.Get("perm_open_in_explorer");
                 revealBtn.clicked += () =>
                 {
                     if (!string.IsNullOrEmpty(_logPath))
@@ -451,24 +462,19 @@ namespace UnitySkills
             }
             if (refreshBtn != null)
             {
-                refreshBtn.text = PermissionUiHelpers.L("perm_refresh", "Refresh", "刷新");
+                refreshBtn.text = SkillsLocalization.Get("perm_refresh");
                 refreshBtn.clicked += Reload;
             }
             if (clearBtn != null)
             {
-                clearBtn.text = PermissionUiHelpers.L("perm_audit_clear_all",
-                    "Clear All", "清空全部");
-                clearBtn.tooltip = PermissionUiHelpers.L("perm_audit_clear_all_tip",
-                    "Permanently delete the entire audit log (including rotated files).",
-                    "永久删除整个审计日志（含已滚动文件）。");
+                clearBtn.text = SkillsLocalization.Get("perm_audit_clear_all");
+                clearBtn.tooltip = SkillsLocalization.Get("perm_audit_clear_all_tip");
                 clearBtn.clicked += OnClearAllClicked;
             }
 
             if (_searchField != null)
             {
-                _searchField.tooltip = PermissionUiHelpers.L("perm_audit_search_tip",
-                    "Filter by skill name, token or args",
-                    "按技能名 / token / 参数过滤");
+                _searchField.tooltip = SkillsLocalization.Get("perm_audit_search_tip");
                 _searchField.RegisterValueChangedCallback(_ => ApplyFilter());
             }
 
@@ -480,9 +486,7 @@ namespace UnitySkills
             }
 
             if (_detailTitle != null)
-                _detailTitle.text = PermissionUiHelpers.L("perm_audit_select_hint",
-                    "Select an entry to view raw JSON",
-                    "选择一行查看原始 JSON");
+                _detailTitle.text = SkillsLocalization.Get("perm_audit_select_hint");
 
             if (_detailJson != null)
             {
@@ -565,8 +569,7 @@ namespace UnitySkills
             if (_countLabel != null)
             {
                 _countLabel.text = string.Format(
-                    PermissionUiHelpers.L("perm_audit_count_fmt",
-                        "{0} / {1} entries", "{0} / {1} 条"),
+                    SkillsLocalization.Get("perm_audit_count_fmt"),
                     _filtered.Count, _all.Count);
             }
             RefreshDetail();
@@ -583,9 +586,7 @@ namespace UnitySkills
             if (idx < 0 || idx >= _filtered.Count)
             {
                 if (_detailTitle != null)
-                    _detailTitle.text = PermissionUiHelpers.L("perm_audit_select_hint",
-                        "Select an entry to view raw JSON",
-                        "选择一行查看原始 JSON");
+                    _detailTitle.text = SkillsLocalization.Get("perm_audit_select_hint");
                 if (_detailJson != null) _detailJson.SetValueWithoutNotify("");
                 return;
             }
@@ -640,8 +641,7 @@ namespace UnitySkills
             // handlers on each rebind.
             var del = new Button { name = "row-delete", text = "X" };
             del.AddToClassList("audit-row__delete");
-            del.tooltip = PermissionUiHelpers.L("perm_audit_delete_row",
-                "Delete this entry", "删除该条");
+            del.tooltip = SkillsLocalization.Get("perm_audit_delete_row");
             del.clicked += () => OnDeleteRowClicked(del.userData as AuditEntry);
             row.Add(del);
 
@@ -828,13 +828,11 @@ namespace UnitySkills
         private void OnDeleteRowClicked(AuditEntry entry)
         {
             if (entry == null) return;
-            string ok = PermissionUiHelpers.L("perm_audit_delete_ok",  "Delete", "删除");
-            string cancel = PermissionUiHelpers.L("perm_audit_delete_cancel", "Cancel", "取消");
-            string title  = PermissionUiHelpers.L("perm_audit_delete_row", "Delete this entry", "删除该条");
+            string ok = SkillsLocalization.Get("perm_audit_delete_ok");
+            string cancel = SkillsLocalization.Get("perm_audit_delete_cancel");
+            string title  = SkillsLocalization.Get("perm_audit_delete_row");
             string msg = string.Format(
-                PermissionUiHelpers.L("perm_audit_delete_row_confirm_fmt",
-                    "Delete this audit entry?\n\n[{0}]  {1}\n{2}",
-                    "确定删除这条审计记录吗？\n\n[{0}]  {1}\n{2}"),
+                SkillsLocalization.Get("perm_audit_delete_row_confirm_fmt"),
                 entry.ShortTime, entry.Type ?? "?", entry.Summary ?? "");
             if (!EditorUtility.DisplayDialog(title, msg, ok, cancel)) return;
 
@@ -844,28 +842,24 @@ namespace UnitySkills
                 if (removed <= 0)
                 {
                     EditorUtility.DisplayDialog(title,
-                        PermissionUiHelpers.L("perm_audit_delete_not_found",
-                            "Entry not found in the active log (it may have already been rotated).",
-                            "未在当前日志中找到该条（可能已被滚动归档）。"),
-                        "OK");
+                        SkillsLocalization.Get("perm_audit_delete_not_found"),
+                        SkillsLocalization.Get("dialog_ok"));
                 }
             }
             catch (Exception ex)
             {
-                EditorUtility.DisplayDialog("Error", ex.Message, "OK");
+                EditorUtility.DisplayDialog(SkillsLocalization.Get("dialog_error"), ex.Message, SkillsLocalization.Get("dialog_ok"));
             }
             Reload();
         }
 
         private void OnClearAllClicked()
         {
-            string title = PermissionUiHelpers.L("perm_audit_clear_all", "Clear All", "清空全部");
-            string msg = PermissionUiHelpers.L("perm_audit_clear_all_confirm",
-                "Permanently delete the entire audit log (including rotated history files)?\n\nThis cannot be undone. The wipe itself will be recorded as a fresh 'audit_cleared' entry.",
-                "确定永久删除整个审计日志（含历史滚动文件）吗？\n\n该操作不可撤销。清空动作本身会作为新的 audit_cleared 事件留痕。");
+            string title = SkillsLocalization.Get("perm_audit_clear_all");
+            string msg = SkillsLocalization.Get("perm_audit_clear_all_confirm");
             if (!EditorUtility.DisplayDialog(title, msg,
-                    PermissionUiHelpers.L("perm_audit_clear_ok", "Clear All", "清空"),
-                    PermissionUiHelpers.L("perm_audit_delete_cancel", "Cancel", "取消")))
+                    SkillsLocalization.Get("perm_audit_clear_ok"),
+                    SkillsLocalization.Get("perm_audit_delete_cancel")))
                 return;
 
             try
@@ -874,7 +868,7 @@ namespace UnitySkills
             }
             catch (Exception ex)
             {
-                EditorUtility.DisplayDialog("Error", ex.Message, "OK");
+                EditorUtility.DisplayDialog(SkillsLocalization.Get("dialog_error"), ex.Message, SkillsLocalization.Get("dialog_ok"));
             }
             Reload();
         }

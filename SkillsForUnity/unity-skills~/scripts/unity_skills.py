@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
-__version__ = "2.2.1"
+__version__ = "2.6.0"
 
 UNITY_URL = "http://localhost:8090"
 DEFAULT_PORT = 8090
@@ -122,7 +122,6 @@ def _version_matches(actual_version: str, target: str) -> bool:
     if not actual_version or not target:
         return False
 
-    # Strip "Unity" prefix and whitespace from target
     cleaned = target.strip()
     if cleaned.lower().startswith("unity"):
         cleaned = cleaned[5:].strip()
@@ -153,6 +152,43 @@ def _is_retryable_transport_error(result: Dict[str, Any]) -> bool:
         or 'read timed out' in error_text
         or 'connection aborted' in error_text
     )
+
+
+# Server-side "wait and retry" contract (see SkillErrorResponse.Build in SkillsHttpServer.cs):
+# COMPILING / RATE_LIMIT / QUEUE_FULL / SERVER_STOPPED are all transient-unavailability
+# responses carrying retryStrategy == "wait_and_retry" plus a retryAfterSeconds hint, sent
+# as HTTP 503 (COMPILING, QUEUE_FULL, SERVER_STOPPED) or 429 (RATE_LIMIT) with a valid JSON
+# body — not a connection/timeout exception, so _is_retryable_transport_error() above never
+# sees them.
+_RETRYABLE_ERROR_CODES = {'COMPILING', 'RATE_LIMIT', 'QUEUE_FULL', 'SERVER_STOPPED'}
+_RETRYABLE_HTTP_STATUS = {429, 503}
+_DEFAULT_STRUCTURED_RETRY_SECONDS = 2.0
+_MAX_STRUCTURED_RETRY_SECONDS = 15.0
+
+
+def _structured_retry_after(data: Dict[str, Any], status_code: Optional[int] = None) -> Optional[float]:
+    """Return the wait time (seconds) before retrying a structured server error response,
+    or None when the error is not one of the server's transient-unavailability responses.
+
+    HTTP 503/429 without a matching errorCode/retryStrategy is still treated as retryable
+    as an auxiliary signal, so a future transient code added under the same status lines
+    is retried without a client update.
+    """
+    if not isinstance(data, dict):
+        return None
+
+    is_retryable = (
+        data.get('errorCode') in _RETRYABLE_ERROR_CODES
+        or data.get('retryStrategy') == 'wait_and_retry'
+        or status_code in _RETRYABLE_HTTP_STATUS
+    )
+    if not is_retryable:
+        return None
+
+    retry_after = data.get('retryAfterSeconds')
+    if not isinstance(retry_after, (int, float)) or retry_after <= 0:
+        retry_after = _DEFAULT_STRUCTURED_RETRY_SECONDS
+    return min(float(retry_after), _MAX_STRUCTURED_RETRY_SECONDS)
 
 
 class UnitySkills:
@@ -206,7 +242,6 @@ class UnitySkills:
                 found_port = self._find_first_available()
                 self.url = f"http://localhost:{found_port}"
 
-        # Sync timeout from Unity server if user didn't specify one
         if not timeout:
             self._sync_timeout_from_server()
 
@@ -371,105 +406,179 @@ class UnitySkills:
         response.encoding = 'utf-8'
         return response
 
-    def call(self, skill_name: str, verbose: bool = False, wait_for_job: bool = False,
-             job_timeout: float = 60.0, _retries: int = 3, _retry_delay: float = 2.0, **kwargs) -> Dict[str, Any]:
+    def _timeout_error_result(self, timeout: Optional[float] = None) -> Dict[str, Any]:
+        effective_timeout = timeout if timeout is not None else self.timeout
+        return {
+            'success': False,
+            'error': f"Request to {self.url} timed out after {effective_timeout} seconds.",
+            'transportError': 'timeout',
+            'retryable': True,
+            'suggestion': 'Unity may still be compiling scripts or processing a long-running operation. Wait a moment and retry.',
+        }
+
+    def _connection_error_result(self) -> Dict[str, Any]:
+        return {
+            'success': False,
+            'error': f"Cannot connect to {self.url}. Unity instance may be down.",
+            'transportError': 'connection',
+            'retryable': True,
+            'suggestion': 'Unity may be recompiling scripts (Domain Reload). Wait 3-5 seconds and retry.',
+            'hint': 'Check if server is running: open Window > UnitySkills and toggle the server switch'
+        }
+
+    def _post_skill_with_retries(self, skill_name: str, payload: Dict[str, Any], mode: str = None,
+                                  timeout: Optional[int] = None, _retries: int = 3,
+                                  _retry_delay: float = 2.0) -> Dict[str, Any]:
+        """Shared retry loop for POST /skill/{name}, used by call(), dry_run_skill() and plan_skill().
+
+        Retries (within the shared `_retries` budget) on two kinds of transient failure:
+          - transport errors (connection refused / timed out) -- typical while Unity is
+            mid Domain Reload and the HTTP listener itself is down;
+          - structured "wait and retry" error bodies the server returns once the listener
+            IS up but a skill can't run yet (COMPILING/RATE_LIMIT/QUEUE_FULL/SERVER_STOPPED;
+            see _structured_retry_after()). The wait uses the server's own retryAfterSeconds
+            when present.
+
+        Retries exhausted on a structured error still return {'ok': True, ...} with the
+        server's last response/data untouched, so callers see the real error payload
+        rather than a synthesized one.
+
+        Returns one of:
+          {'ok': True, 'response': <requests.Response>, 'data': <parsed JSON dict>}
+          {'ok': False, 'transport_error': <dict from _timeout_error_result/_connection_error_result>}
+          {'ok': False, 'invalid_json': <response.text>}
+          {'ok': False, 'exception': <str(exc)>}   # any other exception, not retried
         """
-        Call a skill on this instance with automatic retry on connection errors.
+        for attempt in range(_retries + 1):
+            try:
+                response = self._post_skill(skill_name, payload, mode=mode, timeout=timeout)
+            except requests.exceptions.Timeout:
+                if attempt < _retries:
+                    time.sleep(_retry_delay * (attempt + 1))
+                    continue
+                return {'ok': False, 'transport_error': self._timeout_error_result(timeout)}
+            except requests.exceptions.ConnectionError:
+                if attempt < _retries:
+                    time.sleep(_retry_delay * (attempt + 1))
+                    continue
+                return {'ok': False, 'transport_error': self._connection_error_result()}
+            except Exception as e:
+                return {'ok': False, 'exception': str(e)}
+
+            try:
+                data = response.json()
+            except ValueError:
+                return {'ok': False, 'invalid_json': response.text}
+
+            if isinstance(data, dict) and data.get('status') == 'error':
+                retry_after = _structured_retry_after(data, response.status_code)
+                if retry_after is not None and attempt < _retries:
+                    time.sleep(retry_after)
+                    continue
+
+            return {'ok': True, 'response': response, 'data': data}
+
+        # Unreachable: every branch above either continues or returns.
+        return {'ok': False, 'exception': 'retry loop exhausted unexpectedly'}
+
+    @staticmethod
+    def _mode_result_from_outcome(outcome: Dict[str, Any]) -> Dict[str, Any]:
+        """Shape a _post_skill_with_retries() outcome into dry_run_skill/plan_skill's
+        historical {'status': ..., ...} return format (the server's raw JSON on success,
+        unlike call()'s normalized {'success': ...} shape)."""
+        if outcome['ok']:
+            return outcome['data']
+        if 'invalid_json' in outcome:
+            return {'status': 'error', 'error': f"Invalid JSON response: {outcome['invalid_json']}"}
+        if 'transport_error' in outcome:
+            return {'status': 'error', 'error': outcome['transport_error'].get('error', 'Transport error')}
+        return {'status': 'error', 'error': outcome.get('exception', 'Unknown error')}
+
+    def call(self, skill_name: str, verbose: bool = False, wait_for_job: bool = False,
+             job_timeout: float = 60.0, _retries: int = 3, _retry_delay: float = 2.0,
+             timeout: Optional[int] = None, **kwargs) -> Dict[str, Any]:
+        """
+        Call a skill on this instance with automatic retry on connection errors and on the
+        server's structured "wait and retry" responses (COMPILING/RATE_LIMIT/QUEUE_FULL/
+        SERVER_STOPPED -- see SkillErrorResponse.Build in SkillsHttpServer.cs).
 
         Args:
             skill_name: Name of the skill to call
             verbose: Whether to return verbose output
-            _retries: Number of retries on connection error (default 3)
-            _retry_delay: Base delay between retries in seconds (default 2.0), uses progressive backoff
+            _retries: Number of retries on connection error or transient server error (default 3)
+            _retry_delay: Base delay between transport-error retries in seconds (default 2.0),
+                uses progressive backoff. Retries triggered by a structured server error use
+                the server's own retryAfterSeconds instead (capped at 15s).
+            timeout: Per-call request timeout override in seconds. None (default) reuses the
+                instance-level timeout set at construction.
 
         Returns a normalized response with 'success' field and flattened result data.
         Error responses additionally carry the server's structured correction fields
         (errorCode, details, suggestedFixes, retryStrategy, ...) when the server sent them.
         """
-        last_error = None
-        for attempt in range(_retries + 1):
-            try:
-                kwargs['verbose'] = verbose
-                response = self._post_skill(skill_name, kwargs)
+        kwargs['verbose'] = verbose
+        outcome = self._post_skill_with_retries(
+            skill_name, kwargs, timeout=timeout, _retries=_retries, _retry_delay=_retry_delay)
 
-                try:
-                    data = response.json()
-                except ValueError:
-                    return {'success': False, 'error': f"Invalid JSON response: {response.text}"}
+        if not outcome['ok']:
+            if 'invalid_json' in outcome:
+                return {'success': False, 'error': f"Invalid JSON response: {outcome['invalid_json']}"}
+            if 'transport_error' in outcome:
+                return outcome['transport_error']
+            return {'success': False, 'error': outcome.get('exception', 'Unknown error')}
 
-                if data.get('status') == 'success':
-                    result = data.get('result', {})
-                    normalized = {'success': True}
-                    if isinstance(result, dict):
-                        normalized.update(result)
-                    else:
-                        normalized['result'] = result
-                    if wait_for_job and isinstance(normalized, dict) and normalized.get('jobId'):
-                        return self.wait_for_job(normalized['jobId'], timeout=job_timeout)
-                    return normalized
-                elif data.get('status') == 'error':
-                    normalized = {
-                        'success': False,
-                        'error': data.get('error', 'Unknown error'),
-                    }
-                    # Preserve the server's structured correction fields (did-you-mean
-                    # suggestions, allowedParams, retry guidance) when present, so
-                    # agents can self-correct without a human round-trip.
-                    for key in ('errorCode', 'details', 'suggestedFixes', 'retryStrategy',
-                                'relatedSkills', 'retryAfterSeconds', 'skill', 'message'):
-                        if key in data:
-                            normalized[key] = data[key]
-                    return normalized
-                else:
-                    if wait_for_job and isinstance(data, dict) and data.get('jobId'):
-                        return self.wait_for_job(data['jobId'], timeout=job_timeout)
-                    return data
+        data = outcome['data']
+        if data.get('status') == 'success':
+            result = data.get('result', {})
+            normalized = {'success': True}
+            if isinstance(result, dict):
+                normalized.update(result)
+            else:
+                normalized['result'] = result
+            if wait_for_job and isinstance(normalized, dict) and normalized.get('jobId'):
+                return self.wait_for_job(normalized['jobId'], timeout=job_timeout)
+            return normalized
+        elif data.get('status') == 'error':
+            normalized = {
+                'success': False,
+                'error': data.get('error', 'Unknown error'),
+            }
+            # Preserve the server's structured correction fields (did-you-mean
+            # suggestions, allowedParams, retry guidance) when present, so
+            # agents can self-correct without a human round-trip.
+            for key in ('errorCode', 'details', 'suggestedFixes', 'retryStrategy',
+                        'relatedSkills', 'retryAfterSeconds', 'skill', 'message'):
+                if key in data:
+                    normalized[key] = data[key]
+            return normalized
+        else:
+            if wait_for_job and isinstance(data, dict) and data.get('jobId'):
+                return self.wait_for_job(data['jobId'], timeout=job_timeout)
+            return data
 
-            except requests.exceptions.Timeout as e:
-                last_error = e
-                if attempt < _retries:
-                    time.sleep(_retry_delay * (attempt + 1))
-                    continue
-                return {
-                    'success': False,
-                    'error': f"Request to {self.url} timed out after {self.timeout} seconds.",
-                    'transportError': 'timeout',
-                    'retryable': True,
-                    'suggestion': 'Unity may still be compiling scripts or processing a long-running operation. Wait a moment and retry.',
-                }
-            except requests.exceptions.ConnectionError as e:
-                last_error = e
-                if attempt < _retries:
-                    time.sleep(_retry_delay * (attempt + 1))
-                    continue
-                return {
-                    'success': False,
-                    'error': f"Cannot connect to {self.url}. Unity instance may be down.",
-                    'transportError': 'connection',
-                    'retryable': True,
-                    'suggestion': 'Unity may be recompiling scripts (Domain Reload). Wait 3-5 seconds and retry.',
-                    'hint': 'Check if server is running: open Window > UnitySkills and toggle the server switch'
-                }
-            except Exception as e:
-                return {'success': False, 'error': str(e)}
+    def dry_run_skill(self, skill_name: str, timeout: Optional[int] = None,
+                      _retries: int = 3, _retry_delay: float = 2.0, **kwargs) -> Dict[str, Any]:
+        """Validate a Unity skill call without executing it.
 
-    def dry_run_skill(self, skill_name: str, **kwargs) -> Dict[str, Any]:
-        try:
-            response = self._post_skill(skill_name, kwargs, mode='dryRun')
-            return response.json()
-        except ValueError as exc:
-            return {'status': 'error', 'error': f'Invalid JSON response: {exc}'}
-        except Exception as exc:
-            return {'status': 'error', 'error': str(exc)}
+        Shares call()'s retry logic (see _post_skill_with_retries): retries transport
+        errors and the server's structured "wait and retry" responses up to `_retries`
+        times before returning.
+        """
+        outcome = self._post_skill_with_retries(
+            skill_name, kwargs, mode='dryRun', timeout=timeout,
+            _retries=_retries, _retry_delay=_retry_delay)
+        return self._mode_result_from_outcome(outcome)
 
-    def plan_skill(self, skill_name: str, **kwargs) -> Dict[str, Any]:
-        try:
-            response = self._post_skill(skill_name, kwargs, mode='plan')
-            return response.json()
-        except ValueError as exc:
-            return {'status': 'error', 'error': f'Invalid JSON response: {exc}'}
-        except Exception as exc:
-            return {'status': 'error', 'error': str(exc)}
+    def plan_skill(self, skill_name: str, timeout: Optional[int] = None,
+                   _retries: int = 3, _retry_delay: float = 2.0, **kwargs) -> Dict[str, Any]:
+        """Preview a Unity skill call with generic/semantic planning details.
+
+        Shares call()'s retry logic; see dry_run_skill().
+        """
+        outcome = self._post_skill_with_retries(
+            skill_name, kwargs, mode='plan', timeout=timeout,
+            _retries=_retries, _retry_delay=_retry_delay)
+        return self._mode_result_from_outcome(outcome)
 
     def plan_workflow(self, skills: List[Dict[str, Any]]) -> Dict[str, Any]:
         return self.call('workflow_plan', skillsJson=json.dumps(skills, ensure_ascii=False))
@@ -1197,6 +1306,60 @@ def wait_for_unity(timeout: float = 10.0, check_interval: float = 1.0) -> bool:
     return False
 
 
+# ============================================================
+# Unity CLI integration (opt-in via the UnitySkills panel)
+# ============================================================
+
+def get_cli_config(project_root: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Read the Unity CLI binding config written by the UnitySkills panel.
+
+    Returns the parsed dict from <project_root>/Library/UnitySkills/cli_config.json,
+    or None if the file is missing/unreadable OR 'enabled' is false — None means
+    "Unity CLI is OFF for this project", so callers can gate on a single check.
+    project_root defaults to the current working directory.
+    """
+    root = project_root or os.getcwd()
+    path = os.path.join(root, 'Library', 'UnitySkills', 'cli_config.json')
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            cfg = json.load(f)
+        if not cfg.get('enabled') or not cfg.get('cliPath'):
+            return None
+        # projectPath in the file is a snapshot taken at bind time; if the project
+        # was moved/renamed since, that stale path could point elsewhere. The
+        # directory we actually found the config under is authoritative.
+        cfg['projectPath'] = os.path.abspath(root)
+        return cfg
+    except (OSError, ValueError):
+        return None
+
+
+def wait_for_health(timeout: float = 600.0, check_interval: float = 3.0) -> Optional[Dict[str, Any]]:
+    """Wait for a UnitySkills server after a cold start (unity CLI `open`).
+
+    Unlike wait_for_unity(), this resets the cached default client on every
+    attempt so port discovery reruns — required when the editor was launched
+    fresh and may bind any port in the 8090-8100 range. First import/compile
+    can take minutes; default timeout is generous. Returns the /health payload
+    once reachable, or None on timeout.
+    """
+    global _default_client
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        _default_client = None
+        try:
+            client = _get_default_client()
+            resp = client._session.get(f"{client.url}/health", timeout=HEALTH_TIMEOUT)
+            resp.encoding = 'utf-8'
+            data = resp.json()
+            if data.get('status') == 'ok':
+                return data
+        except (requests.exceptions.RequestException, ValueError, RuntimeError):
+            pass
+        time.sleep(check_interval)
+    return None
+
+
 def get_server_status() -> Dict[str, Any]:
     """Get detailed health information from the current Unity server."""
     try:
@@ -1211,7 +1374,7 @@ def get_server_status() -> Dict[str, Any]:
 
 
 # ============================================================
-# Permission System (v1.9.0+)
+# Permission System
 # ============================================================
 
 def _permission_get(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -1428,6 +1591,20 @@ def _parse_cli_value(value: str) -> Any:
             return value
     return value
 
+def _module_helper_names() -> set:
+    """Public functions/classes defined in this module.
+
+    Introspected rather than hardcoded so a newly added helper is covered without touching
+    this list. Used by main() to reject a helper name passed where a skill name is expected.
+    """
+    return {
+        name for name, obj in globals().items()
+        if callable(obj)
+        and not name.startswith('_')
+        and getattr(obj, '__module__', None) == __name__
+    }
+
+
 # ============================================================
 # Main CLI Entry Point
 # ============================================================
@@ -1451,7 +1628,6 @@ def main():
 
     args = parser.parse_args()
 
-    # Configure client based on CLI args
     if args.port or args.unity_version:
         global _default_client
         _default_client = UnitySkills(port=args.port, version=args.unity_version)
@@ -1476,17 +1652,29 @@ def main():
         parser.print_help()
         sys.exit(1)
 
-    # Parse parameters
+    # The positional argument is a skill name, so anything passed here gets POSTed to
+    # /skill/<name>. A helper name (get_skill_schema, health, create_script, ...) is not in the
+    # skill registry and can only come back as SKILL_NOT_FOUND — reject it locally with the
+    # correct call form instead of spending a round trip on a guaranteed failure.
+    if args.skill_name in _module_helper_names():
+        print(json.dumps({
+            "status": "error",
+            "errorCode": "SKILL_NOT_FOUND",
+            "error": f"'{args.skill_name}' is a Python helper in unity_skills.py, not a skill name. "
+                     f"POST /skill/{args.skill_name} would always fail.",
+            "callItAsAFunction": f'python -c "import unity_skills; print(unity_skills.{args.skill_name}())"',
+            "findRealSkills": 'python unity_skills.py --search "<keyword>"  |  python unity_skills.py --list',
+        }, ensure_ascii=False, indent=2))
+        sys.exit(2)
+
     params = {}
     for arg in args.params:
         if '=' in arg:
             key, value = arg.split('=', 1)
             params[key] = _parse_cli_value(value)
 
-    # Call the skill
     result = call_skill(args.skill_name, **params)
 
-    # Pretty print the result
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 if __name__ == '__main__':

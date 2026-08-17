@@ -1,7 +1,15 @@
 ---
 name: unity-profiler
-description: Capture read-only Unity runtime performance snapshots — sample frame timing, memory, and runtime stats without mutating anything. Use when checking runtime performance, taking a profiler snapshot, or inspecting memory/frame stats, even if the user just says "性能数据" or "看看帧率". 采集只读的 Unity 运行时性能快照(采样帧耗时、内存、运行时统计,不做任何改动);当用户要查看运行时性能、抓取 profiler 快照、或检查内存/帧率统计时使用。
+description: Capture read-only Unity runtime performance snapshots
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Checking runtime performance
+- Taking a profiler snapshot
+- Inspecting memory/frame stats
+- 查看运行时性能、抓取 profiler 快照、检查内存/帧率统计
 
 # Profiler Skills
 

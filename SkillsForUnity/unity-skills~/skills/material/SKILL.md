@@ -1,7 +1,15 @@
 ---
 name: unity-material
-description: Edit Unity material and shader properties across Built-in/URP/HDRP — colors, textures, floats, keywords, render queue, batch-apply. Use when changing how a surface looks, tweaking material parameters, or swapping shaders. 编辑材质与 Shader 属性(Built-in/URP/HDRP:颜色、贴图、浮点值、关键字、渲染队列、批量应用);当用户要调整物体外观、改材质参数或切换 Shader 时使用。
+description: Edit material and shader properties across Built-in/URP/HDRP
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Changing how a surface looks
+- Tweaking material parameters
+- Swapping shaders
+- 调整物体外观、修改材质参数、切换 Shader
 
 # Unity Material Skills
 
@@ -283,11 +291,11 @@ Set material render queue.
 ### material_set_gi_flags
 Set material global illumination flags.
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `name` | string | No* | GameObject name |
-| `path` | string | No* | GameObject hierarchy path or material asset path |
-| `flags` | string | Yes | GI flags: `None` / `RealtimeEmissive` / `BakedEmissive` / `EmissiveIsBlack` / `AnyEmissive` (default `RealtimeEmissive` if omitted in code; required here)
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `name` | string | No* | - | GameObject name |
+| `path` | string | No* | - | GameObject hierarchy path or material asset path |
+| `flags` | string | No | `RealtimeEmissive` | GI flags: `None` / `RealtimeEmissive` / `BakedEmissive` / `EmissiveIsBlack` / `AnyEmissive`
 
 ---
 
@@ -341,3 +349,13 @@ Skills auto-detect and adapt to your render pipeline:
 ## Exact Signatures
 
 Exact names, parameters, defaults, and returns are defined by `GET /skills/schema` or `unity_skills.get_skill_schema()`, not by this file.
+
+## Common Errors
+
+Full transport-level codes (COMPILING/RATE_LIMIT etc.) → ../../references/protocol-error-codes.md
+
+| Error | Trigger | Fix |
+|---|---|---|
+| `TARGET_NOT_FOUND` | The material asset, GameObject/renderer, shader, texture, or property could not be found (e.g., `Material asset not found`, `No Renderer component found`, `Shader not found`). | Verify the asset path with `asset_find`, the object with `gameobject_find`, or inspect available properties with `material_get_properties`. |
+| `MISSING_PARAM` | A required parameter is missing, such as `materialPath`, `sourcePath`, `texturePath`, `propertyName`, `keyword`, or `shaderName`. | Supply the parameter named in the error and retry; use `mode=dryRun` for the full schema. |
+| `SEMANTIC_INVALID` | An invalid value was supplied, such as an unrecognized GI flag, an invalid asset path, or a property name the shader does not use. | Correct the value using the allowed range/enum/path convention described in the error. |

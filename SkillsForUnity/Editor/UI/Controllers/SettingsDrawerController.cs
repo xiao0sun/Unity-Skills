@@ -31,6 +31,10 @@ namespace UnitySkills
         private readonly VisualElement _root;
         private readonly UnitySkillsWindow _window;
 
+        private Label _languagePinsTitle;
+        private DropdownField _languagePinPrimary;
+        private DropdownField _languagePinSecondary;
+
         private VisualElement _drawerContainer;
         private VisualElement _drawerMask;
 
@@ -56,10 +60,16 @@ namespace UnitySkills
         private Button        _allowlistAddBtn;
         private Button        _viewAuditBtn;
 
+        private Label  _cliGroupTitle;
+        private Label  _cliHint;
+        private Button _cliOpenBtn;
+
         // Server group
         private Label           _serverGroupTitle;
         private Toggle          _autoStartToggle;
         private Label           _autoStartHint;
+        private Toggle          _startOnLaunchToggle;
+        private Label           _startOnLaunchHint;
         private Label           _portLabel;
         private DropdownField   _portDropdown;
         private Label           _timeoutLabel;
@@ -74,10 +84,21 @@ namespace UnitySkills
         private Label         _runtimeGroupTitle;
         private Label         _loglevelLabel;
         private DropdownField _logDropdown;
-        private Toggle        _confirmToggle;
+        private VisualElement _updateNotificationsSwitch;
+        private Label         _updateNotificationsLabel;
+        private Label         _updateNotificationsHint;
+        private VisualElement _confirmSwitch;
+        private Label         _confirmLabel;
         private Label         _confirmHint;
-        private Toggle        _telemetryToggle;
+        private VisualElement _telemetrySwitch;
+        private Label         _telemetryLabel;
         private Label         _telemetryHint;
+        private VisualElement _summaryTruncateSwitch;
+        private Label         _summaryTruncateLabel;
+        private Label         _summaryTruncateHint;
+        private VisualElement _guideModeSwitch;
+        private Label         _guideModeLabel;
+        private Label         _guideModeHint;
 
         // Stats group
         private Label  _statsGroupTitle;
@@ -119,7 +140,6 @@ namespace UnitySkills
             // Shortcuts 节：独立控制器接管捕获态机与冲突检测，抽屉仅做组装与生命周期转发。
             _shortcutsController = new ShortcutsSettingsController(_drawerContainer);
 
-            // Click on mask closes the drawer
             if (_drawerMask != null)
             {
                 _drawerMask.RegisterCallback<ClickEvent>(_ => Close());
@@ -174,9 +194,15 @@ namespace UnitySkills
             _allowlistAddBtn     = _drawerContainer.Q<Button>("perm-allowlist-add-btn");
             _viewAuditBtn        = _drawerContainer.Q<Button>("perm-view-audit-btn");
 
+            _cliGroupTitle = _drawerContainer.Q<Label>("group-cli-title");
+            _cliHint       = _drawerContainer.Q<Label>("cli-drawer-hint");
+            _cliOpenBtn    = _drawerContainer.Q<Button>("cli-open-setup-btn");
+
             _serverGroupTitle = _drawerContainer.Q<Label>("group-server-title");
             _autoStartToggle  = _drawerContainer.Q<Toggle>("autostart-toggle");
             _autoStartHint    = _drawerContainer.Q<Label>("autostart-hint");
+            _startOnLaunchToggle = _drawerContainer.Q<Toggle>("start-on-launch-toggle");
+            _startOnLaunchHint   = _drawerContainer.Q<Label>("start-on-launch-hint");
             _portLabel        = _drawerContainer.Q<Label>("port-label");
             _portDropdown     = _drawerContainer.Q<DropdownField>("port-dropdown");
             _timeoutLabel     = _drawerContainer.Q<Label>("timeout-label");
@@ -190,21 +216,34 @@ namespace UnitySkills
             _runtimeGroupTitle = _drawerContainer.Q<Label>("group-runtime-title");
             _loglevelLabel     = _drawerContainer.Q<Label>("loglevel-label");
             _logDropdown       = _drawerContainer.Q<DropdownField>("loglevel-dropdown");
-            _confirmToggle     = _drawerContainer.Q<Toggle>("confirm-toggle");
+            _updateNotificationsSwitch = _drawerContainer.Q<VisualElement>("update-notifications-switch");
+            _updateNotificationsLabel  = _drawerContainer.Q<Label>("update-notifications-label");
+            _updateNotificationsHint   = _drawerContainer.Q<Label>("update-notifications-hint");
+            _confirmSwitch     = _drawerContainer.Q<VisualElement>("confirm-switch");
+            _confirmLabel      = _drawerContainer.Q<Label>("confirm-label");
             _confirmHint       = _drawerContainer.Q<Label>("confirm-hint");
-            _telemetryToggle   = _drawerContainer.Q<Toggle>("telemetry-toggle");
+            _telemetrySwitch   = _drawerContainer.Q<VisualElement>("telemetry-switch");
+            _telemetryLabel    = _drawerContainer.Q<Label>("telemetry-label");
             _telemetryHint     = _drawerContainer.Q<Label>("telemetry-hint");
+            _summaryTruncateSwitch = _drawerContainer.Q<VisualElement>("summary-truncate-switch");
+            _summaryTruncateLabel  = _drawerContainer.Q<Label>("summary-truncate-label");
+            _summaryTruncateHint   = _drawerContainer.Q<Label>("summary-truncate-hint");
+            _guideModeSwitch       = _drawerContainer.Q<VisualElement>("guide-mode-switch");
+            _guideModeLabel        = _drawerContainer.Q<Label>("guide-mode-label");
+            _guideModeHint         = _drawerContainer.Q<Label>("guide-mode-hint");
 
             _statsGroupTitle = _drawerContainer.Q<Label>("group-stats-title");
             _statsHint       = _drawerContainer.Q<Label>("stats-hint");
             _statsResetBtn   = _drawerContainer.Q<Button>("stats-reset-btn");
+            _languagePinsTitle = _drawerContainer.Q<Label>("language-pins-title");
+            _languagePinPrimary = _drawerContainer.Q<DropdownField>("language-pin-primary");
+            _languagePinSecondary = _drawerContainer.Q<DropdownField>("language-pin-secondary");
         }
 
         private void BindEvents()
         {
             if (_closeBtn != null) _closeBtn.clicked += Close;
 
-            // Permissions: 用 dropdown 替代原来的三个 radio toggle。
             // index 由 _modeOrder 反查为枚举，避免依赖本地化文本。
             if (_modeDropdown != null)
                 _modeDropdown.RegisterValueChangedCallback(evt =>
@@ -232,11 +271,21 @@ namespace UnitySkills
             if (_viewAuditBtn != null)
                 _viewAuditBtn.clicked += () => UnitySkillsAuditWindow.ShowWindow();
 
+            if (_cliOpenBtn != null)
+                _cliOpenBtn.clicked += () => UnityCliWindow.ShowWindow();
+
             if (_autoStartToggle != null)
                 _autoStartToggle.RegisterValueChangedCallback(evt =>
                 {
                     if (evt.newValue != SkillsHttpServer.AutoStart)
                         SkillsHttpServer.AutoStart = evt.newValue;
+                });
+
+            if (_startOnLaunchToggle != null)
+                _startOnLaunchToggle.RegisterValueChangedCallback(evt =>
+                {
+                    if (evt.newValue != SkillsHttpServer.StartOnEditorLaunch)
+                        SkillsHttpServer.StartOnEditorLaunch = evt.newValue;
                 });
 
             if (_portDropdown != null)
@@ -270,18 +319,40 @@ namespace UnitySkills
                         SkillsLogger.Level = (LogLevel)idx;
                 });
 
-            if (_confirmToggle != null)
-                _confirmToggle.RegisterValueChangedCallback(evt =>
+            if (_updateNotificationsSwitch != null)
+                _updateNotificationsSwitch.RegisterCallback<ClickEvent>(_ =>
                 {
-                    if (evt.newValue != ConfirmationTokenService.RequireConfirmation)
-                        ConfirmationTokenService.RequireConfirmation = evt.newValue;
+                    VersionCheckService.NotificationsEnabled =
+                        !VersionCheckService.NotificationsEnabled;
+                    SyncSettingSwitches();
                 });
 
-            if (_telemetryToggle != null)
-                _telemetryToggle.RegisterValueChangedCallback(evt =>
+            if (_confirmSwitch != null)
+                _confirmSwitch.RegisterCallback<ClickEvent>(_ =>
                 {
-                    if (evt.newValue != SkillTelemetryService.Enabled)
-                        SkillTelemetryService.Enabled = evt.newValue;
+                    ConfirmationTokenService.RequireConfirmation = !ConfirmationTokenService.RequireConfirmation;
+                    SyncSettingSwitches();
+                });
+
+            if (_telemetrySwitch != null)
+                _telemetrySwitch.RegisterCallback<ClickEvent>(_ =>
+                {
+                    SkillTelemetryService.Enabled = !SkillTelemetryService.Enabled;
+                    SyncSettingSwitches();
+                });
+
+            if (_summaryTruncateSwitch != null)
+                _summaryTruncateSwitch.RegisterCallback<ClickEvent>(_ =>
+                {
+                    SkillRouter.SummaryAutoTruncate = !SkillRouter.SummaryAutoTruncate;
+                    SyncSettingSwitches();
+                });
+
+            if (_guideModeSwitch != null)
+                _guideModeSwitch.RegisterCallback<ClickEvent>(_ =>
+                {
+                    SkillsGuideMode.Enabled = !SkillsGuideMode.Enabled;
+                    SyncSettingSwitches();
                 });
 
             if (_statsResetBtn != null)
@@ -289,6 +360,13 @@ namespace UnitySkills
                 {
                     SkillsHttpServer.ResetStatistics();
                 };
+
+            if (_languagePinPrimary != null)
+                _languagePinPrimary.RegisterValueChangedCallback(evt =>
+                    SkillsLocalization.PinnedPrimary = ParseLanguage(evt.newValue));
+            if (_languagePinSecondary != null)
+                _languagePinSecondary.RegisterValueChangedCallback(evt =>
+                    SkillsLocalization.PinnedSecondary = ParseLanguage(evt.newValue));
         }
 
         private void InitializeValues()
@@ -317,7 +395,12 @@ namespace UnitySkills
             {
                 _logDropdown.choices = new List<string>
                 {
-                    "Off", "Error", "Warning", "Info", "Agent", "Verbose"
+                    SkillsLocalization.Get("loglevel_off"),
+                    SkillsLocalization.Get("loglevel_error"),
+                    SkillsLocalization.Get("loglevel_warning"),
+                    SkillsLocalization.Get("loglevel_info"),
+                    SkillsLocalization.Get("loglevel_agent"),
+                    SkillsLocalization.Get("loglevel_verbose")
                 };
                 int lvl = (int)SkillsLogger.Level;
                 if (lvl < 0 || lvl >= _logDropdown.choices.Count) lvl = 0;
@@ -325,16 +408,19 @@ namespace UnitySkills
             }
 
             if (_autoStartToggle != null) _autoStartToggle.value = SkillsHttpServer.AutoStart;
+            if (_startOnLaunchToggle != null) _startOnLaunchToggle.value = SkillsHttpServer.StartOnEditorLaunch;
             if (_timeoutField   != null) _timeoutField.value     = SkillsHttpServer.RequestTimeoutMinutes;
             if (_keepaliveField != null) _keepaliveField.value   = SkillsHttpServer.KeepAliveIntervalSeconds;
-            if (_confirmToggle  != null) _confirmToggle.value    = ConfirmationTokenService.RequireConfirmation;
-            if (_telemetryToggle != null) _telemetryToggle.value = SkillTelemetryService.Enabled;
+            SyncSettingSwitches();
+            RefreshLanguagePins();
         }
 
         public void Open()
         {
             // 每次打开重建 Shortcuts 行，拉取最新绑定（覆盖 Edit ▸ Shortcuts 外部改动）。
             _shortcutsController?.Refresh();
+            // 绑定状态可能在 UnityCliWindow 里刚变过，开抽屉时取最新。
+            RefreshCliGroup();
 
             if (_drawerContainer != null) _drawerContainer.AddToClassList("open");
             if (_drawerMask != null)
@@ -363,34 +449,27 @@ namespace UnitySkills
             if (_drawerTitle != null) _drawerTitle.text = SkillsLocalization.Get("drawer_settings_title");
             if (_closeBtn != null)    _closeBtn.tooltip = SkillsLocalization.Get("drawer_close_tooltip");
 
-            // Permissions group — uses PermissionUiHelpers.L fallback so missing keys
-            // don't render raw keys before Localization.cs is updated.
+            // Permissions group
             if (_permGroupTitle != null)
-                _permGroupTitle.text = PermissionUiHelpers.L("drawer_section_permissions",
-                    "Permissions", "权限");
+                _permGroupTitle.text = SkillsLocalization.Get("drawer_section_permissions");
 
             if (_modeLabel != null)
-                _modeLabel.text = PermissionUiHelpers.L("perm_mode_label",
-                    "Operating Mode", "操作模式");
+                _modeLabel.text = SkillsLocalization.Get("perm_mode_label");
             ApplyModeHintText(SkillsModeManager.CurrentMode);
 
             if (_panelApprovalToggle != null)
-                _panelApprovalToggle.label = PermissionUiHelpers.L("perm_require_panel_approval",
-                    "Require Panel Approval", "必须面板批准");
+                _panelApprovalToggle.label = SkillsLocalization.Get("perm_require_panel_approval");
             if (_panelApprovalHint != null)
-                _panelApprovalHint.text = PermissionUiHelpers.L("perm_require_panel_approval_hint",
-                    "When checked, grant tokens must be Approved here on the panel; otherwise verbal consent in the AI chat is enough.",
-                    "勾选后 grant token 必须在此面板点 Approve 才生效；否则 AI 对话中用户文字同意即可。");
+                _panelApprovalHint.text = SkillsLocalization.Get("perm_require_panel_approval_hint");
 
             if (_allowlistClearBtn != null)
-                _allowlistClearBtn.text = PermissionUiHelpers.L("perm_allowlist_clear_all",
-                    "Clear All", "全部清除");
+                _allowlistClearBtn.text = SkillsLocalization.Get("perm_allowlist_clear_all");
             if (_allowlistAddBtn != null)
-                _allowlistAddBtn.text = PermissionUiHelpers.L("perm_add_skill_btn",
-                    "+ Add Skill", "+ 添加 Skill");
+                _allowlistAddBtn.text = SkillsLocalization.Get("perm_add_skill_btn");
             if (_viewAuditBtn != null)
-                _viewAuditBtn.text = PermissionUiHelpers.L("perm_view_audit_log",
-                    "View Audit Log", "查看审计日志");
+                _viewAuditBtn.text = SkillsLocalization.Get("perm_view_audit_log");
+
+            RefreshCliGroup();
 
             // Pending / Allowlist titles include counts, so rebuild via RefreshPermissionsUi
             // to pick up the new language strings together with the live data.
@@ -402,6 +481,8 @@ namespace UnitySkills
 
             if (_autoStartToggle != null) _autoStartToggle.label = SkillsLocalization.Get("auto_restart");
             if (_autoStartHint   != null) _autoStartHint.text    = SkillsLocalization.Get("auto_restart_hint");
+            if (_startOnLaunchToggle != null) _startOnLaunchToggle.label = SkillsLocalization.Get("start_on_editor_launch");
+            if (_startOnLaunchHint   != null) _startOnLaunchHint.text    = SkillsLocalization.Get("start_on_editor_launch_hint");
 
             if (_portLabel       != null) _portLabel.text     = SkillsLocalization.Get("drawer_port_label");
             if (_timeoutLabel    != null) _timeoutLabel.text  = SkillsLocalization.Get("drawer_timeout_label");
@@ -411,24 +492,68 @@ namespace UnitySkills
             if (_keepaliveHint   != null) _keepaliveHint.text  = SkillsLocalization.Get("keepalive_hint");
 
             if (_loglevelLabel != null) _loglevelLabel.text = SkillsLocalization.Get("drawer_loglevel_label");
-            if (_confirmToggle != null) _confirmToggle.label = SkillsLocalization.Get("drawer_confirm_label");
+            if (_updateNotificationsLabel != null)
+                _updateNotificationsLabel.text = SkillsLocalization.Get("drawer_update_notifications_label");
+            if (_updateNotificationsHint != null)
+                _updateNotificationsHint.text = SkillsLocalization.Get("drawer_update_notifications_hint");
+            if (_confirmLabel != null) _confirmLabel.text = SkillsLocalization.Get("drawer_confirm_label");
             if (_confirmHint   != null)
             {
-                _confirmHint.text = SkillsLocalization.Current == SkillsLocalization.Language.Chinese
-                    ? "开启后：删除类/RiskLevel=high 技能首次调用返回 _confirm token + dryRun 预览，5 分钟内带 token 重试才执行。"
-                    : "When ON: delete / high-risk skills first return a _confirm token + dryRun preview; re-call within 5 min with the token to execute.";
+                _confirmHint.text = SkillsLocalization.Get("drawer_confirm_hint");
             }
 
-            if (_telemetryToggle != null)
-                _telemetryToggle.label = SkillsLocalization.Get("drawer_telemetry_label");
+            if (_telemetryLabel != null)
+                _telemetryLabel.text = SkillsLocalization.Get("drawer_telemetry_label");
             if (_telemetryHint != null)
                 _telemetryHint.text = SkillsLocalization.Get("drawer_telemetry_hint");
 
+            if (_summaryTruncateLabel != null)
+                _summaryTruncateLabel.text = SkillsLocalization.Get("drawer_summary_truncate_label");
+            if (_summaryTruncateHint != null)
+                _summaryTruncateHint.text = SkillsLocalization.Get("drawer_summary_truncate_hint");
+
+            if (_guideModeLabel != null)
+                _guideModeLabel.text = SkillsLocalization.Get("guide_mode");
+            if (_guideModeSwitch != null)
+                _guideModeSwitch.tooltip = SkillsLocalization.Get("guide_mode_tooltip");
+            if (_guideModeHint != null)
+                _guideModeHint.text = SkillsLocalization.Get("guide_mode_tooltip");
+
             if (_statsHint     != null) _statsHint.text     = SkillsLocalization.Get("drawer_stats_hint");
             if (_statsResetBtn != null) _statsResetBtn.text = SkillsLocalization.Get("drawer_reset_stats_btn");
+            if (_languagePinsTitle != null) _languagePinsTitle.text = SkillsLocalization.Get("language_pins_title");
+            RefreshLanguagePins();
 
             _shortcutsController?.RefreshLocalization();
         }
+
+        private void RefreshLanguagePins()
+        {
+            var choices = new List<string> { "English", "Chinese", "Russian" };
+            if (_languagePinPrimary != null)
+            {
+                _languagePinPrimary.choices = choices;
+                _languagePinPrimary.SetValueWithoutNotify(SkillsLocalization.PinnedPrimary.ToString());
+            }
+            if (_languagePinSecondary != null)
+            {
+                _languagePinSecondary.choices = choices;
+                _languagePinSecondary.SetValueWithoutNotify(SkillsLocalization.PinnedSecondary.ToString());
+            }
+        }
+
+        private void SyncSettingSwitches()
+        {
+            _updateNotificationsSwitch?.EnableInClassList(
+                "on", VersionCheckService.NotificationsEnabled);
+            _confirmSwitch?.EnableInClassList("on", ConfirmationTokenService.RequireConfirmation);
+            _telemetrySwitch?.EnableInClassList("on", SkillTelemetryService.Enabled);
+            _summaryTruncateSwitch?.EnableInClassList("on", SkillRouter.SummaryAutoTruncate);
+            _guideModeSwitch?.EnableInClassList("on", SkillsGuideMode.Enabled);
+        }
+
+        private static SkillsLocalization.Language ParseLanguage(string value) =>
+            (SkillsLocalization.Language)Enum.Parse(typeof(SkillsLocalization.Language), value);
 
         // ===== Permissions group helpers =====
 
@@ -446,19 +571,13 @@ namespace UnitySkills
             switch (mode)
             {
                 case SkillsOperatingMode.Approval:
-                    _modeHint.text = PermissionUiHelpers.L("perm_mode_approval_hint",
-                        "AI must ask the user before invoking each FullAuto skill (per-skill grant).",
-                        "AI 必须询问用户后才能调用 FullAuto 技能（逐技能授权）。");
+                    _modeHint.text = SkillsLocalization.Get("perm_mode_approval_hint");
                     break;
                 case SkillsOperatingMode.Auto:
-                    _modeHint.text = PermissionUiHelpers.L("perm_mode_auto_hint",
-                        "AI decides on its own. Server only blocks high-risk skills (Delete / PlayMode / Reload).",
-                        "AI 自动决策；服务端仅拦截真高危技能（Delete / PlayMode / Reload）。");
+                    _modeHint.text = SkillsLocalization.Get("perm_mode_auto_hint");
                     break;
                 case SkillsOperatingMode.Bypass:
-                    _modeHint.text = PermissionUiHelpers.L("perm_mode_bypass_hint",
-                        "All skills pass through. ConfirmationToken still gates high-risk operations.",
-                        "全部技能直接放行；ConfirmationToken 仍对高危操作生效。");
+                    _modeHint.text = SkillsLocalization.Get("perm_mode_bypass_hint");
                     break;
                 default:
                     _modeHint.text = string.Empty;
@@ -470,6 +589,27 @@ namespace UnitySkills
         /// 同步三类权限 UI：模式 toggles、Approval 设置 row、Pending/Granted 列表。
         /// 由 OnChanged 事件、本类初始化、Localization 切换调用。
         /// </summary>
+        /// <summary>
+        /// Unity CLI 组：标题/按钮文案 + 绑定状态提示。绑定发生在 UnityCliWindow，
+        /// 抽屉每次本地化刷新（含 Open）时顺带取一次最新状态即可，无需轮询。
+        /// </summary>
+        private void RefreshCliGroup()
+        {
+            if (_cliGroupTitle != null)
+                _cliGroupTitle.text = SkillsLocalization.Get("cli_group_title");
+            if (_cliOpenBtn != null)
+            {
+                _cliOpenBtn.text = SkillsLocalization.Get("cli_setup_entry");
+                _cliOpenBtn.tooltip = SkillsLocalization.Get("cli_setup_entry_tip");
+            }
+            if (_cliHint != null)
+            {
+                _cliHint.text = UnityCliService.IsBound
+                    ? SkillsLocalization.Get("cli_drawer_hint_bound")
+                    : SkillsLocalization.Get("cli_drawer_hint_unbound");
+            }
+        }
+
         private void RefreshPermissionsUi()
         {
             if (_drawerContainer == null) return;
@@ -492,9 +632,7 @@ namespace UnitySkills
             {
                 if (_pendingTitle != null)
                     _pendingTitle.text = string.Format(
-                        PermissionUiHelpers.L("perm_pending_requests_fmt",
-                            "Pending Grant Requests ({0})",
-                            "待批请求 ({0})"),
+                        SkillsLocalization.Get("perm_pending_requests_fmt"),
                         pending.Count);
                 RebuildPendingList(pending);
             }
@@ -511,9 +649,7 @@ namespace UnitySkills
             {
                 if (_allowlistFoldout != null)
                     _allowlistFoldout.text = string.Format(
-                        PermissionUiHelpers.L("perm_allowlist_skills_fmt",
-                            "Allowlist Skills ({0})",
-                            "白名单 Skills ({0})"),
+                        SkillsLocalization.Get("perm_allowlist_skills_fmt"),
                         allowlist.Count);
                 if (_allowlistAddBtn != null)
                     _allowlistAddBtn.SetEnabled(true);
@@ -573,16 +709,14 @@ namespace UnitySkills
             // 渠道区分反馈：Panel 渠道走面板 Approve；Dialog 渠道的批准走 AI 对话，面板按钮无效，给出明确指引
             if (isPanel && req.ApprovedByPanel)
             {
-                var status = new Label(PermissionUiHelpers.L("perm_approved_waiting",
-                    "Approved · waiting for AI to execute", "已批准 · 等待 AI 执行"));
+                var status = new Label(SkillsLocalization.Get("perm_approved_waiting"));
                 status.AddToClassList("setting-hint");
                 status.style.marginBottom = 2;
                 card.Add(status);
             }
             else if (!isPanel)
             {
-                var chatHint = new Label(PermissionUiHelpers.L("perm_approve_in_chat",
-                    "Dialog channel — approve in the AI chat", "对话渠道 · 请在 AI 对话中批准"));
+                var chatHint = new Label(SkillsLocalization.Get("perm_approve_in_chat"));
                 chatHint.AddToClassList("setting-hint");
                 chatHint.style.marginBottom = 2;
                 card.Add(chatHint);
@@ -591,7 +725,7 @@ namespace UnitySkills
             var actions = new VisualElement { style = { flexDirection = FlexDirection.Row, justifyContent = Justify.FlexEnd, marginTop = 2 } };
             var approveBtn = new Button(() => SkillsModeManager.Approve(req.Token))
             {
-                text = PermissionUiHelpers.L("perm_approve", "Approve", "批准")
+                text = SkillsLocalization.Get("perm_approve")
             };
             approveBtn.AddToClassList("mini-btn");
             approveBtn.style.marginRight = 4;
@@ -600,7 +734,7 @@ namespace UnitySkills
 
             var denyBtn = new Button(() => SkillsModeManager.Deny(req.Token))
             {
-                text = PermissionUiHelpers.L("perm_deny", "Deny", "拒绝")
+                text = SkillsLocalization.Get("perm_deny")
             };
             denyBtn.AddToClassList("mini-btn");
             denyBtn.AddToClassList("danger");
@@ -610,14 +744,6 @@ namespace UnitySkills
             return card;
         }
 
-        /// <summary>
-        /// "+ Add Skill" 按钮回调：弹出按 Category 分组的 GenericMenu，让用户手动把 skill
-        /// 加入白名单。高危 skill（RiskLevel=high / Delete / PlayMode / Reload）会先弹
-        /// 二次确认 dialog，避免一键放行严重操作。
-        ///
-        /// 高危判定特意在 UI 层重做（而不是反射 SkillsModeManager.IsForbiddenInSemi），
-        /// 保持 ModeManager 的可见性边界不被 UI 反向污染。
-        /// </summary>
         /// <summary>
         /// 打开 AllowlistPickerWindow —— 支持搜索、按 Category 分组勾选、整组一键选中、
         /// 提交时合并高危确认。窗口自负责调 AddToAllowlist；本控制器在 OnChanged 链路上自动刷新列表。
@@ -634,8 +760,7 @@ namespace UnitySkills
 
             if (allowlist.Count == 0)
             {
-                var empty = new Label(PermissionUiHelpers.L("perm_no_allowlist",
-                    "No allowlisted skills.", "白名单为空。"));
+                var empty = new Label(SkillsLocalization.Get("perm_no_allowlist"));
                 empty.AddToClassList("setting-hint");
                 _allowlistList.Add(empty);
                 return;
@@ -686,7 +811,7 @@ namespace UnitySkills
 
             var removeBtn = new Button(() => SkillsModeManager.RemoveFromAllowlist(skillName))
             {
-                text = PermissionUiHelpers.L("perm_remove_from_allowlist", "Remove", "移除")
+                text = SkillsLocalization.Get("perm_remove_from_allowlist")
             };
             removeBtn.AddToClassList("mini-btn");
             row.Add(removeBtn);

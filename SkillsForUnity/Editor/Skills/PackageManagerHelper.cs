@@ -18,6 +18,8 @@ namespace UnitySkills
     public static class PackageManagerHelper
     {
         private const string PrefKeyAutoInstallPackagesOnStartup = "UnitySkills_AutoInstallPackagesOnStartup";
+        private const string SessionKeyTestableChecked = "UnitySkills.PackageManagerHelper.TestableChecked";
+        private const string SessionKeyAutoInstallAttempted = "UnitySkills.PackageManagerHelper.AutoInstallAttempted";
         public const string CinemachinePackageId = "com.unity.cinemachine";
         public const string SplinesPackageId = "com.unity.splines";
         public const string Cinemachine2Version = "2.10.5";
@@ -151,7 +153,9 @@ namespace UnitySkills
         /// </summary>
         public static bool IsPackageInstalled(string packageId)
         {
-            return _installedPackages != null && _installedPackages.ContainsKey(packageId);
+            if (_installedPackages != null && _installedPackages.ContainsKey(packageId))
+                return true;
+            return ResolveDirectly(packageId) != null;
         }
 
         /// <summary>
@@ -161,7 +165,31 @@ namespace UnitySkills
         {
             if (_installedPackages != null && _installedPackages.TryGetValue(packageId, out var info))
                 return info.version;
-            return null;
+            return ResolveDirectly(packageId)?.version;
+        }
+
+        /// <summary>
+        /// Synchronous single-package lookup, used when the cached list is not up yet.
+        /// <see cref="RefreshPackageList"/> is asynchronous and restarts after every domain reload,
+        /// so the first call of a session lands in the window where the cache is still null. Without
+        /// this fallback a skill would report a package as installed (a check that succeeded some
+        /// other way, e.g. a version define) while its version came back null — an internally
+        /// inconsistent answer that also made version gates silently evaluate to "unknown".
+        /// </summary>
+        private static PkgInfo ResolveDirectly(string packageId)
+        {
+            if (string.IsNullOrEmpty(packageId)) return null;
+            try
+            {
+                var info = PkgInfo.FindForAssetPath($"Packages/{packageId}");
+                return info != null && string.Equals(info.name, packageId, StringComparison.Ordinal)
+                    ? info
+                    : null;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         /// <summary>
@@ -313,6 +341,11 @@ namespace UnitySkills
 
         private static void EnsureTestable()
         {
+            if (SessionState.GetBool(SessionKeyTestableChecked, false))
+                return;
+
+            SessionState.SetBool(SessionKeyTestableChecked, true);
+
             var manifestPath = Path.Combine(Application.dataPath, "..", "Packages", "manifest.json");
             if (!File.Exists(manifestPath)) return;
 
@@ -352,7 +385,10 @@ namespace UnitySkills
         /// </summary>
         private static void AutoInstallCinemachineIfNeeded()
         {
+            if (SessionState.GetBool(SessionKeyAutoInstallAttempted, false)) return;
             if (_autoInstallInProgress || IsPackageInstalled(CinemachinePackageId)) return;
+
+            SessionState.SetBool(SessionKeyAutoInstallAttempted, true);
             _autoInstallInProgress = true;
 
 #if UNITY_6000_0_OR_NEWER

@@ -14,6 +14,13 @@ namespace UnitySkills
         private static WorkflowTask _currentTask;
         private static string _currentSessionId;
 
+        // Set when the history file could not be read. Whatever history we end up with then
+        // references fewer blobs than the store actually holds, so reclaiming "unreferenced"
+        // entries would delete live backups; leaking them is the cheaper failure.
+        // volatile: SkillsHttpServer 的 /health 快路径在 HTTP 线程上读 IsHistoryRecoveryMode，
+        // 写入始终发生在主线程（LoadHistory / ClearHistory）。
+        private static volatile bool _historyRecoveryMode;
+
         // Path to store the history file (Library folder persists but is local)
         internal static string OverrideHistoryFilePathForTests;
         private static string HistoryFilePath => OverrideHistoryFilePathForTests ??
@@ -34,6 +41,12 @@ namespace UnitySkills
         public static string CurrentSessionId => _currentSessionId;
         public static bool HasActiveSession => !string.IsNullOrEmpty(_currentSessionId);
 
+        /// <summary>
+        /// True when the history file failed to load this session and file store cleanup is
+        /// therefore suspended. Cleared by ClearHistory.
+        /// </summary>
+        public static bool IsHistoryRecoveryMode => _historyRecoveryMode;
+
         internal static event Action<GameObject, Type> ComponentTopologyChanged;
 
         private static void NotifyComponentTopologyChanged(GameObject owner, Type componentType)
@@ -53,42 +66,104 @@ namespace UnitySkills
             if (!File.Exists(HistoryFilePath) && File.Exists(tmpPath))
             {
                 try { File.Move(tmpPath, HistoryFilePath); }
-                catch { /* If promotion fails, start fresh below */ }
+                catch { /* If promotion fails, fall back to the .bak below */ }
             }
+
+            string backupPath = HistoryFilePath + ".bak";
+            _history = null;
+            _historyRecoveryMode = false;
+            bool recoveredFromBackup = false;
 
             if (File.Exists(HistoryFilePath))
             {
-                try
+                if (!TryLoadHistoryFrom(HistoryFilePath, out string mainError))
                 {
-                    string json = File.ReadAllText(HistoryFilePath, System.Text.Encoding.UTF8);
-                    _history = JsonUtility.FromJson<WorkflowHistoryData>(json);
-
-                    if (_history == null)
-                    {
-                        _history = new WorkflowHistoryData();
-                        _history.EnsureDefaults();
-                        MigrateHistorySchema();
-                        return;
-                    }
-
-                    _history.EnsureDefaults();
-                    MigrateHistorySchema();
-                    SanitizeHistory();
-                }
-                catch (Exception e)
-                {
-                    Debug.LogError($"{SkillsLogger.PREFIX_ERROR} Failed to load workflow history: {e.Message}");
-                    _history = new WorkflowHistoryData();
+                    _historyRecoveryMode = true;
+                    string quarantined = QuarantineHistoryFile(HistoryFilePath);
+                    SkillsLogger.LogError(
+                        $"Failed to load workflow history: {mainError}. Kept the unreadable file as " +
+                        $"{quarantined ?? "<quarantine failed>"}; file store cleanup is disabled for this session " +
+                        "so the backups of the lost tasks are not reclaimed. Clear the history to re-enable it.");
                 }
             }
-            else
+
+            if (_history == null && File.Exists(backupPath))
             {
-                _history = new WorkflowHistoryData();
+                if (TryLoadHistoryFrom(backupPath, out string backupError))
+                {
+                    // The backup is one save behind, so anything recorded after it is still missing.
+                    _historyRecoveryMode = true;
+                    recoveredFromBackup = true;
+                    SkillsLogger.LogWarning(
+                        $"Recovered workflow history from {Path.GetFileName(backupPath)}; tasks recorded after the last save are gone.");
+                }
+                else
+                {
+                    _historyRecoveryMode = true;
+                    SkillsLogger.LogError($"Workflow history backup is unreadable as well: {backupError}");
+                }
             }
 
+            _history ??= new WorkflowHistoryData();
             _history.EnsureDefaults();
             MigrateHistorySchema();
+            if (recoveredFromBackup)
+                SaveHistory();
             TrimHistoryIfNeeded();
+        }
+
+        /// <summary>
+        /// Parses a history file into <see cref="_history"/>. On failure _history is left null so
+        /// the caller can try the next candidate file, and <paramref name="error"/> carries the reason.
+        /// </summary>
+        private static bool TryLoadHistoryFrom(string path, out string error)
+        {
+            error = null;
+            try
+            {
+                string json = File.ReadAllText(path, System.Text.Encoding.UTF8);
+                var data = JsonUtility.FromJson<WorkflowHistoryData>(json);
+                if (data == null)
+                {
+                    error = "file is empty or not a workflow history document";
+                    return false;
+                }
+
+                _history = data;
+                _history.EnsureDefaults();
+                SanitizeHistory();
+                return true;
+            }
+            catch (Exception e)
+            {
+                _history = null;
+                error = e.Message;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Moves an unreadable history file aside under a timestamped name so the next save cannot
+        /// overwrite it. Returns the quarantine file name, or null if the move failed.
+        /// </summary>
+        private static string QuarantineHistoryFile(string path)
+        {
+            try
+            {
+                string dir = Path.GetDirectoryName(path) ?? string.Empty;
+                string baseName = Path.GetFileNameWithoutExtension(path);
+                string quarantinePath = Path.Combine(dir,
+                    $"{baseName}.corrupt.{DateTime.Now:yyyyMMddHHmmss}.json");
+                if (File.Exists(quarantinePath))
+                    File.Delete(quarantinePath);
+                File.Move(path, quarantinePath);
+                return Path.GetFileName(quarantinePath);
+            }
+            catch (Exception e)
+            {
+                SkillsLogger.LogWarning($"Failed to quarantine unreadable workflow history: {e.Message}");
+                return null;
+            }
         }
 
         public static void SaveHistory()
@@ -107,8 +182,9 @@ namespace UnitySkills
                 File.WriteAllText(tmpPath, json, SkillsCommon.Utf8NoBom);
                 if (File.Exists(HistoryFilePath))
                 {
+                    // The replaced file is retained as .bak: LoadHistory falls back to it when the
+                    // main file turns out to be unreadable.
                     File.Replace(tmpPath, HistoryFilePath, backupPath);
-                    if (File.Exists(backupPath)) File.Delete(backupPath);
                 }
                 else
                 {
@@ -117,7 +193,7 @@ namespace UnitySkills
             }
             catch (Exception e)
             {
-                Debug.LogError($"{SkillsLogger.PREFIX_ERROR} Failed to save workflow history: {e.Message}");
+                SkillsLogger.LogError($"Failed to save workflow history: {e.Message}");
             }
         }
 
@@ -278,7 +354,6 @@ namespace UnitySkills
                 return;
             }
 
-            // Get GlobalObjectId for persistence
             string gid = GlobalObjectId.GetGlobalObjectIdSlow(obj).ToString();
 
             string json = "";
@@ -421,7 +496,6 @@ namespace UnitySkills
                 gameObjectHierarchy = CaptureGameObjectHierarchy(go)
             };
 
-            // Save all components data
             foreach (var comp in go.GetComponents<Component>())
             {
                 if (comp == null || comp is Transform) continue;
@@ -825,7 +899,9 @@ namespace UnitySkills
 
             SaveHistory();
 
-            // Reclaim file store entries no longer referenced by any task
+            if (_historyRecoveryMode)
+                return;
+
             var referencedHashes = CollectReferencedHashes();
             WorkflowFileStore.CollectGarbage(referencedHashes, out _, out _);
         }
@@ -838,7 +914,6 @@ namespace UnitySkills
         /// </summary>
         public static string BeginSession(string sessionTag = null)
         {
-            // End any existing session first
             if (HasActiveSession)
             {
                 EndSession();
@@ -846,7 +921,6 @@ namespace UnitySkills
 
             _currentSessionId = Guid.NewGuid().ToString();
 
-            // Auto-start a task for this session
             BeginTask(sessionTag ?? "Session", $"Session started at {DateTime.Now:HH:mm:ss}");
             _currentTask.sessionId = _currentSessionId;
 
@@ -861,7 +935,6 @@ namespace UnitySkills
         {
             if (!HasActiveSession) return;
 
-            // End current task if any
             if (_currentTask != null)
             {
                 _currentTask.sessionId = _currentSessionId;
@@ -884,7 +957,6 @@ namespace UnitySkills
                 return result;
             }
 
-            // Find all tasks belonging to this session
             var sessionTasks = History.tasks
                 .Where(t => t.sessionId == sessionId)
                 .OrderByDescending(t => t.timestamp)
@@ -953,6 +1025,7 @@ namespace UnitySkills
             };
 
             int inverseCountBefore = redoTask.snapshots.Count;
+            WorkflowFileStore.ClearLastIntegrityError();
             try
             {
                 switch (snapshot.type)
@@ -985,7 +1058,7 @@ namespace UnitySkills
             }
 
             if (!result.success && string.IsNullOrEmpty(result.error))
-                result.error = "Unknown failure";
+                result.error = WorkflowFileStore.LastIntegrityError ?? "Unknown failure";
 
             if (!result.success && redoTask.snapshots.Count > inverseCountBefore)
             {
@@ -1007,6 +1080,7 @@ namespace UnitySkills
                 objectName = snapshot.objectName
             };
 
+            WorkflowFileStore.ClearLastIntegrityError();
             try
             {
                 switch (snapshot.type)
@@ -1039,7 +1113,7 @@ namespace UnitySkills
             }
 
             if (!result.success && string.IsNullOrEmpty(result.error))
-                result.error = "Unknown failure";
+                result.error = WorkflowFileStore.LastIntegrityError ?? "Unknown failure";
 
             return result;
         }
@@ -1736,6 +1810,16 @@ namespace UnitySkills
             return instanceId != 0 ? UnityObjectIdUtility.ObjectIdToObject(instanceId) : null;
         }
 
+        // Budgets for the CaptureObjectReferences walk. A full-depth SerializedProperty descent is
+        // unbounded on assets whose serialized data is a [SerializeReference] graph: VisualTreeAsset
+        // (every imported .uxml) makes iterator.Next(true) follow managed references forever, pinning
+        // the main thread at 100% CPU with no way out but killing the editor. The managed-reference
+        // dedup below is the actual cycle break; the node/time caps are backstops for any other
+        // pathological layout we have not seen yet.
+        private const int MaxReferenceWalkNodes = 50000;
+        private const int MaxReferenceWalkDepth = 32;
+        private const int MaxReferenceWalkMilliseconds = 2000;
+
         private static List<ObjectReferenceData> CaptureObjectReferences(UnityEngine.Object obj,
             out bool captureSucceeded)
         {
@@ -1747,10 +1831,42 @@ namespace UnitySkills
             {
                 var serializedObject = new SerializedObject(obj);
                 var iterator = serializedObject.GetIterator();
+                var walkTimer = System.Diagnostics.Stopwatch.StartNew();
+                // Managed references form a graph, not a tree: the same instance can be reachable by
+                // many paths and can reference itself. Visiting each referenceId once turns that graph
+                // back into a finite walk. A repeat visit adds no restorable property path anyway.
+                var visitedManagedRefs = new HashSet<long>();
+                int visitedNodes = 0;
+                bool truncated = false;
                 bool enterChildren = true;
+
                 while (iterator.Next(enterChildren))
                 {
                     enterChildren = true;
+
+                    if (++visitedNodes > MaxReferenceWalkNodes ||
+                        walkTimer.ElapsedMilliseconds > MaxReferenceWalkMilliseconds)
+                    {
+                        truncated = true;
+                        break;
+                    }
+
+                    if (iterator.depth >= MaxReferenceWalkDepth)
+                    {
+                        enterChildren = false;
+                        truncated = true;
+                    }
+
+                    if (iterator.propertyType == SerializedPropertyType.ManagedReference)
+                    {
+                        long referenceId = iterator.managedReferenceId;
+                        if (referenceId != 0 && !visitedManagedRefs.Add(referenceId))
+                        {
+                            enterChildren = false;
+                            continue;
+                        }
+                    }
+
                     if (iterator.propertyType != SerializedPropertyType.ObjectReference ||
                         !IsRestorableObjectReferencePath(iterator.propertyPath))
                         continue;
@@ -1765,6 +1881,17 @@ namespace UnitySkills
                         objectInstanceId = UnityObjectIdUtility.GetLegacyInstanceId(referencedObject)
                     });
                 }
+
+                if (truncated)
+                {
+                    // Partial is still usable: undo restores object references by property path, so the
+                    // paths we did collect remain individually valid. Assets additionally carry a
+                    // content-addressed file backup, which is the real restore path for them.
+                    SkillsLogger.LogVerbose(
+                        $"Object reference snapshot for '{obj.name}' ({obj.GetType().Name}) stopped at " +
+                        $"{visitedNodes} properties / {walkTimer.ElapsedMilliseconds}ms; captured {references.Count} references.");
+                }
+
                 captureSucceeded = true;
             }
             catch (Exception ex)
@@ -1975,12 +2102,10 @@ namespace UnitySkills
 
             newGo.name = snapshot.objectName;
 
-            // Restore transform from stored data
             newGo.transform.position = new Vector3(snapshot.posX, snapshot.posY, snapshot.posZ);
             newGo.transform.rotation = new Quaternion(snapshot.rotX, snapshot.rotY, snapshot.rotZ, snapshot.rotW);
             newGo.transform.localScale = new Vector3(snapshot.scaleX, snapshot.scaleY, snapshot.scaleZ);
 
-            // Restore all components
             if (snapshot.components != null)
             {
                 foreach (var compData in snapshot.components)
@@ -2020,22 +2145,34 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Collects all file hashes referenced by active and undone tasks.
+        /// Collects all file hashes referenced by the in-flight task plus every active and undone task.
         /// </summary>
         private static HashSet<string> CollectReferencedHashes()
         {
-            var referencedHashes = new HashSet<string>(StringComparer.Ordinal);
+            // Case-insensitive: store entries are enumerated upper-cased, so a snapshot hash that
+            // differs only in case still has to count as a reference.
+            var referencedHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            // The task being recorded is not in _history yet — history is loaded lazily and both
+            // LoadHistory and EndTask reclaim before appending it — so it is protected from here.
+            AddTaskHashes(_currentTask, referencedHashes);
+
             if (_history == null) return referencedHashes;
 
             foreach (var task in _history.tasks.Concat(_history.undoneStack))
             {
-                if (task?.snapshots == null) continue;
-                foreach (var snapshot in task.snapshots)
-                {
-                    AddSnapshotHashes(snapshot, referencedHashes);
-                }
+                AddTaskHashes(task, referencedHashes);
             }
             return referencedHashes;
+        }
+
+        private static void AddTaskHashes(WorkflowTask task, HashSet<string> hashes)
+        {
+            if (task?.snapshots == null) return;
+            foreach (var snapshot in task.snapshots)
+            {
+                AddSnapshotHashes(snapshot, hashes);
+            }
         }
 
         private static void AddSnapshotHashes(ObjectSnapshot snapshot, HashSet<string> hashes)
@@ -2066,6 +2203,17 @@ namespace UnitySkills
             if (_history == null) LoadHistory();
             if (!force && !WorkflowAutoCleanConfig.Enabled)
                 return report;
+
+            if (_historyRecoveryMode)
+            {
+                if (force)
+                {
+                    SkillsLogger.LogWarning(
+                        "Workflow cleanup skipped: the history file failed to load this session, so the set of " +
+                        "referenced backups is incomplete. Clear the history to re-enable cleanup.");
+                }
+                return report;
+            }
 
             var now = DateTimeOffset.Now;
             int maxAgeDays = WorkflowAutoCleanConfig.MaxTaskAgeDays;
@@ -2122,7 +2270,7 @@ namespace UnitySkills
             if (storeMaxAgeDays > 0 || maxStoreBytes > 0)
             {
                 DateTime? storeCutoff = storeMaxAgeDays > 0
-                    ? now.AddDays(-storeMaxAgeDays).DateTime
+                    ? now.AddDays(-storeMaxAgeDays).UtcDateTime
                     : (DateTime?)null;
                 report.reclaimedFileEntries += WorkflowFileStore.PruneByAgeAndSize(
                     storeCutoff, maxStoreBytes, referencedHashes);
@@ -2262,7 +2410,12 @@ namespace UnitySkills
         public static void ClearHistory()
         {
             _history = new WorkflowHistoryData();
-            WorkflowFileStore.CollectGarbage(new HashSet<string>(StringComparer.Ordinal), out _, out _);
+            // Blobs of the task still being recorded survive: it was never part of the history the
+            // user asked to clear. Everything else goes — the skill promises to empty the store, so
+            // the recent-write grace period does not apply — which also puts the store back in sync
+            // with the history and lifts recovery mode.
+            WorkflowFileStore.CollectGarbage(CollectReferencedHashes(), out _, out _, includeRecentWrites: true);
+            _historyRecoveryMode = false;
             SaveHistory();
         }
 
@@ -2286,6 +2439,7 @@ namespace UnitySkills
             _history = null;
             _currentTask = null;
             _currentSessionId = null;
+            _historyRecoveryMode = false;
         }
     }
 }

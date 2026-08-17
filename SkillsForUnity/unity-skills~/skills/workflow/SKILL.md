@@ -1,7 +1,16 @@
 ---
 name: unity-workflow
-description: Persistent operation history and orchestration — snapshots, task/session undo, bookmarks, and batch planning/retry/rollback. Use when undoing a whole task or session, snapshotting before risky changes, planning or previewing batch operations, or rolling back, even if the user just says "撤销整个操作" or "回滚". 持久化操作历史与编排(快照、任务/会话级撤销、书签、批量规划/重试/回滚);当用户要撤销整个任务或会话、在高危改动前快照、规划或预览批量操作、或回滚时使用。
+description: Persistent operation history and orchestration
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Undoing a whole task or session
+- Snapshotting before risky changes
+- Planning/previewing batch operations
+- Rolling back
+- 撤销整个任务或会话、高危改动前快照、规划/预览批量操作、回滚
 
 # Workflow Skills
 
@@ -12,7 +21,7 @@ Allows tagging tasks, snapshotting objects before modification, and undoing spec
 
 ## Operating Mode
 
-- **Approval**：本模块大部分 skill 标 `SkillMode.SemiAuto`（bookmark / history / task / session 系列 + `workflow_plan`，后者 ReadOnly=true 仅生成聚合计划），可直接执行。少数写类 skill (`workflow_snapshot_object` / `workflow_snapshot_created` / `batch_retry_failed`) 走默认 `SkillMode.FullAuto`，需 grant。
+- **Approval**：本模块大部分 skill 标 `SkillMode.SemiAuto`（bookmark / history / task / session 系列里的纯读查询 + `workflow_plan`，后者 ReadOnly=true 仅生成聚合计划），可直接执行。有副作用的 skill (`bookmark_set` / `bookmark_goto` / `workflow_snapshot_object` / `workflow_snapshot_created` / `batch_retry_failed`) 走默认 `SkillMode.FullAuto`，需 grant。
 - **Auto / Bypass**：FullAuto 直接执行。
 - **含 NeverInSemi 高危 skill**：`bookmark_delete` / `workflow_delete_task`（标 Operation.Delete，删除书签/任务记录）、`workflow_clear_history`（Operation.Delete + RiskLevel=high，清空全部历史+redo栈+文件存储，不可逆）。这些在 Approval/Auto 下返 `MODE_FORBIDDEN`，仅 Bypass 或 Allowlist 命中可调。
 
@@ -275,7 +284,7 @@ Marked `SkillOperation.Delete` + `RiskLevel="high"`, so it is `NeverInSemi` (ret
 
 ## Snapshot Mechanism
 
-History is persisted to `workflow_history.json` (`schemaVersion` 4). Asset and `.meta` bytes are independently content-addressed in `Library/UnitySkills/workflow_files/<sha1>`; history keeps `fileHash` / `metaFileHash` references. Schema 2/3 histories are migrated atomically: legacy blobs are made durable before inline base64 is removed.
+History is persisted to `workflow_history.json` (`schemaVersion` 5). Asset and `.meta` bytes are independently content-addressed in `Library/UnitySkills/workflow_files/<sha1>`; history keeps `fileHash` / `metaFileHash` references. Schema 2/3 histories are migrated atomically: legacy blobs are made durable before inline base64 is removed.
 
 Snapshots are tiered by `SnapshotType`:
 

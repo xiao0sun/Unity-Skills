@@ -1,7 +1,16 @@
 ---
 name: unity-package
-description: Manage Unity Package Manager (UPM) — install, remove, refresh, search, inspect, and list packages. Use when adding or removing UPM packages, checking installed versions, searching the registry, or scripting package operations, even if the user just says "装个包" or "UPM". 管理 Unity Package Manager(UPM:安装、移除、刷新、搜索、查看、列出包);当用户要添加或移除 UPM 包、检查已装版本、搜索 registry、或脚本化包操作时使用。
+description: Manage Unity Package Manager (UPM) packages
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Adding or removing UPM packages
+- Checking installed versions
+- Searching the registry
+- Scripting package operations
+- 添加或移除 UPM 包、检查已装版本、搜索 registry、脚本化包操作
 
 # Package Skills
 

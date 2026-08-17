@@ -74,6 +74,26 @@
                     </ui:VisualElement>
                 </ui:VisualElement>
 
+                <ui:VisualElement name="group-language" class="settings-group">
+                    <ui:Label name="language-pins-title" class="settings-group-title" text="Pinned languages" />
+                    <ui:DropdownField name="language-pin-primary" />
+                    <ui:DropdownField name="language-pin-secondary" />
+                </ui:VisualElement>
+
+                <!-- Unity CLI group — entry to the standalone UnityCliWindow -->
+                <ui:VisualElement name="group-cli" class="settings-group">
+                    <ui:Label name="group-cli-title" class="settings-group-title"
+                              text="Unity CLI" />
+                    <ui:Label name="cli-drawer-hint" class="setting-hint"
+                              style="margin-left: 0; margin-bottom: 6px;" />
+                    <ui:VisualElement name="row-cli-setup"
+                                      style="flex-direction: row;">
+                        <ui:Button name="cli-open-setup-btn" class="mini-btn"
+                                   text="Unity CLI Setup…"
+                                   style="flex-grow: 1; height: 22px; margin: 0;" />
+                    </ui:VisualElement>
+                </ui:VisualElement>
+
                 <!-- Server group -->
                 <ui:VisualElement name="group-server" class="settings-group">
                     <ui:Label name="group-server-title" class="settings-group-title"
@@ -81,6 +101,10 @@
 
                     <ui:Toggle name="autostart-toggle" />
                     <ui:Label name="autostart-hint" class="setting-hint"
+                              style="margin-left: 18px;" />
+
+                    <ui:Toggle name="start-on-launch-toggle" style="margin-top: 6px;" />
+                    <ui:Label name="start-on-launch-hint" class="setting-hint"
                               style="margin-left: 18px;" />
 
                     <ui:VisualElement name="row-port" class="setting-row"
@@ -117,13 +141,45 @@
                         <ui:DropdownField name="loglevel-dropdown" class="setting-row__field" />
                     </ui:VisualElement>
 
-                    <ui:Toggle name="confirm-toggle" />
-                    <ui:Label name="confirm-hint" class="setting-hint"
-                              style="margin-left: 18px;" />
+                    <ui:VisualElement name="guide-mode-row" class="setting-row">
+                        <ui:Label name="guide-mode-label" class="setting-row__label" />
+                        <ui:VisualElement name="guide-mode-switch" class="server-switch" style="margin: 0;">
+                            <ui:VisualElement class="server-switch__knob" />
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+                    <ui:Label name="guide-mode-hint" class="setting-hint" />
 
-                    <ui:Toggle name="telemetry-toggle" style="margin-top: 6px;" />
-                    <ui:Label name="telemetry-hint" class="setting-hint"
-                              style="margin-left: 18px;" />
+                    <ui:VisualElement name="update-notifications-row" class="setting-row">
+                        <ui:Label name="update-notifications-label" class="setting-row__label" />
+                        <ui:VisualElement name="update-notifications-switch" class="server-switch" style="margin: 0;">
+                            <ui:VisualElement class="server-switch__knob" />
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+                    <ui:Label name="update-notifications-hint" class="setting-hint" />
+
+                    <ui:VisualElement name="confirm-row" class="setting-row">
+                        <ui:Label name="confirm-label" class="setting-row__label" />
+                        <ui:VisualElement name="confirm-switch" class="server-switch" style="margin: 0;">
+                            <ui:VisualElement class="server-switch__knob" />
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+                    <ui:Label name="confirm-hint" class="setting-hint" />
+
+                    <ui:VisualElement name="telemetry-row" class="setting-row">
+                        <ui:Label name="telemetry-label" class="setting-row__label" />
+                        <ui:VisualElement name="telemetry-switch" class="server-switch" style="margin: 0;">
+                            <ui:VisualElement class="server-switch__knob" />
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+                    <ui:Label name="telemetry-hint" class="setting-hint" />
+
+                    <ui:VisualElement name="summary-truncate-row" class="setting-row">
+                        <ui:Label name="summary-truncate-label" class="setting-row__label" />
+                        <ui:VisualElement name="summary-truncate-switch" class="server-switch" style="margin: 0;">
+                            <ui:VisualElement class="server-switch__knob" />
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+                    <ui:Label name="summary-truncate-hint" class="setting-hint" />
                 </ui:VisualElement>
 
                 <!-- Shortcuts group — panel hotkeys (rows built by ShortcutsSettingsController) -->

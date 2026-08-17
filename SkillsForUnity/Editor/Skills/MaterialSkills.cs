@@ -8,9 +8,9 @@ namespace UnitySkills
 {
     /// <summary>
     /// Material management skills - create, modify, assign.
-    /// Now supports finding by name, instanceId, or path.
+    /// Supports finding by name, instanceId, or path.
     /// Automatically detects render pipeline for correct shader selection.
-    /// Enhanced with HDR, Keyword, GI support and comprehensive material operations.
+    /// Supports HDR, keyword, and GI flag operations.
     /// </summary>
     public static class MaterialSkills
     {
@@ -21,7 +21,6 @@ namespace UnitySkills
         /// </summary>
         private static (Material material, GameObject go, object error) FindMaterial(string name = null, int instanceId = 0, string path = null)
         {
-            // Check if finding by Asset Path (material file)
             if (!string.IsNullOrEmpty(path) && (path.StartsWith("Assets/") || path.EndsWith(".mat")))
             {
                 var material = AssetDatabase.LoadAssetAtPath<Material>(path);
@@ -30,7 +29,6 @@ namespace UnitySkills
                 return (material, null, null);
             }
             
-            // Find by GameObject
             var result = GameObjectFinder.FindOrError(name, instanceId, path);
             if (result.error != null)
                 return (null, null, result.error);
@@ -53,7 +51,6 @@ namespace UnitySkills
             if (string.IsNullOrEmpty(savePath))
                 return null;
                 
-            // Ensure path starts with Assets/
             if (!savePath.StartsWith("Assets/"))
             {
                 savePath = "Assets/" + savePath;
@@ -109,7 +106,6 @@ namespace UnitySkills
         {
             if (!string.IsNullOrEmpty(savePath) && Validate.SafePath(savePath, "savePath") is object pathErr) return pathErr;
 
-            // Auto-detect shader based on render pipeline if not specified
             if (string.IsNullOrEmpty(shaderName))
             {
                 shaderName = ProjectSkills.GetDefaultShaderName();
@@ -152,7 +148,6 @@ namespace UnitySkills
 
             if (!string.IsNullOrEmpty(savePath))
             {
-                // Smart path resolution
                 savePath = ResolveSavePath(savePath, name);
                 EnsureDirectoryExists(savePath);
 
@@ -230,7 +225,7 @@ namespace UnitySkills
             {
                 var result = MaterialCreate(item.name, item.shaderName, item.savePath);
                 if (SkillResultHelper.TryGetError(result, out string errorText))
-                    throw new System.Exception(errorText);
+                    return new { error = errorText, target = item.name };
                 return result;
             }, item => item.name);
         }
@@ -249,7 +244,7 @@ namespace UnitySkills
             {
                 var result = MaterialAssign(name: item.name, instanceId: item.instanceId, path: item.path, materialPath: item.materialPath);
                 if (SkillResultHelper.TryGetError(result, out string errorText))
-                    throw new System.Exception(errorText);
+                    return new { error = errorText, target = item.name ?? item.path };
                 return result;
             }, item => item.name ?? item.path);
         }
@@ -276,7 +271,6 @@ namespace UnitySkills
             
             if (string.IsNullOrEmpty(savePath))
             {
-                // Save in same folder as source
                 var sourceDir = Path.GetDirectoryName(sourcePath);
                 savePath = Path.Combine(sourceDir, newName + ".mat").Replace("\\", "/");
             }
@@ -317,7 +311,6 @@ namespace UnitySkills
             var (material, go, error) = FindMaterial(name, instanceId, path);
             if (error != null) return error;
 
-            // Auto-detect color property name if not specified
             if (string.IsNullOrEmpty(propertyName))
             {
                 propertyName = ProjectSkills.GetColorPropertyName();
@@ -385,14 +378,13 @@ namespace UnitySkills
             TracksWorkflow = true)]
         public static object MaterialSetColorsBatch(string items = null, string propertyName = null)
         {
-            // Auto-detect color property if not specified
             if (string.IsNullOrEmpty(propertyName))
                 propertyName = ProjectSkills.GetColorPropertyName();
 
             return BatchExecutor.Execute<BatchColorItem>(items, item =>
             {
                 var (material, go, error) = FindMaterial(item.name, item.instanceId, item.path);
-                if (error != null) throw new System.Exception("Material not found");
+                if (error != null) return new { error = "Material not found", target = item.name ?? item.path };
 
                 var color = new Color(item.r, item.g, item.b, item.a);
 
@@ -412,7 +404,7 @@ namespace UnitySkills
                 }
 
                 if (!colorSet)
-                    throw new System.Exception("No color property found");
+                    return new { error = "No color property found on material", target = material.name };
 
                 if (go == null) EditorUtility.SetDirty(material);
                 return new { target = go?.name ?? item.path, success = true };
@@ -445,10 +437,8 @@ namespace UnitySkills
             WorkflowManager.SnapshotObject(material);
             Undo.RecordObject(material, "Set Material Emission");
             
-            // Calculate HDR color
             var hdrColor = new Color(r * intensity, g * intensity, b * intensity, 1f);
-            
-            // Try emission property names
+
             string emissionProperty = null;
             var emissionProps = new[] { "_EmissionColor", "_Emission" };
             foreach (var prop in emissionProps)
@@ -470,7 +460,6 @@ namespace UnitySkills
                 };
             }
             
-            // Enable emission
             if (enableEmission && intensity > 0)
             {
                 material.EnableKeyword("_EMISSION");
@@ -506,7 +495,7 @@ namespace UnitySkills
                 var result = MaterialSetEmission(name: item.name, instanceId: item.instanceId, path: item.path,
                     r: item.r, g: item.g, b: item.b, intensity: item.intensity > 0 ? item.intensity : 1f, enableEmission: item.enableEmission);
                 if (SkillResultHelper.TryGetError(result, out string errorText))
-                    throw new System.Exception(errorText);
+                    return new { error = errorText, target = item.name ?? item.path };
                 return result;
             }, item => item.name ?? item.path);
         }
@@ -526,8 +515,7 @@ namespace UnitySkills
         public static object MaterialSetTexture(string name = null, int instanceId = 0, string path = null, string texturePath = null, string propertyName = null)
         {
             if (Validate.Required(texturePath, "texturePath") is object err) return err;
-            
-            // Auto-detect texture property name if not specified
+
             if (string.IsNullOrEmpty(propertyName))
             {
                 propertyName = ProjectSkills.GetMainTexturePropertyName();
@@ -915,7 +903,6 @@ namespace UnitySkills
             var (material, go, error) = FindMaterial(name, instanceId, path);
             if (error != null) return error;
 
-            // Get common keywords that might be available
             var commonKeywords = new[] {
                 "_EMISSION", "_NORMALMAP", "_METALLICGLOSSMAP", "_SPECGLOSSMAP",
                 "_ALPHATEST_ON", "_ALPHABLEND_ON", "_ALPHAPREMULTIPLY_ON",

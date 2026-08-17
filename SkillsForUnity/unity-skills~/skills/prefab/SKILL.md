@@ -1,7 +1,16 @@
 ---
 name: unity-prefab
-description: Manage Prefabs — create, instantiate, apply overrides, unpack, find instances, edit prefab assets, and create variants. Use when working with prefabs, instantiating or applying prefab changes, finding instances in scenes, or creating prefab variants, even if the user just says "做成预制体" or "prefab". 管理 Prefab(创建、实例化、应用覆盖、解包、查找实例、编辑预制体资产、创建变体);当用户要处理预制体、实例化或应用预制体改动、在场景中查找实例、或创建预制体变体时使用。
+description: Manage Prefabs and variants
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Creating or editing prefabs
+- Instantiating or applying prefab changes
+- Finding instances in scenes
+- Creating prefab variants
+- 创建或编辑预制体、实例化或应用预制体改动、在场景中查找实例、创建预制体变体
 
 # Unity Prefab Skills
 
@@ -55,7 +64,7 @@ Create a prefab from a scene GameObject.
 
 *At least one source identifier required.
 
-**Returns**: `{success, prefabPath, sourceObject}`
+**Returns**: `{success, prefabPath, name}`
 
 ### prefab_instantiate
 Instantiate a prefab into the scene.
@@ -70,7 +79,7 @@ Instantiate a prefab into the scene.
 | `parentInstanceId` | int | No | 0 | Parent instance ID |
 | `parentPath` | string | No | null | Parent hierarchy path |
 
-**Returns**: `{success, name, entityId, instanceId, path, prefabPath, position}`
+**Returns**: `{success, name, entityId, instanceId, path}`
 
 ### prefab_instantiate_batch
 Instantiate multiple prefabs in one call.
@@ -81,7 +90,7 @@ Instantiate multiple prefabs in one call.
 
 **Item properties**: `prefabPath`, `name`, `x`, `y`, `z`, `rotX`, `rotY`, `rotZ`, `scaleX`, `scaleY`, `scaleZ`, `parentEntityId`, `parentName`, `parentInstanceId`, `parentPath`
 
-**Returns**: `{success, totalItems, successCount, failCount, results: [{success, name, instanceId, prefabPath, position}]}`
+**Returns**: `{success, totalItems, successCount, failCount, results: [{success, name, entityId, instanceId, position}]}`
 
 ```python
 unity_skills.call_skill("prefab_instantiate_batch", items=[
@@ -102,7 +111,7 @@ Apply instance changes back to the prefab asset.
 
 *At least one identifier required.
 
-**Returns**: `{success, gameObject, prefabPath}`
+**Returns**: `{success, appliedTo}` (`appliedTo` is the prefab asset path)
 
 ### prefab_unpack
 Unpack a prefab instance (break prefab connection).
@@ -116,17 +125,17 @@ Unpack a prefab instance (break prefab connection).
 
 *At least one identifier required.
 
-**Returns**: `{success, gameObject, mode}`
+**Returns**: `{success, unpacked}` (`unpacked` is the instance's GameObject name)
 
 ### prefab_get_overrides
-Get list of property overrides on a prefab instance.
+Get a summary of property overrides on a prefab instance (counts, not the individual override list).
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `name` | string | No* | Prefab instance name |
 | `instanceId` | int | No* | Instance ID |
 
-**Returns**: `{success, overrides: [{type, path, property}]}`
+**Returns**: `{success, prefabPath, propertyOverrides, addedComponents, removedComponents, addedGameObjects, hasOverrides}` — `propertyOverrides`/`addedComponents`/`removedComponents`/`addedGameObjects` are **counts** (int), not arrays; `hasOverrides` is `true` when any of those counts is non-zero.
 
 ### prefab_revert_overrides
 Revert all overrides on a prefab instance back to prefab values.
@@ -136,6 +145,8 @@ Revert all overrides on a prefab instance back to prefab values.
 | `name` | string | No* | Prefab instance name |
 | `instanceId` | int | No* | Instance ID |
 
+**Returns**: `{success, reverted}` (`reverted` is the prefab root's GameObject name)
+
 ### prefab_apply_overrides
 Apply all overrides from instance to source prefab asset.
 
@@ -143,6 +154,8 @@ Apply all overrides from instance to source prefab asset.
 |-----------|------|----------|-------------|
 | `name` | string | No* | Prefab instance name |
 | `instanceId` | int | No* | Instance ID |
+
+**Returns**: `{success, appliedTo}` (`appliedTo` is the prefab asset path)
 
 ### prefab_create_variant
 Create a prefab variant from an existing prefab.
@@ -162,7 +175,7 @@ Find all instances of a prefab in the current scene.
 | `prefabPath` | string | Yes | - | Prefab asset path to search for |
 | `limit` | int | No | 50 | Maximum number of instances to return |
 
-**Returns:** `{ success, prefabPath, count, instances: [{ name, path, instanceId }] }`
+**Returns:** `{ success, prefabPath, count, instances: [{ name, path, entityId, instanceId }] }`
 
 ### prefab_set_property
 Set a property on a component inside a Prefab asset file (without instantiating it). Supports basic types, vectors, colors, enums, and asset references.
@@ -241,3 +254,14 @@ unity_skills.call_skill("prefab_instantiate_batch", items=[
 ## Exact Signatures
 
 Exact names, parameters, defaults, and returns are defined by `GET /skills/schema` or `unity_skills.get_skill_schema()`, not by this file.
+
+## Common Errors
+
+Full transport-level codes (COMPILING/RATE_LIMIT etc.) → ../../references/protocol-error-codes.md
+
+| Error | Trigger | Fix |
+|---|---|---|
+| `TARGET_NOT_FOUND` | The prefab asset, source prefab, child GameObject inside a prefab, component, or asset reference could not be found. | Confirm the prefab path with `asset_find` / `prefab_find_instances`, check child/component names, and retry with exact identifiers. |
+| `MISSING_PARAM` | A required parameter is missing, such as `savePath`, `prefabPath`, `sourcePrefabPath`, `componentType`, or `propertyName`. | Provide the missing parameter; use `mode=dryRun` to inspect the full schema. |
+| `SEMANTIC_INVALID` | The target is not a prefab instance, the property is not an Object reference field, or a serialized value could not be parsed. | Ensure the object is a prefab instance (`prefab_get_overrides` can verify), match the property type, and retry with a valid value. |
+| `SKILL_ERROR` | A low-level operation failed, such as `Failed to instantiate prefab` or `Failed to set value ... (type: ...)`. | Resolve the underlying cause named in the message (e.g., prefab corruption, type mismatch) and retry. |

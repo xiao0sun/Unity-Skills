@@ -1,7 +1,15 @@
 ---
 name: unity-perception
-description: Read-only scene, project, and script analysis for AI coding context — analyze scene structure, detect the project stack, run health checks, and find hotspots. Use when gathering context before editing, understanding an unfamiliar scene or project, or auditing structure without making changes, even if the user just says "分析一下场景" or "看看项目结构". 只读的场景/项目/脚本分析,为 AI 编码提供上下文(分析场景结构、探测项目技术栈、健康检查、定位热点);当用户要在编辑前收集上下文、理解陌生场景或项目、或在不改动的前提下审查结构时使用。
+description: Read-only scene, project and script analysis for AI context
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Gathering context before editing
+- Understanding unfamiliar scene/project
+- Auditing structure without changes
+- 编辑前收集上下文、理解陌生场景或项目、在不改动的前提下审查结构
 
 # Unity Perception Skills
 
@@ -9,8 +17,8 @@ Use this module for read-only scene and project analysis.
 
 ## Operating Mode
 
-- **Approval / Auto / Bypass**: 本模块所有 skill（`scene_analyze` / `scene_summarize` / `scene_health_check` / `scene_component_stats` / `scene_find_hotspots` / `scene_tag_layer_stats` / `scene_performance_hints` / `scene_diff` / `hierarchy_describe` / `scene_context` / `scene_dependency_analyze` / `scene_spatial_query` / `scene_materials` / `scene_contract_validate` / `project_stack_detect` / `script_analyze` / `script_dependency_graph` / `scene_export_report`）都标 `Mode = SkillMode.SemiAuto`，三档模式下直接执行无需 grant。其中前 17 个同时标 `ReadOnly = true`。
-- **特别说明**：`scene_export_report` 写 markdown 文件到磁盘（`Operation = Analyze | Execute`，未标 `ReadOnly`），但仍标了 `SkillMode.SemiAuto`，Approval 模式可直接执行。
+- **Approval / Auto / Bypass**: 本模块 18 个 skill 里的 17 个纯读 skill（`scene_analyze` / `scene_summarize` / `scene_health_check` / `scene_component_stats` / `scene_find_hotspots` / `scene_tag_layer_stats` / `scene_performance_hints` / `scene_diff` / `hierarchy_describe` / `scene_context` / `scene_dependency_analyze` / `scene_spatial_query` / `scene_materials` / `scene_contract_validate` / `project_stack_detect` / `script_analyze` / `script_dependency_graph`）都标 `Mode = SkillMode.SemiAuto` 且 `ReadOnly = true`，三档模式下直接执行无需 grant。
+- **特别说明**：`scene_export_report` 写 markdown 文件到磁盘（`Operation = Analyze | Execute`，标 `MutatesAssets = true`），因此**不是** SemiAuto——它走默认 `SkillMode.FullAuto`，Approval 模式下需要 grant 才能执行。
 - **本模块不含 Delete / PlayMode / Reload / RiskLevel=high 类 skill** —— 没有 `IsForbiddenInSemi` 拦截。
 
 **DO NOT** (common hallucinations):

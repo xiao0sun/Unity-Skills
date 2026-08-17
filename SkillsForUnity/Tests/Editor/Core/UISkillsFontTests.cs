@@ -11,7 +11,6 @@ namespace UnitySkills.Tests.Core
     [TestFixture]
     public class UISkillsFontTests
     {
-#if !UNITY_6000_0_OR_NEWER
         [Test]
         public void FontAsset_IsStaticAndAllRenderResourcesArePersistent()
         {
@@ -25,11 +24,14 @@ namespace UnitySkills.Tests.Core
             Assert.That(AssetDatabase.GetAssetPath(fontAsset.atlasTextures[0]),
                 Is.EqualTo(UISkillsFont.FontAssetPath));
         }
-#endif
 
         [Test]
         public void CustomFont_ContainsEveryFixedUiCharacter()
         {
+            // 验的是**源 Font**而不是烘焙出的 FontAsset：面板绑定走
+            // unityFontDefinition = FontDefinition.FromFont(源 Font)，真正光栅化字形的是它。
+            // 烘焙产物的完整性由本文件的 FontAsset_IsStaticAndAllRenderResourcesArePersistent 覆盖，
+            // 这里再验一遍是重复的，而且验的不是实际渲染路径。
             var font = AssetDatabase.LoadAssetAtPath<Font>(UISkillsFont.TtfPath);
             Assert.That(font, Is.Not.Null);
 
@@ -80,6 +82,41 @@ namespace UnitySkills.Tests.Core
             Assert.That(root.style.unityFontDefinition.value.fontAsset, Is.Null);
         }
 
+        [Test]
+        public void Apply_UsesCustomFontRegardlessOfCurrentLanguage()
+        {
+            var saved = SkillsLocalization.Current;
+            try
+            {
+                foreach (var language in new[]
+                         {
+                             SkillsLocalization.Language.English,
+                             SkillsLocalization.Language.Russian,
+                             SkillsLocalization.Language.Chinese
+                         })
+                {
+                    SkillsLocalization.Current = language;
+                    var root = new VisualElement();
+
+                    UISkillsFont.Apply(root);
+
+#if UNITY_6000_0_OR_NEWER
+                    var expected = AssetDatabase.LoadAssetAtPath<Font>(UISkillsFont.TtfPath);
+                    Assert.That(root.style.unityFontDefinition.value.font, Is.SameAs(expected),
+                        $"Custom font must be applied for {language}");
+#else
+                    var expected = AssetDatabase.LoadAssetAtPath<FontAsset>(UISkillsFont.FontAssetPath);
+                    Assert.That(root.style.unityFontDefinition.value.fontAsset, Is.SameAs(expected),
+                        $"Custom font must be applied for {language}");
+#endif
+                }
+            }
+            finally
+            {
+                SkillsLocalization.Current = saved;
+            }
+        }
+
 #if !UNITY_6000_0_OR_NEWER
         [Test]
         public void AppliedFont_SurvivesImmediateUnusedAssetCleanup()
@@ -103,6 +140,7 @@ namespace UnitySkills.Tests.Core
                 "Packages/com.besty.unity-skills/Editor/UI/UnitySkillsWindow.uss",
                 "Packages/com.besty.unity-skills/Editor/UI/AuditLogWindow.uss",
                 "Packages/com.besty.unity-skills/Editor/UI/AllowlistPickerWindow.uss",
+                "Packages/com.besty.unity-skills/Editor/UI/UnityCliWindow.uss",
             };
 
             foreach (var path in paths)

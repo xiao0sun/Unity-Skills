@@ -1,7 +1,15 @@
 ---
 name: unity-postprocess
-description: Configure modern SRP post-processing on URP/HDRP VolumeProfiles — add and tune effects like bloom, tonemapping, and color grading. Use when setting up post-processing, adding effects to a VolumeProfile, or tuning the look of a URP/HDRP scene, even if the user just says "后处理" or "加个泛光". 在 URP/HDRP VolumeProfile 上配置现代 SRP 后处理(添加与调校泛光、色调映射、调色等效果);当用户要搭建后处理、向 VolumeProfile 添加效果、或调整 URP/HDRP 场景观感时使用。
+description: Configure modern SRP post-processing on URP/HDRP
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Setting up post-processing
+- Adding effects to a VolumeProfile
+- Tuning URP/HDRP scene look
+- 搭建后处理、向 VolumeProfile 添加效果、调整 URP/HDRP 场景观感
 
 # PostProcess Skills
 

@@ -1,7 +1,15 @@
 ---
 name: unity-probuilder
-description: Model editable meshes with ProBuilder for blockout — create and edit ProBuilder meshes, faces, and vertices for level greyboxing. Use when blocking out levels, building or editing ProBuilder geometry, or prototyping shapes in-editor, even if the user just says "灰盒" or "白模". 用 ProBuilder 进行可编辑网格建模做 blockout(创建与编辑 ProBuilder 网格、面、顶点,用于关卡灰盒);当用户要搭建关卡灰盒、创建或编辑 ProBuilder 几何体、或在编辑器内快速搭形时使用。
+description: Model editable meshes with ProBuilder for blockout
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Blocking out levels
+- Building or editing ProBuilder geometry
+- Prototyping shapes in-editor
+- 搭建关卡灰盒、创建或编辑 ProBuilder 几何体、在编辑器内快速搭形
 
 # Unity ProBuilder Skills
 

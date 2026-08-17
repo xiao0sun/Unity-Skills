@@ -29,11 +29,9 @@ namespace UnitySkills
             string assetPath = System.IO.Path.Combine(folder, name + ".playable");
             assetPath = AssetDatabase.GenerateUniqueAssetPath(assetPath);
 
-            // Create Asset
             var timelineAsset = ScriptableObject.CreateInstance<TimelineAsset>();
             AssetDatabase.CreateAsset(timelineAsset, assetPath);
-            
-            // Create GameObject
+
             var go = new GameObject(name);
             var director = go.AddComponent<PlayableDirector>();
             director.playableAsset = timelineAsset;
@@ -160,7 +158,8 @@ namespace UnitySkills
             Tags = new[] { "timeline", "track", "remove", "delete" },
             Outputs = new[] { "success", "removed" },
             RequiresInput = new[] { "director", "track" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true,
+            RiskLevel = "medium")]
         public static object TimelineRemoveTrack(string name = null, int instanceId = 0, string path = null, string trackName = null)
         {
             var (timeline, director, err) = GetTimeline(name, instanceId, path);

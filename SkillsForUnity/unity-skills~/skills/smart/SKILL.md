@@ -1,7 +1,15 @@
 ---
 name: unity-smart
-description: AI-powered scene operations — SQL-like and spatial object queries plus automatic layout and auto-binding. Use when querying scene objects by condition or proximity, auto-arranging objects, or auto-wiring references, even if the user just says "找出所有…的物体" or "自动排列". AI 驱动的场景操作(类 SQL 与空间对象查询、自动布局、自动绑定);当用户要按条件或邻近关系查询场景对象、自动排布对象、或自动连线引用时使用。
+description: AI-powered scene queries, layout and auto-binding. AI
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Querying scene objects by condition or proximity
+- Auto-arranging objects
+- Auto-wiring references
+- 按条件或邻近关系查询场景对象、自动排布对象、自动连线引用
 
 # Unity Smart Skills
 

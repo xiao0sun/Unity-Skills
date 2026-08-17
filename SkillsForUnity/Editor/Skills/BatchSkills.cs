@@ -142,9 +142,16 @@ namespace UnitySkills
             string regexReplacement = null,
             int sampleLimit = DefaultSampleLimit)
         {
-            var query = ParseQuery(queryJson);
-            var preview = BuildRenamePreview(query, mode, prefix, suffix, search, replacement, regexPattern, regexReplacement);
-            return SavePreview(preview, sampleLimit);
+            try
+            {
+                var query = ParseQuery(queryJson);
+                var preview = BuildRenamePreview(query, mode, prefix, suffix, search, replacement, regexPattern, regexReplacement);
+                return SavePreview(preview, sampleLimit);
+            }
+            catch (ArgumentException ex)
+            {
+                return new { error = ex.Message };
+            }
         }
 
         [UnitySkill("batch_preview_set_property", "Preview setting a component property or field across queried targets.",
@@ -164,9 +171,16 @@ namespace UnitySkills
             string assetPath = null,
             int sampleLimit = DefaultSampleLimit)
         {
-            var query = ParseQuery(queryJson);
-            var preview = BuildSetPropertyPreview(query, componentType, propertyName, value, referencePath, referenceName, assetPath);
-            return SavePreview(preview, sampleLimit);
+            try
+            {
+                var query = ParseQuery(queryJson);
+                var preview = BuildSetPropertyPreview(query, componentType, propertyName, value, referencePath, referenceName, assetPath);
+                return SavePreview(preview, sampleLimit);
+            }
+            catch (ArgumentException ex)
+            {
+                return new { error = ex.Message };
+            }
         }
 
         [UnitySkill("batch_preview_replace_material", "Preview replacing Renderer materials across queried targets.",
@@ -178,9 +192,16 @@ namespace UnitySkills
             Mode = SkillMode.SemiAuto)]
         public static object BatchPreviewReplaceMaterial(string queryJson = null, string materialPath = null, int sampleLimit = DefaultSampleLimit)
         {
-            var query = ParseQuery(queryJson);
-            var preview = BuildReplaceMaterialPreview(query, materialPath);
-            return SavePreview(preview, sampleLimit);
+            try
+            {
+                var query = ParseQuery(queryJson);
+                var preview = BuildReplaceMaterialPreview(query, materialPath);
+                return SavePreview(preview, sampleLimit);
+            }
+            catch (ArgumentException ex)
+            {
+                return new { error = ex.Message };
+            }
         }
 
         [UnitySkill("batch_execute", "Execute a previously previewed batch operation by confirmToken. Large operations return a jobId.",
@@ -191,6 +212,8 @@ namespace UnitySkills
             SupportsDryRun = false)]
         public static object BatchExecute(string confirmToken, bool runAsync = true, int chunkSize = 100, int progressGranularity = 10)
         {
+            chunkSize = Mathf.Clamp(chunkSize, 1, 200);
+
             if (Validate.Required(confirmToken, "confirmToken") is object err)
                 return err;
 
@@ -407,17 +430,17 @@ namespace UnitySkills
             };
         }
 
-        [UnitySkill("job_wait", "Wait for a UnitySkills job to finish or until timeoutMs elapses. Direct REST default timeoutMs=10000 (10s); the Python wait_for_job() wrapper defaults to 60s and passes timeoutMs explicitly — the two defaults target different callers, not a conflict.",
+        [UnitySkill("job_wait", "Wait for a UnitySkills job to finish or until timeoutMs elapses (clamped to [0, 2000]ms — this blocks the Unity main thread, so longer waits are not allowed). For job kinds that advance via Unity's own engine loop (compile/package/test/playmode/play_capture/build_player), blocking cannot help them progress, so this returns the current snapshot immediately with waitNotSupported=true instead of spinning — poll GET /jobs/{id} or subscribe to GET /events instead, both of which run off the main thread.",
             Category = SkillCategory.Workflow, Operation = SkillOperation.Execute,
             Tags = new[] { "job", "wait", "async" },
-            Outputs = new[] { "jobId", "status", "reportId" },
+            Outputs = new[] { "jobId", "status", "reportId", "waitNotSupported", "terminal" },
             RequiresInput = new[] { "jobId" })]
         public static object JobWait(string jobId, int timeoutMs = 10000)
         {
             if (Validate.Required(jobId, "jobId") is object err)
                 return err;
 
-            var job = AsyncJobService.Wait(jobId, timeoutMs);
+            var job = AsyncJobService.Wait(jobId, timeoutMs, out var waitNotSupported);
             if (job == null)
                 return new { success = false, error = $"Job not found: {jobId}" };
 
@@ -432,7 +455,12 @@ namespace UnitySkills
                 workflowId = job.relatedWorkflowId,
                 resultSummary = job.resultSummary,
                 error = job.error,
-                details = job.resultData
+                details = job.resultData,
+                terminal = IsTerminalStatus(job.status),
+                waitNotSupported,
+                hint = waitNotSupported
+                    ? $"Job kind '{job.kind}' advances via Unity's own engine loop (compilation/package manager/test runner/play mode/build pipeline) and cannot be progressed by blocking the main thread. Poll GET /jobs/{job.jobId} or subscribe to GET /events instead."
+                    : null
             };
         }
 
@@ -492,8 +520,15 @@ namespace UnitySkills
             Mode = SkillMode.SemiAuto)]
         public static object BatchSetRenderLayer(string queryJson = null, string layer = null, bool recursive = false, int sampleLimit = DefaultSampleLimit)
         {
-            var preview = BuildSetLayerPreview(ParseQuery(queryJson), layer, recursive);
-            return SavePreview(preview, sampleLimit);
+            try
+            {
+                var preview = BuildSetLayerPreview(ParseQuery(queryJson), layer, recursive);
+                return SavePreview(preview, sampleLimit);
+            }
+            catch (ArgumentException ex)
+            {
+                return new { error = ex.Message };
+            }
         }
 
         [UnitySkill("batch_replace_material", "Preview replacing materials in batch. Execute with batch_execute(confirmToken).",
@@ -504,8 +539,15 @@ namespace UnitySkills
             Mode = SkillMode.SemiAuto)]
         public static object BatchReplaceMaterial(string queryJson = null, string materialPath = null, int sampleLimit = DefaultSampleLimit)
         {
-            var preview = BuildReplaceMaterialPreview(ParseQuery(queryJson), materialPath);
-            return SavePreview(preview, sampleLimit);
+            try
+            {
+                var preview = BuildReplaceMaterialPreview(ParseQuery(queryJson), materialPath);
+                return SavePreview(preview, sampleLimit);
+            }
+            catch (ArgumentException ex)
+            {
+                return new { error = ex.Message };
+            }
         }
 
         [UnitySkill("batch_validate_scene_objects", "Analyze scene objects for missing scripts, missing references, duplicate names, and empty objects.",
@@ -545,6 +587,7 @@ namespace UnitySkills
             Outputs = new[] { "jobId", "retryCount", "originalReportId" })]
         public static object BatchRetryFailed(string reportId, bool runAsync = true, int chunkSize = 100)
         {
+            chunkSize = Mathf.Clamp(chunkSize, 1, 200);
             if (Validate.Required(reportId, "reportId") is object err)
                 return err;
 

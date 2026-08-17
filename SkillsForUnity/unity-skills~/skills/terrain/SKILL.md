@@ -1,7 +1,15 @@
 ---
 name: unity-terrain
-description: Operate on Unity Terrain — create TerrainData, sculpt heights, paint texture layers, and smooth/flatten regions. Use when creating or editing terrain, sculpting or smoothing the heightmap, or painting terrain texture layers, even if the user just says "地形" or "刷地面". 操作 Unity Terrain(创建 TerrainData、雕刻高度、绘制纹理层、平滑/压平区域);当用户要创建或编辑地形、雕刻或平滑高度图、或绘制地形纹理层时使用。
+description: Operate on Unity Terrain
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Creating or editing terrain
+- Sculpting or smoothing heightmap
+- Painting terrain texture layers
+- 创建或编辑地形、雕刻或平滑高度图、绘制地形纹理层
 
 # Unity Terrain Skills
 

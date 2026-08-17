@@ -40,12 +40,12 @@ namespace UnitySkills
     }
 
     /// <summary>
-    /// Core of the v1.9 Skill mode permission system. Three-tier operating modes
+    /// Core of the Skill mode permission system. Three-tier operating modes
     /// (Approval / Auto / Bypass) + two-channel approval (Dialog / Panel) +
     /// **Allowlist (user-managed permanent whitelist, can override IsForbiddenInSemi)** +
     /// **single-use Approval** (grant/approve only releases the current call).
     ///
-    /// v1.9 semantic split (vs the original v1.9 Approval design):
+    /// Semantic split (vs the original Approval design):
     /// - **Allowlist 通道**：用户在面板手动管理；命中直接放行，**优先级高于 IsForbiddenInSemi**，
     ///   允许用户手动放行原本的高危拦截 skill。
     /// - **Approval 单次有效**：grant/approve 仅放行本次调用，不再永久写入白名单。
@@ -68,6 +68,7 @@ namespace UnitySkills
     /// NeverInSemi (incl. FullAuto write skills) executes directly; only NeverInSemi
     /// (Delete / MayEnterPlayMode / MayTriggerReload / RiskLevel=high) returns MODE_FORBIDDEN.
     /// </summary>
+    [InitializeOnLoad]
     public static class SkillsModeManager
     {
         public enum AccessResult { Allowed, NeedsGrant, Forbidden }
@@ -76,18 +77,32 @@ namespace UnitySkills
         private const string PrefKeyMode = "UnitySkills_OperatingMode";
         private const string PrefKeyPanelApproval = "UnitySkills_PanelApprovalRequired";
 
-        /// <summary>v1.9 改版后的 Allowlist 持久化 key（用户手动管理）。</summary>
+        /// <summary>Allowlist 持久化 key（用户手动管理）。</summary>
         private const string PrefKeyAllowlist = "UnitySkills_AllowlistSkills";
         /// <summary>首次迁移完成标记，避免重复执行。</summary>
         private const string PrefKeyMigrationDone = "UnitySkills_AllowlistMigratedFromGranted";
-        /// <summary>v1.9 旧 GrantedSkills key（仅用于一次性迁移读取，迁移后不删除以便回滚）。</summary>
+        /// <summary>旧 GrantedSkills key（仅用于一次性迁移读取，迁移后不删除以便回滚）。</summary>
         private const string PrefKeyLegacyGranted = "UnitySkills_GrantedSkills";
+
+        // ResetForTests temporarily clears these machine-wide preferences. SessionState survives
+        // a domain reload, allowing the user's settings to be restored if a test run is interrupted.
+        private const string TestRecoveryActiveKey = "UnitySkills.Tests.PreferenceRecovery.Active";
+        private const string TestRecoveryModeExistsKey = "UnitySkills.Tests.PreferenceRecovery.Mode.Exists";
+        private const string TestRecoveryModeValueKey = "UnitySkills.Tests.PreferenceRecovery.Mode.Value";
+        private const string TestRecoveryPanelApprovalExistsKey = "UnitySkills.Tests.PreferenceRecovery.PanelApproval.Exists";
+        private const string TestRecoveryPanelApprovalValueKey = "UnitySkills.Tests.PreferenceRecovery.PanelApproval.Value";
+        private const string TestRecoveryAllowlistExistsKey = "UnitySkills.Tests.PreferenceRecovery.Allowlist.Exists";
+        private const string TestRecoveryAllowlistValueKey = "UnitySkills.Tests.PreferenceRecovery.Allowlist.Value";
+        private const string TestRecoveryMigrationExistsKey = "UnitySkills.Tests.PreferenceRecovery.Migration.Exists";
+        private const string TestRecoveryMigrationValueKey = "UnitySkills.Tests.PreferenceRecovery.Migration.Value";
+        private const string TestRecoveryLegacyGrantedExistsKey = "UnitySkills.Tests.PreferenceRecovery.LegacyGranted.Exists";
+        private const string TestRecoveryLegacyGrantedValueKey = "UnitySkills.Tests.PreferenceRecovery.LegacyGranted.Value";
 
         private const int DefaultGrantTtlSeconds = 300;
         private const int MaxLiveGrants = 256;
         private const int MaxArgsSummaryChars = 120;
 
-        // v1.9.x: the historical `_explicitNeverList` fallback (scene_clear / scene_new / batch_apply)
+        // The historical `_explicitNeverList` fallback (scene_clear / scene_new / batch_apply)
         // has been removed — none of those skill names exist in the current 750-skill surface, and the
         // 75 NeverInSemi skills are now fully covered by metadata flags (Operation=Delete /
         // MayEnterPlayMode / MayTriggerReload / RiskLevel=high) checked in IsForbiddenInSemi.
@@ -120,10 +135,26 @@ namespace UnitySkills
         /// <summary>
         /// 单次有效 grant 的"放行令牌"。由 <see cref="TryGrantAndReturnArgs"/> 设置，
         /// 由 <see cref="ConsumeOneShotBypass"/> 消费。ThreadStatic 保证不同请求线程互不干扰。
+        ///
+        /// 设置方**必须**在 finally 里调用 <see cref="ClearOneShotBypass"/>——消费点不是必经之路，
+        /// 详见该方法的注释。<see cref="_oneShotDeadlineUtc"/> 是第二道保险。
         /// </summary>
         [ThreadStatic] private static string _currentOneShotSkill;
 
+        /// <summary>
+        /// 令牌失效时刻。设置到消费之间只隔一次 SkillRouter.Execute 的参数校验（毫秒级），
+        /// 所以任何超出 <see cref="OneShotLifetime"/> 的令牌都是残留物，一律作废而非放行。
+        /// </summary>
+        [ThreadStatic] private static DateTime _oneShotDeadlineUtc;
+
+        private static readonly TimeSpan OneShotLifetime = TimeSpan.FromSeconds(30);
+
         public static event Action OnChanged;
+
+        static SkillsModeManager()
+        {
+            RestorePreferencesAfterTestDomainReload();
+        }
 
         // ===== Properties =====
 
@@ -279,7 +310,7 @@ namespace UnitySkills
         /// AI re-plays the token via <see cref="TryGrant"/>. For Panel channel the token is
         /// also visible in <see cref="PendingGrantRequests"/> for panel-side Approve/Deny.
         ///
-        /// v1.9 改版后：完整 argsJson 也缓存到 entry 中，供方案 B 一步执行回放。
+        /// 完整 argsJson 也缓存到 entry 中，供方案 B 一步执行回放。
         /// </summary>
         public static (string token, int ttlSeconds, ApprovalChannel channel)
             IssueGrantRequest(string skillName, string argsJson)
@@ -327,7 +358,7 @@ namespace UnitySkills
         /// Like <see cref="TryGrant"/> but returns a detailed outcome so callers can map
         /// PendingApproval to GRANT_PENDING_APPROVAL and Invalid to INVALID_TOKEN.
         ///
-        /// v1.9 改版后：Granted 分支**不再** AddGranted/AddToAllowlist；grant 只对本次有效，
+        /// Granted 分支**不再** AddGranted/AddToAllowlist；grant 只对本次有效，
         /// 永久白名单由用户在面板手动管理。entry 在 Granted 时被消费移除。
         /// </summary>
         public static GrantOutcome TryGrantDetailed(string skillName, string token, string argsJson)
@@ -364,7 +395,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Panel-side approve. v1.9 改版后语义：**不再** 将 skill 永久写入白名单，而是只把
+        /// Panel-side approve. **不再** 将 skill 永久写入白名单，而是只把
         /// <c>entry.ApprovedByPanel = true</c>，保留 entry 让 AI 后续 <see cref="TryGrant"/>
         /// （或方案 B 的 <see cref="TryGrantAndReturnArgs"/>）走 Granted 分支并触发一次性执行。
         /// </summary>
@@ -424,7 +455,7 @@ namespace UnitySkills
         /// Decide whether a skill may execute under the current operating mode + allowlist state.
         /// Caller (SkillRouter) translates the result into an error response or continues.
         ///
-        /// v1.9 改版后优先级（依次判断）：
+        /// 优先级（依次判断）：
         /// 1. Bypass 模式 → Allowed
         /// 2. one-shot bypass 命中（grant 方案 B 重入）→ Allowed
         /// 3. Allowlist 命中 → Allowed（**优先于** <see cref="IsForbiddenInSemi"/>，
@@ -495,7 +526,7 @@ namespace UnitySkills
             // Granted — 消费 entry、设置 one-shot、审计。语义上等价于 TryGrantDetailed Granted 分支。
             _grants.TryRemove(token, out _);
             entry.OneShotConsumed = true;
-            _currentOneShotSkill = entry.SkillName;
+            SetOneShotBypass(entry.SkillName);
             int tokenAgeSec = (int)Math.Max(0, (DateTime.UtcNow - entry.IssuedAtUtc).TotalSeconds);
             SkillsAuditLog.Append("grant", new
             {
@@ -511,26 +542,63 @@ namespace UnitySkills
 
         /// <summary>
         /// 消费当前线程的 one-shot 放行令牌。命中（即 <c>_currentOneShotSkill</c> 等于
-        /// <paramref name="skillName"/>，忽略大小写）则清空并返回 true；否则返回 false。
+        /// <paramref name="skillName"/>，忽略大小写，且未超出存活窗口）则清空并返回 true；
+        /// 否则返回 false。过期令牌被直接丢弃并告警——它只可能来自漏掉
+        /// <see cref="ClearOneShotBypass"/> 的路径，放行它等于静默绕过 Approval 门。
         /// </summary>
         internal static bool ConsumeOneShotBypass(string skillName)
         {
             var current = _currentOneShotSkill;
             if (string.IsNullOrEmpty(current)) return false;
+
+            if (DateTime.UtcNow > _oneShotDeadlineUtc)
+            {
+                ClearOneShotBypass();
+                SkillsLogger.LogWarning(
+                    $"Discarded a stale one-shot grant token for '{current}' (not consumed). " +
+                    "Some grant path failed to clear it; the current request is re-checked against the operating mode.");
+                return false;
+            }
+
             if (string.IsNullOrEmpty(skillName)) return false;
             if (!string.Equals(current, skillName, StringComparison.OrdinalIgnoreCase)) return false;
-            _currentOneShotSkill = null;
+            ClearOneShotBypass();
             return true;
+        }
+
+        private static void SetOneShotBypass(string skillName)
+        {
+            _currentOneShotSkill = skillName;
+            _oneShotDeadlineUtc = DateTime.UtcNow + OneShotLifetime;
+        }
+
+        /// <summary>
+        /// 无条件清除当前线程的 one-shot 放行令牌。**设置令牌的一方必须在 finally 里调用它**：
+        /// 消费点 <see cref="CheckAccess"/> 位于 SkillRouter.Execute 的四道参数校验
+        /// （UnknownParam / MissingParam / TypeMismatch / SemanticInvalid）之后，任何一道早退
+        /// 都走不到消费点。令牌是 ThreadStatic，而 grant 与普通请求跑在同一条 Unity 主线程上，
+        /// 残留令牌会让下一个同名 skill 请求带着完全不同的参数被静默放行（审计里还只记成
+        /// grantSource="auto"，无法追溯）。
+        ///
+        /// 更强的绑定是把令牌升级为 (skillName, argsHash) 并在消费点比对本次请求的 args；
+        /// 但消费点只拿得到 SkillInfo，args 需要改 SkillRouter.ApplyModeGate → CheckAccess 的
+        /// 调用签名才能传进来（不在本次改动范围）。当前用"设置方无条件清除 +
+        /// <see cref="OneShotLifetime"/> 存活窗口"把泄漏窗口封死。
+        /// </summary>
+        public static void ClearOneShotBypass()
+        {
+            _currentOneShotSkill = null;
+            _oneShotDeadlineUtc = default;
         }
 
         /// <summary>
         /// True if the skill must be blocked outside Bypass mode. Implementation matches
         /// plan section 8 — purely metadata-driven judgement.
         ///
-        /// v1.9.x: 移除 _explicitNeverList 兜底（已无命中）— metadata 已完全覆盖当前 75 个
+        /// 移除 _explicitNeverList 兜底（已无命中）— metadata 已完全覆盖当前 75 个
         /// NeverInSemi skill（全部由下面 4 条规则触发，0 个依赖名单兜底）。
         ///
-        /// 注意：v1.9 改版后，<see cref="CheckAccess"/> 在 IsInAllowlist 命中时**会跳过本判定**，
+        /// 注意：<see cref="CheckAccess"/> 在 IsInAllowlist 命中时**会跳过本判定**，
         /// 让用户能手动放行原本被拦截的高危 skill。
         /// </summary>
         internal static bool IsForbiddenInSemi(SkillRouter.SkillInfo s)
@@ -574,13 +642,14 @@ namespace UnitySkills
         /// <summary>Test-only: clear all state (allowlist, pending, prefs, migration flag) to a clean slate.</summary>
         internal static void ResetForTests()
         {
+            CapturePreferencesForTestRecovery();
             _grants.Clear();
             lock (_allowlistLock)
             {
                 _allowlist = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 SaveAllowlistUnlocked();
             }
-            _currentOneShotSkill = null;
+            ClearOneShotBypass();
             EditorPrefs.DeleteKey(PrefKeyMode);
             EditorPrefs.DeleteKey(PrefKeyPanelApproval);
             EditorPrefs.DeleteKey(PrefKeyAllowlist);
@@ -603,6 +672,29 @@ namespace UnitySkills
             }
             _currentOneShotSkill = null;
             RaiseChanged();
+        }
+
+        /// <summary>Test-only: clears recovery data after the fixture restores its original preferences.</summary>
+        internal static void CompleteTestPreferenceRecovery()
+        {
+            ClearTestPreferenceRecovery();
+        }
+
+        /// <summary>Test-only: simulates the recovery performed by the static initializer after a domain reload.</summary>
+        internal static void RestorePreferencesAfterTestDomainReload()
+        {
+            if (!SessionState.GetBool(TestRecoveryActiveKey, false)) return;
+
+            RestoreStringPreference(PrefKeyMode, TestRecoveryModeExistsKey, TestRecoveryModeValueKey);
+            RestoreBoolPreference(PrefKeyPanelApproval, TestRecoveryPanelApprovalExistsKey,
+                TestRecoveryPanelApprovalValueKey);
+            RestoreStringPreference(PrefKeyAllowlist, TestRecoveryAllowlistExistsKey,
+                TestRecoveryAllowlistValueKey);
+            RestoreBoolPreference(PrefKeyMigrationDone, TestRecoveryMigrationExistsKey,
+                TestRecoveryMigrationValueKey);
+            RestoreStringPreference(PrefKeyLegacyGranted, TestRecoveryLegacyGrantedExistsKey,
+                TestRecoveryLegacyGrantedValueKey);
+            ClearTestPreferenceRecovery();
         }
 
         /// <summary>Look up a pending grant entry by token (internal — used by SkillRouter to surface argsSummary).</summary>
@@ -676,7 +768,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 一次性把 v1.9 旧的 <c>UnitySkills_GrantedSkills</c> 数据迁移到新的
+        /// 一次性把旧的 <c>UnitySkills_GrantedSkills</c> 数据迁移到新的
         /// <c>UnitySkills_AllowlistSkills</c>。通过 <see cref="PrefKeyMigrationDone"/> 保证幂等。
         /// 旧 key 故意不删除，留作回滚标记。
         ///
@@ -761,6 +853,67 @@ namespace UnitySkills
                 foreach (var b in hash) sb.Append(b.ToString("x2"));
                 return sb.ToString();
             }
+        }
+
+        private static void CapturePreferencesForTestRecovery()
+        {
+            if (SessionState.GetBool(TestRecoveryActiveKey, false)) return;
+
+            StoreStringPreference(PrefKeyMode, TestRecoveryModeExistsKey, TestRecoveryModeValueKey);
+            StoreBoolPreference(PrefKeyPanelApproval, TestRecoveryPanelApprovalExistsKey,
+                TestRecoveryPanelApprovalValueKey);
+            StoreStringPreference(PrefKeyAllowlist, TestRecoveryAllowlistExistsKey,
+                TestRecoveryAllowlistValueKey);
+            StoreBoolPreference(PrefKeyMigrationDone, TestRecoveryMigrationExistsKey,
+                TestRecoveryMigrationValueKey);
+            StoreStringPreference(PrefKeyLegacyGranted, TestRecoveryLegacyGrantedExistsKey,
+                TestRecoveryLegacyGrantedValueKey);
+            SessionState.SetBool(TestRecoveryActiveKey, true);
+        }
+
+        private static void StoreStringPreference(string preferenceKey, string existsKey, string valueKey)
+        {
+            var exists = EditorPrefs.HasKey(preferenceKey);
+            SessionState.SetBool(existsKey, exists);
+            SessionState.SetString(valueKey, exists ? EditorPrefs.GetString(preferenceKey) : string.Empty);
+        }
+
+        private static void StoreBoolPreference(string preferenceKey, string existsKey, string valueKey)
+        {
+            var exists = EditorPrefs.HasKey(preferenceKey);
+            SessionState.SetBool(existsKey, exists);
+            SessionState.SetBool(valueKey, exists && EditorPrefs.GetBool(preferenceKey));
+        }
+
+        private static void RestoreStringPreference(string preferenceKey, string existsKey, string valueKey)
+        {
+            if (SessionState.GetBool(existsKey, false))
+                EditorPrefs.SetString(preferenceKey, SessionState.GetString(valueKey, string.Empty));
+            else
+                EditorPrefs.DeleteKey(preferenceKey);
+        }
+
+        private static void RestoreBoolPreference(string preferenceKey, string existsKey, string valueKey)
+        {
+            if (SessionState.GetBool(existsKey, false))
+                EditorPrefs.SetBool(preferenceKey, SessionState.GetBool(valueKey, false));
+            else
+                EditorPrefs.DeleteKey(preferenceKey);
+        }
+
+        private static void ClearTestPreferenceRecovery()
+        {
+            SessionState.EraseBool(TestRecoveryActiveKey);
+            SessionState.EraseBool(TestRecoveryModeExistsKey);
+            SessionState.EraseString(TestRecoveryModeValueKey);
+            SessionState.EraseBool(TestRecoveryPanelApprovalExistsKey);
+            SessionState.EraseBool(TestRecoveryPanelApprovalValueKey);
+            SessionState.EraseBool(TestRecoveryAllowlistExistsKey);
+            SessionState.EraseString(TestRecoveryAllowlistValueKey);
+            SessionState.EraseBool(TestRecoveryMigrationExistsKey);
+            SessionState.EraseBool(TestRecoveryMigrationValueKey);
+            SessionState.EraseBool(TestRecoveryLegacyGrantedExistsKey);
+            SessionState.EraseString(TestRecoveryLegacyGrantedValueKey);
         }
 
         /// <summary>

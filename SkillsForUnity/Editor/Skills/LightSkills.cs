@@ -28,7 +28,6 @@ namespace UnitySkills
             var go = new GameObject(name);
             var light = go.AddComponent<Light>();
 
-            // Set light type
             if (System.Enum.TryParse<LightType>(lightType, true, out var lt))
                 light.type = lt;
             else
@@ -37,21 +36,17 @@ namespace UnitySkills
                 return new { error = $"Unknown light type: {lightType}. Use: Directional, Point, Spot, Area" };
             }
 
-            // Set position
             go.transform.position = new Vector3(x, y, z);
 
-            // Set color
             light.color = new Color(r, g, b);
             light.intensity = intensity;
 
-            // Type-specific settings
             if (lt == LightType.Point || lt == LightType.Spot)
                 light.range = range;
 
             if (lt == LightType.Spot)
                 light.spotAngle = spotAngle;
 
-            // Set shadows
             switch (shadows.ToLower())
             {
                 case "hard":
@@ -106,7 +101,6 @@ namespace UnitySkills
             WorkflowManager.SnapshotObject(light);
             Undo.RecordObject(light, "Set Light Properties");
 
-            // Update color if any color component provided
             if (r.HasValue || g.HasValue || b.HasValue)
             {
                 var currentColor = light.color;
@@ -253,10 +247,10 @@ namespace UnitySkills
             return BatchExecutor.Execute<BatchLightEnabledItem>(items, item =>
             {
                 var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
-                if (error != null) throw new System.Exception("Object not found");
+                if (error != null) return new { error = "Object not found", target = item.name ?? item.path };
 
                 var light = go.GetComponent<Light>();
-                if (light == null) throw new System.Exception("No Light component");
+                if (light == null) return new { error = "No Light component", target = go.name };
 
                 WorkflowManager.SnapshotObject(light);
                 Undo.RecordObject(light, "Batch Set Light Enabled");
@@ -283,10 +277,10 @@ namespace UnitySkills
             return BatchExecutor.Execute<BatchLightPropsItem>(items, item =>
             {
                 var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path);
-                if (error != null) throw new System.Exception("Object not found");
+                if (error != null) return new { error = "Object not found", target = item.name ?? item.path };
 
                 var light = go.GetComponent<Light>();
-                if (light == null) throw new System.Exception("No Light component");
+                if (light == null) return new { error = "No Light component", target = go.name };
 
                 WorkflowManager.SnapshotObject(light);
                 Undo.RecordObject(light, "Batch Set Light Properties");
@@ -306,7 +300,7 @@ namespace UnitySkills
                         case "hard": light.shadows = LightShadows.Hard; break;
                         case "soft": light.shadows = LightShadows.Soft; break;
                         case "none": light.shadows = LightShadows.None; break;
-                        default: throw new System.Exception($"Unknown shadow type: '{item.shadows}'. Valid values: hard, soft, none");
+                        default: return new { error = $"Unknown shadow type: '{item.shadows}'. Valid values: hard, soft, none", target = go.name };
                     }
                 }
 
@@ -345,7 +339,6 @@ namespace UnitySkills
             if (!existed)
                 lpg = Undo.AddComponent<LightProbeGroup>(go);
 
-            // Set grid layout if any grid parameter provided
             if (gridX > 0 && gridY > 0 && gridZ > 0)
             {
                 Undo.RecordObject(lpg, "Set Light Probe Positions");

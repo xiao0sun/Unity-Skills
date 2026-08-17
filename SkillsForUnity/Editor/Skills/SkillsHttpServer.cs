@@ -34,16 +34,43 @@ namespace UnitySkills
         private static Thread _listenerThread;
         private static Thread _keepAliveThread;
         private static volatile bool _isRunning;
-        private static int _port = 8090;
+        // volatile: read from the HTTP thread by the /health fast path.
+        private static volatile int _port = 8090;
         private static readonly string _prefixBase = "http://localhost:";
         private static string _prefix = $"{_prefixBase}{_port}/";
-        
-        // Job queue - HTTP thread enqueues, Main thread dequeues and processes
-        private static readonly Queue<RequestJob> _jobQueue = new Queue<RequestJob>();
-        private static readonly object _queueLock = new object();
+
+        // Job queues - HTTP thread enqueues, Main thread dequeues and processes.
+        //
+        // Two lanes, both strictly FIFO within themselves:
+        // - light: read-only, millisecond-scale endpoints (liveness / progress polling).
+        //   Drained completely every frame, exempt from the frame time budget, so a
+        //   /health or /jobs/{id} poll never queues behind a multi-second skill.
+        // - heavy: everything that executes skills, builds the reflection caches or writes
+        //   state. Subject to both the per-frame count cap and the millisecond budget.
+        //
+        // Cross-lane ordering is deliberately NOT preserved (that is the whole point);
+        // callers that need ordering must wait for their response before sending the next
+        // request, which is what the Python client already does.
+        //
+        // ConcurrentQueue rather than Queue+lock: the only place that used the lock for
+        // atomicity was Stop()'s drain, and that runs AFTER the listener thread is joined,
+        // so no concurrent producer can exist at that point.
+        private static readonly ConcurrentQueue<RequestJob> _lightQueue = new ConcurrentQueue<RequestJob>();
+        private static readonly ConcurrentQueue<RequestJob> _heavyQueue = new ConcurrentQueue<RequestJob>();
+        // Interlocked counters mirror the queue depths: ConcurrentQueue.Count walks segments,
+        // and admission control + /health read the depth on every single request.
+        private static int _lightQueued = 0;
+        private static int _heavyQueued = 0;
         private static bool _updateHooked = false;
         private static int _pendingRequests = 0;
-        
+
+        // Heavy-lane gates, both evaluated before starting each job. The count cap bounds the
+        // burst; the millisecond budget bounds the frame. A single skill can overrun the
+        // budget on its own — the budget cannot interrupt one, only decline to start another,
+        // which is what keeps the editor repainting under a long queue.
+        private const int MaxHeavyJobsPerFrame = 20;
+        private const double HeavyFrameBudgetSeconds = 0.012;
+
         private const int MaxRequestsPerSecond = 100;
         private const int MaxQueuedRequests = 200;
         private const int MaxPendingRequests = 300;
@@ -81,7 +108,6 @@ namespace UnitySkills
         private static int _cachedTimeoutMs = 15 * 60 * 1000;
         private static int RequestTimeoutMs => _cachedTimeoutMs;
         internal static void RefreshTimeoutCache() => _cachedTimeoutMs = RequestTimeoutMinutes * 60 * 1000;
-        // Maximum allowed POST body size
         private const int MaxBodySizeBytes = 10 * 1024 * 1024; // 10MB
         // Heartbeat interval for registry (seconds)
         private const double HeartbeatInterval = 30.0;
@@ -104,7 +130,62 @@ namespace UnitySkills
 
         // Startup diagnostic: counts ProcessJobQueue ticks since Start() for self-test diagnostics
         private static volatile int _pjqTicksSinceStart = -1;
-        
+
+        // ===== Main-thread liveness mirror + /health snapshot =====
+        //
+        // Everything in this block is written ONLY on the main thread and read from the HTTP
+        // listener thread by SendHealthFastPath. It exists so GET /health can be answered
+        // without entering the job queue: the probe used to hang behind whatever long skill
+        // was running, which made "server dead" and "Unity busy" look identical to a client.
+
+        // DateTime.UtcNow.Ticks of the most recent ProcessJobQueue frame. C# does not allow
+        // `volatile long`, so this goes through Interlocked — atomic on 32-bit builds too.
+        private static long _mainThreadTickUtc = 0;
+
+        // Values that require a Unity API / EditorPrefs read, mirrored into plain statics.
+        private static volatile string _snapUnityVersion;
+        private static volatile string _snapInstanceId;
+        private static volatile string _snapProjectName;
+        private static volatile string _snapCurrentMode;
+        private static volatile bool _snapPanelApprovalRequired;
+        private static volatile bool _snapGuideMode;
+        private static volatile int _snapPendingCount;
+        private static volatile int _snapAllowlistCount;
+        private static volatile bool _snapAutoStart = true;
+        private static volatile int _snapRequestTimeoutMinutes = 15;
+        private static volatile bool _snapIsCompiling;
+        private static volatile bool _snapIsUpdating;
+        // Until the first full refresh lands, the fast path declines and /health falls back
+        // to the main-thread queue rather than reporting placeholder values.
+        private static volatile bool _snapReady;
+        // Set from any thread by the SkillsModeManager.OnChanged / SkillsGuideMode.OnChanged
+        // hooks; consumed on the next main-thread frame. A flag rather than a direct refresh so
+        // every Unity API read in RefreshHealthSnapshot stays on the main thread regardless of
+        // who raised the event.
+        private static volatile bool _healthSnapshotDirty = true;
+        private static bool _modeHookInstalled = false;
+
+        // Floor for the expensive half of the snapshot when nothing raised OnChanged. Catches
+        // drift the event cannot see: grant TTL expiry, prefs edited outside the manager.
+        private const double HealthSnapshotInterval = 1.0;
+        private static double _lastHealthSnapshot = 0;
+
+        // ===== gzip body cache (HTTP thread) =====
+        //
+        // Applies to GET /skills and GET /skills/schema only — the two bodies big enough for
+        // it to matter (~143KB summary, ~618KB full schema). Keyed by ETag, which is a content
+        // hash, so entries are self-invalidating: new content means a new key and the stale
+        // key is simply never requested again. Compression is pure CPU with no Unity API, so
+        // it is legal on the HTTP thread; the ~618KB pass costs tens of ms and only ever runs
+        // on a cache miss.
+        private const int GzipMinBytes = 4096;
+        private const int MaxGzipCacheEntries = 32;
+        private const long MaxGzipCacheBytes = 8L * 1024 * 1024;
+        private static readonly ConcurrentDictionary<string, byte[]> _gzipCache =
+            new ConcurrentDictionary<string, byte[]>(StringComparer.Ordinal);
+        private static readonly object _gzipCacheLock = new object();
+        private static long _gzipCacheBytes = 0;
+
         // Shared JSON settings from SkillsCommon (single definition, no duplication)
         private static readonly JsonSerializerSettings _jsonSettings = SkillsCommon.JsonSettings;
         
@@ -113,28 +194,32 @@ namespace UnitySkills
 
         private static string _prefServerShouldRun;
         private static string _prefAutoStart;
+        private static string _prefStartOnEditorLaunch;
         private static string _prefTotalProcessed;
         private static string _prefLastPort;
         private static string _prefConsecutiveFailures;
         private static string PREF_SERVER_SHOULD_RUN => _prefServerShouldRun ??= PrefKey("ServerShouldRun");
         private static string PREF_AUTO_START => _prefAutoStart ??= PrefKey("AutoStart");
+        private static string PREF_START_ON_EDITOR_LAUNCH => _prefStartOnEditorLaunch ??= PrefKey("StartOnEditorLaunch");
         private static string PREF_TOTAL_PROCESSED => _prefTotalProcessed ??= PrefKey("TotalProcessed");
         private static string PREF_LAST_PORT => _prefLastPort ??= PrefKey("LastPort");
         private static string PREF_CONSECUTIVE_FAILURES => _prefConsecutiveFailures ??= PrefKey("ConsecutiveRestartFailures");
         private const int MaxConsecutiveFailures = 10;
 
         // Domain Reload tracking
-        private static bool _domainReloadPending = false;
+        // volatile: read from the HTTP thread (/health fast path) and the ThreadPool
+        // responder (timeout diagnostics); written on the main thread only.
+        private static volatile bool _domainReloadPending = false;
 
         public static bool IsRunning => _isRunning;
         public static string Url => _prefix;
         public static int Port => _port;
-        public static int QueuedRequests { get { lock (_queueLock) { return _jobQueue.Count; } } }
-        public static long TotalProcessed => _totalRequestsProcessed;
+        public static int QueuedRequests => Volatile.Read(ref _lightQueued) + Volatile.Read(ref _heavyQueued);
+        public static long TotalProcessed => Interlocked.Read(ref _totalRequestsProcessed);
 
         public static void ResetStatistics()
         {
-            _totalRequestsProcessed = 0;
+            Interlocked.Exchange(ref _totalRequestsProcessed, 0);
             EditorPrefs.SetString(PREF_TOTAL_PROCESSED, "0");
         }
         
@@ -146,6 +231,12 @@ namespace UnitySkills
         {
             get => EditorPrefs.GetBool(PREF_AUTO_START, true);
             set => EditorPrefs.SetBool(PREF_AUTO_START, value);
+        }
+
+        public static bool StartOnEditorLaunch
+        {
+            get => EditorPrefs.GetBool(PREF_START_ON_EDITOR_LAUNCH, false);
+            set => EditorPrefs.SetBool(PREF_START_ON_EDITOR_LAUNCH, value);
         }
 
         private const string PrefKeyPreferredPort = "UnitySkills_PreferredPort";
@@ -191,15 +282,22 @@ namespace UnitySkills
             public string RequestId;
             public string AgentId;
             public string QueryString;
+            // Conditional-GET / content-negotiation headers. Reading request headers is a
+            // pure string operation, so the HTTP thread captures them at enqueue time.
+            public string IfNoneMatch;
+            public string AcceptEncoding;
 
             // Result (set by Main thread)
             public string ResponseJson;
             public int StatusCode;
             public bool IsProcessed;
             public int PoolReturned;
+            // Content hash of ResponseJson for the two cacheable GET endpoints; null for
+            // everything else. Drives both the ETag header and the gzip cache key.
+            public string ETag;
             public ManualResetEventSlim CompletionSignal = new ManualResetEventSlim(false);
 
-            public void Prepare(HttpListenerContext context, string httpMethod, string path, string body, string requestId, string agentId, string queryString = null)
+            public void Prepare(HttpListenerContext context, string httpMethod, string path, string body, string requestId, string agentId, string queryString = null, string ifNoneMatch = null, string acceptEncoding = null)
             {
                 Context = context;
                 HttpMethod = httpMethod;
@@ -209,10 +307,13 @@ namespace UnitySkills
                 RequestId = requestId;
                 AgentId = agentId;
                 QueryString = queryString;
+                IfNoneMatch = ifNoneMatch;
+                AcceptEncoding = acceptEncoding;
                 ResponseJson = null;
                 StatusCode = 200;
                 IsProcessed = false;
                 PoolReturned = 0;
+                ETag = null;
                 CompletionSignal.Reset();
             }
 
@@ -226,15 +327,17 @@ namespace UnitySkills
                 RequestId = null;
                 AgentId = null;
                 QueryString = null;
+                IfNoneMatch = null;
+                AcceptEncoding = null;
                 ResponseJson = null;
                 StatusCode = 200;
                 IsProcessed = false;
+                ETag = null;
                 // Note: PoolReturned is managed by ReturnRequestJob/Prepare, not Reset
                 CompletionSignal.Reset();
             }
         }
 
-        // Request ID counter
         private static long _requestIdCounter = 0;
 
         private static bool TryReservePendingSlot()
@@ -251,6 +354,17 @@ namespace UnitySkills
         {
             if (Interlocked.Decrement(ref _pendingRequests) < 0)
                 Interlocked.Exchange(ref _pendingRequests, 0);
+        }
+
+        /// <summary>
+        /// Best-effort close for a context the accept loop never handed to a responder.
+        /// Closing an already-closed response is a no-op; leaving it open leaks the socket
+        /// for the lifetime of the editor process.
+        /// </summary>
+        private static void CloseContextSafely(HttpListenerContext context)
+        {
+            if (context == null) return;
+            try { context.Response.Close(); } catch { /* already closed, or client is gone */ }
         }
 
         private static RequestJob RentRequestJob()
@@ -294,6 +408,83 @@ namespace UnitySkills
 
             _admittedThisSecond++;
             return _admittedThisSecond <= MaxRequestsPerSecond;
+        }
+
+        /// <summary>
+        /// Lane classification for the dual job queue. Light means read-only AND
+        /// millisecond-bounded — the liveness / progress polls an agent fires in a loop while a
+        /// long skill is running. Everything else is heavy: anything that executes a skill,
+        /// writes state, builds the reflection caches, or does unbounded disk work.
+        ///
+        /// Verified per handler; do not add an endpoint here without re-reading its handler.
+        /// - OPTIONS — a 204 with no handler at all.
+        /// - GET /health, GET / — only ?live=1 probes reach the queue (the rest are answered on
+        ///   the HTTP thread); the handler reads EditorPrefs and two compilation flags.
+        /// - GET /compile/status — two EditorApplication flags plus a cached SessionState string.
+        /// - GET /jobs, /jobs/{id}[/logs|/progress] — BatchPersistence.ListJobs / GetJob project
+        ///   an already-loaded in-memory list; no write path is reachable from the GET handler.
+        /// - GET /permission/status — reads mode, allowlist and pending grants. The
+        ///   PendingGrantRequests getter runs a lazy TTL sweep of expired grants, which is the
+        ///   one write in this lane: bounded by MaxLiveGrants, no Unity work, and it only
+        ///   collects the caller's own expired tokens.
+        ///
+        /// Deliberately heavy despite being read-only:
+        /// - GET /analytics — aggregates telemetry JSONL from disk. Cached 30s per window, but
+        ///   the first call in a window is unbounded I/O, so it fails the millisecond half.
+        /// - GET /skills/recommend — calls SkillRouter.Initialize() (a full reflection scan on
+        ///   a cold domain) and then scores every skill.
+        /// - GET /skills, /skills/schema — a queued one is by definition a cache miss, i.e. the
+        ///   request that builds the multi-hundred-KB manifest.
+        /// </summary>
+        private static bool IsLightRequest(string httpMethod, string path)
+        {
+            if (string.Equals(httpMethod, "OPTIONS", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (!string.Equals(httpMethod, "GET", StringComparison.OrdinalIgnoreCase) || string.IsNullOrEmpty(path))
+                return false;
+
+            if (path == "/" ||
+                string.Equals(path, "/health", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/compile/status", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/permission/status", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(path, "/jobs", StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            return path.StartsWith("/jobs/", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Dequeues one job and keeps the mirrored depth counter in step. The counter is only
+        /// decremented on a successful take, so a miss against a concurrent producer that has
+        /// incremented but not yet enqueued leaves the count intact.
+        /// </summary>
+        private static bool TryDequeueJob(ConcurrentQueue<RequestJob> queue, ref int counter, out RequestJob job)
+        {
+            if (!queue.TryDequeue(out job))
+                return false;
+
+            Interlocked.Decrement(ref counter);
+            return true;
+        }
+
+        /// <summary>
+        /// Fails every job still queued in one lane with 503 SERVER_STOPPED and releases its
+        /// waiting responder. Safe to call unsynchronized only because Stop() runs it after the
+        /// listener thread has been joined, so no producer can still be enqueueing.
+        /// </summary>
+        private static void FailQueuedJobs(ConcurrentQueue<RequestJob> queue, ref int counter)
+        {
+            while (TryDequeueJob(queue, ref counter, out var job))
+            {
+                job.StatusCode = 503;
+                job.ResponseJson = SkillErrorResponse.Build(
+                    SkillErrorCode.ServerStopped,
+                    "Server stopped",
+                    retryStrategy: SkillErrorResponse.RetryWaitAndRetry,
+                    retryAfterSeconds: 5);
+                job.IsProcessed = true;
+                job.CompletionSignal?.Set();
+            }
         }
 
         /// <summary>
@@ -342,9 +533,9 @@ namespace UnitySkills
 
         /// <summary>
         /// Fast-path responder for cached GET /skills and /skills/schema. Runs ON THE HTTP
-        /// LISTENER THREAD — must never touch Unity APIs or SkillsLogger (headers, hashing and
-        /// socket writes only). Adds an ETag header and honors If-None-Match with an
-        /// empty-body 304 reply.
+        /// LISTENER THREAD — must never touch Unity APIs or SkillsLogger (headers, hashing,
+        /// compression and socket writes only). Adds an ETag header, honors If-None-Match with
+        /// an empty-body 304 reply, and serves a cached gzip body when the client asked for it.
         /// </summary>
         private static void SendCachedGetResponse(HttpListenerContext context, HttpListenerRequest request, string json, string etag)
         {
@@ -359,7 +550,12 @@ namespace UnitySkills
                 response.Headers.Add("X-Agent-Id", DetectAgent(request));
                 response.Headers.Add("X-Fast-Path", "true");
                 response.Headers.Add("ETag", $"\"{etag}\"");
+                // The same URL now has two possible bodies (identity / gzip); without Vary an
+                // intermediary could hand a gzip body to a client that never asked for one.
+                response.Headers.Add("Vary", "Accept-Encoding");
 
+                // 304 is decided before compression: an unchanged body should cost zero bytes
+                // and zero CPU, not a gzip pass.
                 if (IfNoneMatchSatisfied(request.Headers["If-None-Match"], etag))
                 {
                     response.StatusCode = 304; // Not Modified — must not carry a body
@@ -368,9 +564,7 @@ namespace UnitySkills
 
                 response.StatusCode = 200;
                 response.ContentType = "application/json; charset=utf-8";
-                byte[] buffer = Encoding.UTF8.GetBytes(json);
-                response.ContentLength64 = buffer.Length;
-                response.OutputStream.Write(buffer, 0, buffer.Length);
+                WriteNegotiatedBody(response, json, etag, request.Headers["Accept-Encoding"]);
             }
             catch (HttpListenerException) { /* Client disconnected */ }
             catch (System.IO.IOException) { /* Client disconnected mid-write */ }
@@ -380,6 +574,124 @@ namespace UnitySkills
             {
                 try { response?.Close(); } catch { }
             }
+        }
+
+        /// <summary>
+        /// Writes a response body as gzip when the client advertised it and a compressed form
+        /// is available, otherwise as plain UTF-8. Shared by the HTTP-thread fast path and the
+        /// main-thread slow path so both negotiate identically. Caller must have already set
+        /// the status code and content type.
+        /// </summary>
+        private static void WriteNegotiatedBody(HttpListenerResponse response, string json, string etag, string acceptEncoding)
+        {
+            byte[] gzipped = etag != null && AcceptsGzip(acceptEncoding)
+                ? GetOrBuildGzip(etag, json)
+                : null;
+
+            if (gzipped != null)
+            {
+                response.Headers.Add("Content-Encoding", "gzip");
+                response.ContentLength64 = gzipped.Length;
+                response.OutputStream.Write(gzipped, 0, gzipped.Length);
+                return;
+            }
+
+            byte[] buffer = Encoding.UTF8.GetBytes(json);
+            response.ContentLength64 = buffer.Length;
+            response.OutputStream.Write(buffer, 0, buffer.Length);
+        }
+
+        /// <summary>
+        /// True when the client listed gzip (or "*") in Accept-Encoding without disabling it
+        /// via q=0. Deliberately minimal — this only gates two endpoints, and every real
+        /// client (requests, curl, browsers) sends a plain "gzip, deflate".
+        /// </summary>
+        private static bool AcceptsGzip(string acceptEncoding)
+        {
+            if (string.IsNullOrEmpty(acceptEncoding))
+                return false;
+
+            foreach (var raw in acceptEncoding.Split(','))
+            {
+                var token = raw.Trim();
+                if (token.Length == 0) continue;
+
+                int semi = token.IndexOf(';');
+                var coding = (semi >= 0 ? token.Substring(0, semi) : token).Trim();
+                if (!coding.Equals("gzip", StringComparison.OrdinalIgnoreCase) && coding != "*")
+                    continue;
+
+                if (semi >= 0)
+                {
+                    var qPart = token.Substring(semi + 1).Trim();
+                    if (qPart.StartsWith("q=", StringComparison.OrdinalIgnoreCase) &&
+                        double.TryParse(qPart.Substring(2),
+                            System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            out double q) && q <= 0)
+                        continue; // explicitly refused — keep scanning for another token
+                }
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Returns the gzip body for <paramref name="json"/>, compressing and caching on first
+        /// use. Returns null — meaning "send it uncompressed" — for bodies below
+        /// <see cref="GzipMinBytes"/>, for content gzip cannot shrink, and for any failure:
+        /// compression must never be able to fail a request.
+        ///
+        /// Pure CPU + string work, safe on the HTTP thread. See the cache declaration for the
+        /// key/eviction rationale.
+        /// </summary>
+        private static byte[] GetOrBuildGzip(string etag, string json)
+        {
+            if (string.IsNullOrEmpty(etag) || string.IsNullOrEmpty(json))
+                return null;
+
+            if (_gzipCache.TryGetValue(etag, out var cached))
+                return cached;
+
+            byte[] compressed = null;
+            try
+            {
+                byte[] raw = Encoding.UTF8.GetBytes(json);
+                if (raw.Length < GzipMinBytes)
+                    return null; // framing + an extra header would cost more than they save
+
+                using (var ms = new System.IO.MemoryStream(raw.Length / 4 + 256))
+                {
+                    using (var gz = new System.IO.Compression.GZipStream(
+                        ms, System.IO.Compression.CompressionMode.Compress, leaveOpen: true))
+                    {
+                        gz.Write(raw, 0, raw.Length);
+                    }
+                    // Read the length only after the inner using flushed the gzip trailer.
+                    if (ms.Length < raw.Length)
+                        compressed = ms.ToArray();
+                }
+            }
+            catch
+            {
+                return null;
+            }
+
+            if (compressed == null)
+                return null;
+
+            lock (_gzipCacheLock)
+            {
+                if (_gzipCache.Count >= MaxGzipCacheEntries ||
+                    _gzipCacheBytes + compressed.Length > MaxGzipCacheBytes)
+                {
+                    _gzipCache.Clear();
+                    _gzipCacheBytes = 0;
+                }
+                if (_gzipCache.TryAdd(etag, compressed))
+                    _gzipCacheBytes += compressed.Length;
+            }
+            return compressed;
         }
 
         /// <summary>
@@ -404,6 +716,262 @@ namespace UnitySkills
             return false;
         }
 
+        // ===== GET /health =====
+
+        /// <summary>
+        /// The part of the /health payload that originates from Unity APIs or EditorPrefs.
+        /// Two producers, one shape: <see cref="FromSnapshot"/> (HTTP thread, reads the
+        /// mirrored statics) and <see cref="FromLive"/> (main thread, reads for real). Keeping
+        /// them in a single struct consumed by a single builder is what stops the fast path
+        /// and <c>?live=1</c> from drifting into two different response shapes.
+        /// </summary>
+        private struct HealthVitals
+        {
+            public string UnityVersion;
+            public string InstanceId;
+            public string ProjectName;
+            public string CurrentMode;
+            public bool PanelApprovalRequired;
+            public bool GuideMode;
+            public int PendingCount;
+            public int AllowlistCount;
+            public bool AutoRestart;
+            public int RequestTimeoutMinutes;
+            public bool IsCompiling;
+            public bool IsUpdating;
+
+            /// <summary>HTTP-thread safe: plain static reads, zero Unity API.</summary>
+            public static HealthVitals FromSnapshot() => new HealthVitals
+            {
+                UnityVersion = _snapUnityVersion,
+                InstanceId = _snapInstanceId,
+                ProjectName = _snapProjectName,
+                CurrentMode = _snapCurrentMode,
+                PanelApprovalRequired = _snapPanelApprovalRequired,
+                GuideMode = _snapGuideMode,
+                PendingCount = _snapPendingCount,
+                AllowlistCount = _snapAllowlistCount,
+                AutoRestart = _snapAutoStart,
+                RequestTimeoutMinutes = _snapRequestTimeoutMinutes,
+                IsCompiling = _snapIsCompiling,
+                IsUpdating = _snapIsUpdating,
+            };
+
+            /// <summary>MAIN THREAD ONLY — reads Unity APIs, EditorPrefs and the permission collections.</summary>
+            public static HealthVitals FromLive()
+            {
+                return new HealthVitals
+                {
+                    UnityVersion = Application.unityVersion,
+                    InstanceId = RegistryService.InstanceId,
+                    ProjectName = RegistryService.ProjectName,
+                    CurrentMode = SkillsModeManager.ModeToWire(SkillsModeManager.CurrentMode),
+                    PanelApprovalRequired = SkillsModeManager.PanelApprovalRequired,
+                    GuideMode = SkillsGuideMode.Enabled,
+                    PendingCount = SkillsModeManager.PendingGrantRequests.Count,
+                    AllowlistCount = SkillsModeManager.AllowlistSkills.Count,
+                    // Qualified: the field names below shadow the enclosing class's
+                    // same-named members inside this nested type.
+                    AutoRestart = SkillsHttpServer.AutoStart,
+                    RequestTimeoutMinutes = SkillsHttpServer.RequestTimeoutMinutes,
+                    IsCompiling = EditorApplication.isCompiling,
+                    IsUpdating = EditorApplication.isUpdating,
+                };
+            }
+        }
+
+        /// <summary>
+        /// MAIN THREAD ONLY. Mirrors <see cref="HealthVitals"/> into the static fields the
+        /// HTTP-thread /health path reads.
+        ///
+        /// full=false is the per-frame path and touches only the two compilation flags — cheap
+        /// property reads, and the only vitals that actually move frame to frame. full=true
+        /// additionally re-reads EditorPrefs and the permission collections (AllowlistSkills
+        /// sorts and copies, PendingGrantRequests sweeps expiries), which is far too wasteful
+        /// at editor frame rate.
+        /// </summary>
+        private static void RefreshHealthSnapshot(bool full)
+        {
+            try
+            {
+                _snapIsCompiling = EditorApplication.isCompiling;
+                _snapIsUpdating = EditorApplication.isUpdating;
+
+                if (!full && _snapReady)
+                    return;
+
+                var vitals = HealthVitals.FromLive();
+                _snapUnityVersion = vitals.UnityVersion;
+                _snapInstanceId = vitals.InstanceId;
+                _snapProjectName = vitals.ProjectName;
+                _snapCurrentMode = vitals.CurrentMode;
+                _snapPanelApprovalRequired = vitals.PanelApprovalRequired;
+                _snapGuideMode = vitals.GuideMode;
+                _snapPendingCount = vitals.PendingCount;
+                _snapAllowlistCount = vitals.AllowlistCount;
+                _snapAutoStart = vitals.AutoRestart;
+                _snapRequestTimeoutMinutes = vitals.RequestTimeoutMinutes;
+                _snapIsCompiling = vitals.IsCompiling;
+                _snapIsUpdating = vitals.IsUpdating;
+                _snapReady = true;
+            }
+            catch (Exception ex)
+            {
+                // A stale snapshot is strictly better than a broken editor update loop; the
+                // next frame retries. mainThreadIdleMs still reports the truth either way.
+                SkillsLogger.LogVerbose($"Health snapshot refresh failed: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Marks the expensive half of the health snapshot for refresh on the next main-thread
+        /// frame. Hooked to <see cref="SkillsModeManager.OnChanged"/> and
+        /// <see cref="SkillsGuideMode.OnChanged"/> so mode / grant / allowlist / guide-mode
+        /// changes show up on /health immediately instead of waiting out
+        /// <see cref="HealthSnapshotInterval"/>. Setting a volatile flag (rather than
+        /// refreshing inline) keeps every Unity API read on the main thread no matter which
+        /// thread raised the event.
+        /// </summary>
+        private static void OnPermissionStateChanged() => _healthSnapshotDirty = true;
+
+        /// <summary>
+        /// Serializes the /health payload. Callers supply the vitals; everything else here is
+        /// a plain static read that is safe on any thread, so this one method backs both the
+        /// HTTP-thread fast path and the main-thread <c>?live=1</c> path.
+        /// </summary>
+        private static string BuildHealthJson(HealthVitals v, bool live)
+        {
+            long tick = Interlocked.Read(ref _mainThreadTickUtc);
+            long idleMs = tick == 0
+                ? -1L // the update loop has not ticked yet — age is unknown, not zero
+                : Math.Max(0L, (DateTime.UtcNow.Ticks - tick) / TimeSpan.TicksPerMillisecond);
+
+            int lightQueued = Volatile.Read(ref _lightQueued);
+            int heavyQueued = Volatile.Read(ref _heavyQueued);
+            int queued = lightQueued + heavyQueued;
+            int allowlistCount = v.AllowlistCount;
+
+            return JsonConvert.SerializeObject(new
+            {
+                status = "ok",
+                service = "UnitySkills",
+                version = SkillsLogger.Version,
+                unityVersion = v.UnityVersion,
+                instanceId = v.InstanceId,
+                projectName = v.ProjectName,
+                serverRunning = _isRunning,
+                queuedRequests = queued,
+                totalProcessed = Interlocked.Read(ref _totalRequestsProcessed),
+                autoRestart = v.AutoRestart,
+                requestTimeoutMinutes = v.RequestTimeoutMinutes,
+                domainReloadRecovery = "enabled",
+                architecture = "Producer-Consumer (Thread-Safe)",
+                currentMode = v.CurrentMode,
+                panelApprovalRequired = v.PanelApprovalRequired,
+                pendingCount = v.PendingCount,
+                allowlistCount,
+                // Deprecated alias for allowlistCount, kept for backward compatibility
+                // (mirrors the `granted` / `counts.granted` aliases on /permission/status).
+                // Safe to remove in a future major version once external consumers migrate.
+                grantedCount = allowlistCount,
+                guideMode = v.GuideMode,
+                guideModeHint = "AI should read SKILL_GUIDE.md and guide manual steps for simple tasks instead of calling write skills.",
+                threads = new
+                {
+                    listenerAlive = _listenerThread?.IsAlive ?? false,
+                    keepAliveAlive = _keepAliveThread?.IsAlive ?? false,
+                },
+                compilation = new
+                {
+                    isCompiling = v.IsCompiling,
+                    isUpdating = v.IsUpdating,
+                    domainReloadPending = _domainReloadPending,
+                },
+                queueStats = new
+                {
+                    queued,
+                    totalReceived = Interlocked.Read(ref _totalRequestsReceived),
+                },
+
+                // ---- added in 2.3 (purely additive; no existing field changed meaning) ----
+                port = _port,
+                // Milliseconds since the last EditorApplication.update tick reached us. This
+                // is the field that makes a fast-path /health worth having: the server can now
+                // answer instantly AND tell you the main thread is stuck. Single-digit values
+                // are a healthy idle editor; seconds mean "alive, but Unity is busy" (long
+                // skill, modal dialog, import) rather than "server dead".
+                mainThreadIdleMs = idleMs,
+                // Admitted-but-not-yet-answered requests (queue depth plus in-flight
+                // responders), against the MaxPendingRequests admission limit.
+                pendingRequests = Volatile.Read(ref _pendingRequests),
+                // Per-lane depth of the dual job queue; light is drained every frame.
+                lightQueued,
+                heavyQueued,
+                domainReloadPending = _domainReloadPending,
+                // True when workflow history failed to load this session: rollback data is
+                // degraded and file-store cleanup is suspended until the history is cleared.
+                workflowRecoveryMode = WorkflowManager.IsHistoryRecoveryMode,
+                // false = answered on the HTTP thread from a snapshot up to ~1s old.
+                // true  = answered on the main thread with live reads (GET /health?live=1).
+                live,
+                note = "If you get 'Connection Refused', Unity may be reloading scripts. Wait 2-3 seconds and retry."
+            }, _jsonSettings);
+        }
+
+        /// <summary>
+        /// HTTP-thread responder for GET /health and GET /. Every value comes from a plain
+        /// static field or the main-thread snapshot, so this touches zero Unity APIs, zero
+        /// EditorPrefs and zero SkillsLogger — the same contract as SendCachedGetResponse.
+        ///
+        /// The point is diagnosability under load: on the old main-thread-only path a single
+        /// long skill made the liveness probe itself hang, so a caller could not tell "server
+        /// dead" from "Unity busy". Now it answers immediately and mainThreadIdleMs says which.
+        /// Callers that need strictly live values use GET /health?live=1.
+        /// </summary>
+        private static void SendHealthFastPath(HttpListenerContext context, HttpListenerRequest request)
+        {
+            HttpListenerResponse response = null;
+            try
+            {
+                response = context.Response;
+                response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+                response.Headers.Add("Access-Control-Allow-Headers", "Content-Type, X-Agent-Id");
+                response.Headers.Add("Access-Control-Allow-Origin", "*");
+                response.Headers.Add("X-Request-Id", $"req_{Interlocked.Increment(ref _requestIdCounter):X8}");
+                response.Headers.Add("X-Agent-Id", DetectAgent(request));
+                response.Headers.Add("X-Fast-Path", "true");
+                response.StatusCode = 200;
+                response.ContentType = "application/json; charset=utf-8";
+
+                byte[] buffer = Encoding.UTF8.GetBytes(BuildHealthJson(HealthVitals.FromSnapshot(), live: false));
+                response.ContentLength64 = buffer.Length;
+                response.OutputStream.Write(buffer, 0, buffer.Length);
+            }
+            catch (HttpListenerException) { /* Client disconnected */ }
+            catch (System.IO.IOException) { /* Client disconnected mid-write */ }
+            catch (ObjectDisposedException) { /* Response already closed */ }
+            catch { /* Never let fast-path errors kill the listener loop */ }
+            finally
+            {
+                try { response?.Close(); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// True for GET /health?live=1 (or live=true) — the opt-in back to the main-thread
+        /// queue, where every field is read live instead of from a snapshot up to ~1s old.
+        /// </summary>
+        private static bool WantsLiveHealth(string query)
+        {
+            if (string.IsNullOrEmpty(query))
+                return false;
+
+            var qs = SkillRouter.ParseQueryString(query);
+            return qs.TryGetValue("live", out var value) &&
+                   (value.Equals("1", StringComparison.Ordinal) ||
+                    value.Equals("true", StringComparison.OrdinalIgnoreCase));
+        }
+
         // Agent detection table - keyword to agent ID mapping
         private static readonly (string keyword, string agentId)[] _agentKeywords = new[]
         {
@@ -412,6 +980,7 @@ namespace UnitySkills
             ("cursor", "Cursor"),
             ("trae", "Trae"), ("bytedance", "Trae"),
             ("antigravity", "Antigravity"),
+            ("opencode", "OpenCode"),
             ("windsurf", "Windsurf"), ("codeium", "Windsurf"),
             ("cline", "Cline"), ("roo", "Cline"),
             ("amazon", "AmazonQ"), ("aws", "AmazonQ"),
@@ -461,6 +1030,11 @@ namespace UnitySkills
                 // Check if we should auto-restart after Domain Reload
                 // Use delayed call to ensure Unity is fully initialized
                 EditorApplication.delayCall += () => ScheduleDelayedCall(1.0, CheckAndRestoreServer);
+
+                // Read after the delayCall hookup: PrefKey() pulls in RegistryService's static
+                // init, and an exception here would be swallowed by the outer catch, silently
+                // taking the Domain Reload recovery hookup above down with it.
+                _editorLaunchPending = !SessionState.GetBool(PrefKey("EditorLaunchHandled"), false);
             }
             catch (Exception ex)
             {
@@ -540,8 +1114,18 @@ namespace UnitySkills
         
         // Retry counter for CheckAndRestoreServer
         private static int _restoreRetryCount = 0;
+        private static bool _editorLaunchPending;
+        private static bool _cliColdStartPending;
         private const int MaxRestoreRetries = 3;
         private static readonly double[] RestoreRetryDelays = { 1.0, 2.0, 4.0 }; // seconds
+
+        internal enum AutoStartReason
+        {
+            None,
+            DomainReload,
+            EditorLaunch,
+            CliColdStart
+        }
 
         /// <summary>
         /// Check if server should be restored after Domain Reload.
@@ -551,11 +1135,21 @@ namespace UnitySkills
         private static void CheckAndRestoreServer()
         {
             bool shouldRun = EditorPrefs.GetBool(PREF_SERVER_SHOULD_RUN, false);
-            bool autoStart = AutoStart;
+            // batchmode 排除：`unity test` / `run` / `build` 等无头流程同样跑 [InitializeOnLoad]，
+            // 在那里抢占 8090-8100 并向全局注册表广告一个转瞬即逝的实例，会把客户端的多实例
+            // 发现引到一个即将退出的进程上。CLI 冷启动走的是 GUI 启动，不受这条限制。
+            bool editorLaunchRequested = _editorLaunchPending && StartOnEditorLaunch && !Application.isBatchMode;
+            // Unity CLI 冷启动（--args -unityskills-coldstart + 已绑定）：本会话强制拉起一次，
+            // 无视 AutoStart/shouldRun 偏好；后续 Domain Reload 走常规恢复路径。
+            _cliColdStartPending |= UnityCliService.ConsumeColdStartRequest();
+            if (_cliColdStartPending && _restoreRetryCount == 0)
+                SkillsLogger.Log("Unity CLI cold start detected — auto-starting server.");
 
-            if (shouldRun && autoStart && !_isRunning)
+            var reason = GetAutoStartReason(shouldRun && AutoStart, editorLaunchRequested, _cliColdStartPending);
+            if (reason != AutoStartReason.None && !_isRunning)
             {
-                int failures = EditorPrefs.GetInt(PREF_CONSECUTIVE_FAILURES, 0);
+                bool domainReload = reason == AutoStartReason.DomainReload;
+                int failures = domainReload ? EditorPrefs.GetInt(PREF_CONSECUTIVE_FAILURES, 0) : 0;
 
                 // Decay: if last failure was more than 5 minutes ago, reset counter
                 if (failures > 0)
@@ -571,25 +1165,30 @@ namespace UnitySkills
                     }
                 }
 
-                if (failures >= MaxConsecutiveFailures)
+                if (domainReload && failures >= MaxConsecutiveFailures)
                 {
                     SkillsLogger.LogError(
                         $"[UnitySkills] Server restart abandoned after {failures} consecutive failures across Domain Reloads.\n" +
                         "Please restart manually: Window > UnitySkills > Start Server");
                     EditorPrefs.SetBool(PREF_SERVER_SHOULD_RUN, false);
                     _restoreRetryCount = 0;
+                    // Clear here too, otherwise a pending editor-launch intent survives this early
+                    // return and would fire on a later reload — bypassing the circuit breaker we
+                    // just tripped.
+                    CompletePendingAutoStart(reason);
                     return;
                 }
 
                 int lastPort = EditorPrefs.GetInt(PREF_LAST_PORT, 0);
                 int restorePort = (lastPort >= 8090 && lastPort <= 8100) ? lastPort : PreferredPort;
-                SkillsLogger.Log($"Auto-restoring server after Domain Reload (port={restorePort}, attempt {_restoreRetryCount + 1}/{MaxRestoreRetries + 1}, consecutive failures={failures})...");
+                SkillsLogger.Log($"Auto-starting server ({reason}, port={restorePort}, attempt {_restoreRetryCount + 1}/{MaxRestoreRetries + 1})...");
                 Start(restorePort, fallbackToAuto: true);
 
                 if (_isRunning)
                 {
                     // 启动成功（failures 已在 Start() 中清零）
                     _restoreRetryCount = 0;
+                    CompletePendingAutoStart(reason);
                 }
                 else if (_restoreRetryCount < MaxRestoreRetries)
                 {
@@ -601,16 +1200,54 @@ namespace UnitySkills
                 {
                     // 本轮所有重试耗尽
                     _restoreRetryCount = 0;
-                    EditorPrefs.SetInt(PREF_CONSECUTIVE_FAILURES, failures + 1);
-                    EditorPrefs.SetString(PrefKey("LastFailTime"), EditorApplication.timeSinceStartup.ToString());
-                    SkillsLogger.LogError(
-                        $"[UnitySkills] Server failed to restart (consecutive failures: {failures + 1}/{MaxConsecutiveFailures}). " +
-                        "Will retry on next Domain Reload. Manual start: Window > UnitySkills > Start Server");
+                    CompletePendingAutoStart(reason);
+                    if (domainReload)
+                    {
+                        EditorPrefs.SetInt(PREF_CONSECUTIVE_FAILURES, failures + 1);
+                        EditorPrefs.SetString(PrefKey("LastFailTime"), EditorApplication.timeSinceStartup.ToString());
+                        // 域重载路径保留失败计数：用户需要知道离 MaxConsecutiveFailures 上限
+                        // 还有多远，否则排查时看不出熔断即将触发。
+                        SkillsLogger.LogError(
+                            $"[UnitySkills] Server failed to restart (consecutive failures: {failures + 1}/{MaxConsecutiveFailures}). " +
+                            "Will retry on next Domain Reload. Manual start: Window > UnitySkills > Start Server");
+                    }
+                    else
+                    {
+                        // EditorLaunch / CliColdStart 每会话只尝试一次，没有跨会话计数可报。
+                        SkillsLogger.LogError(
+                            $"[UnitySkills] Server auto-start failed ({reason}). Manual start: Window > UnitySkills > Start Server");
+                    }
                 }
             }
             else
             {
                 _restoreRetryCount = 0;
+                if (_editorLaunchPending && (!editorLaunchRequested || _isRunning))
+                    CompletePendingAutoStart(AutoStartReason.EditorLaunch);
+                if (_cliColdStartPending && _isRunning)
+                    CompletePendingAutoStart(AutoStartReason.CliColdStart);
+            }
+        }
+
+        internal static AutoStartReason GetAutoStartReason(bool restoreRequested, bool editorLaunchRequested, bool cliColdStart)
+        {
+            if (cliColdStart) return AutoStartReason.CliColdStart;
+            if (editorLaunchRequested) return AutoStartReason.EditorLaunch;
+            if (restoreRequested) return AutoStartReason.DomainReload;
+            return AutoStartReason.None;
+        }
+
+        private static void CompletePendingAutoStart(AutoStartReason reason)
+        {
+            if (_editorLaunchPending)
+            {
+                SessionState.SetBool(PrefKey("EditorLaunchHandled"), true);
+                _editorLaunchPending = false;
+            }
+
+            if (reason == AutoStartReason.CliColdStart)
+            {
+                _cliColdStartPending = false;
             }
         }
 
@@ -731,6 +1368,17 @@ namespace UnitySkills
                 // Register to global registry
                 RegistryService.Register(_port);
 
+                // Populate the /health snapshot BEFORE the listener accepts anything, so the
+                // very first probe hits the fast path instead of falling back to the queue.
+                // Register() above must run first — instanceId/projectName come from it.
+                RefreshHealthSnapshot(full: true);
+                if (!_modeHookInstalled)
+                {
+                    SkillsModeManager.OnChanged += OnPermissionStateChanged;
+                    SkillsGuideMode.OnChanged += OnPermissionStateChanged;
+                    _modeHookInstalled = true;
+                }
+
                 // Start listener thread (Producer - ONLY enqueues, no Unity API)
                 _listenerThread = new Thread(ListenLoop) { IsBackground = true, Name = "UnitySkills-Listener" };
                 _listenerThread.Start();
@@ -794,22 +1442,15 @@ namespace UnitySkills
             _listenerThread = null;
             _keepAliveThread = null;
 
-            // Signal all pending jobs to complete with error
-            lock (_queueLock)
-            {
-                while (_jobQueue.Count > 0)
-                {
-                    var job = _jobQueue.Dequeue();
-                    job.StatusCode = 503;
-                    job.ResponseJson = SkillErrorResponse.Build(
-                        SkillErrorCode.ServerStopped,
-                        "Server stopped",
-                        retryStrategy: SkillErrorResponse.RetryWaitAndRetry,
-                        retryAfterSeconds: 5);
-                    job.IsProcessed = true;
-                    job.CompletionSignal?.Set();
-                }
-            }
+            // Admission counter must not survive a stop/restart cycle: responders that were still
+            // in flight may never run their release, and a stale count would eat the budget of the
+            // next server instance. ReleasePendingSlot() clamps at 0, so late releases stay safe.
+            Interlocked.Exchange(ref _pendingRequests, 0);
+
+            // Signal all pending jobs to complete with error. Runs after the listener thread
+            // has been joined above, so both lanes are quiescent and need no lock.
+            FailQueuedJobs(_lightQueue, ref _lightQueued);
+            FailQueuedJobs(_heavyQueue, ref _heavyQueued);
 
             if (permanent)
                 SkillsLogger.Log($"Server stopped (permanent)");
@@ -837,11 +1478,7 @@ namespace UnitySkills
                 {
                     Thread.Sleep(KeepAlivePollingMs);
                     
-                    bool hasPendingJobs;
-                    lock (_queueLock)
-                    {
-                        hasPendingJobs = _jobQueue.Count > 0;
-                    }
+                    bool hasPendingJobs = QueuedRequests > 0;
 
                     if (hasPendingJobs)
                     {
@@ -879,20 +1516,49 @@ namespace UnitySkills
         /// HTTP Listener loop (Producer).
         /// CRITICAL: This runs on a background thread. NO Unity API calls allowed.
         /// Only enqueues raw request data for main thread processing.
+        ///
+        /// Slot/socket lifecycle: everything after <see cref="TryReservePendingSlot"/> runs inside
+        /// one try/finally so every exit path — including a client that aborts mid-upload while
+        /// the body is being read — releases the pending slot EXACTLY once and closes the context.
+        /// A leaked slot is permanent: MaxPendingRequests leaks turn every later request into a
+        /// 503 QUEUE_FULL until the next domain reload.
+        ///
+        /// Error backoff is split: an accept (GetContext) failure is listener-level and keeps the
+        /// long backoff for the watchdog, while a per-request failure must not stall the sole
+        /// accept thread for a single broken client.
         /// </summary>
         private static void ListenLoop()
         {
             while (_isRunning)
             {
+                HttpListenerContext context;
                 try
                 {
-                    var context = _listener.GetContext();
-                    
+                    context = _listener.GetContext();
+                }
+                catch (HttpListenerException)
+                {
+                    if (!_isRunning) break;
+                    Thread.Sleep(500); // avoid tight exception loop; watchdog will restart if needed
+                    continue;
+                }
+                catch (ObjectDisposedException) { break; } // listener destroyed; watchdog will restart
+                catch (Exception)
+                {
+                    if (!_isRunning) break;
+                    Thread.Sleep(1000); // back off on unknown listener error; watchdog will intervene
+                    continue;
+                }
+
+                string body = "";
+                bool reservedPendingSlot = false;
+                bool handedOffToResponder = false;
+                RequestJob job = null;
+
+                try
+                {
                     // Immediately capture raw data (no Unity API)
                     var request = context.Request;
-                    string body = "";
-                    bool reservedPendingSlot = false;
-                    bool handedOffToResponder = false;
 
                     if (!CheckAdmissionRateLimit())
                     {
@@ -917,15 +1583,26 @@ namespace UnitySkills
                         continue;
                     }
 
-                    // Fast path: GET /skills and GET /skills/schema are answered directly on this
-                    // HTTP thread when SkillRouter's string caches are already built (zero Unity
-                    // API — see SkillRouter.TryGetCachedGetResponse). A cache miss falls through
-                    // to the normal main-thread queue, which builds the cache for next time.
-                    // /health deliberately stays on the main-thread path: clients probe it to
-                    // detect main-thread liveness and compilation state.
+                    // Mono's HttpListener surfaces a null Url for a malformed request line;
+                    // every path below dereferences it, so reject early with a real response.
+                    var url = request.Url;
+                    if (url == null)
+                    {
+                        SendImmediateJsonResponse(context, request, 400, BuildErrorPayload(SkillErrorResponse.Build(
+                            SkillErrorCode.NotFound,
+                            "Malformed request URI",
+                            retryStrategy: SkillErrorResponse.Abort)));
+                        continue;
+                    }
+
+                    // Fast path: GET /skills, GET /skills/schema and GET /health are answered
+                    // directly on this HTTP thread from caches/snapshots the main thread built
+                    // (zero Unity API — see SkillRouter.TryGetCachedGetResponse and
+                    // SendHealthFastPath). A miss falls through to the normal main-thread
+                    // queue, which populates the cache/snapshot for next time.
                     if (request.HttpMethod == "GET")
                     {
-                        string fastPath = request.Url.AbsolutePath;
+                        string fastPath = url.AbsolutePath;
 
                         // Long-poll: GET /events never enters the main-thread queue. The accept
                         // loop only hands the context to a ThreadPool waiter — it must NEVER
@@ -936,29 +1613,30 @@ namespace UnitySkills
                             var pollState = new EventsPollState
                             {
                                 Context = context,
-                                RawQuery = request.Url.Query,
+                                RawQuery = url.Query,
                                 RequestId = $"req_{Interlocked.Increment(ref _requestIdCounter):X8}",
                                 AgentId = DetectAgent(request),
                             };
-                            try
-                            {
-                                ThreadPool.QueueUserWorkItem(EventsLongPollCallback, pollState);
-                                handedOffToResponder = true;
-                            }
-                            finally
-                            {
-                                if (!handedOffToResponder)
-                                    ReleasePendingSlot();
-                            }
+                            ThreadPool.QueueUserWorkItem(EventsLongPollCallback, pollState);
+                            handedOffToResponder = true;
+                            continue;
+                        }
+
+                        // Liveness probe: answered from the main-thread snapshot so a busy or
+                        // blocked main thread can no longer make /health itself hang. Declines
+                        // (falls through to the queue) before the first snapshot exists, and
+                        // whenever the caller asked for live values with ?live=1.
+                        if ((fastPath == "/" || string.Equals(fastPath, "/health", StringComparison.OrdinalIgnoreCase)) &&
+                            _snapReady && !WantsLiveHealth(url.Query))
+                        {
+                            SendHealthFastPath(context, request);
                             continue;
                         }
 
                         if ((string.Equals(fastPath, "/skills", StringComparison.OrdinalIgnoreCase) ||
                              string.Equals(fastPath, "/skills/schema", StringComparison.OrdinalIgnoreCase)) &&
-                            SkillRouter.TryGetCachedGetResponse(fastPath, request.Url.Query, out var cachedJson, out var cachedEtag))
+                            SkillRouter.TryGetCachedGetResponse(fastPath, url.Query, out var cachedJson, out var cachedEtag))
                         {
-                            ReleasePendingSlot();
-                            reservedPendingSlot = false;
                             SendCachedGetResponse(context, request, cachedJson, cachedEtag);
                             continue;
                         }
@@ -968,7 +1646,6 @@ namespace UnitySkills
                     {
                         if (request.ContentLength64 > MaxBodySizeBytes)
                         {
-                            ReleasePendingSlot();
                             SendImmediateJsonResponse(context, request, 413, BuildErrorPayload(SkillErrorResponse.Build(
                                 SkillErrorCode.BodyTooLarge,
                                 "Request body too large",
@@ -977,71 +1654,80 @@ namespace UnitySkills
                             continue;
                         }
 
+                        // An aborted upload throws IOException here — the finally below is what
+                        // keeps that from leaking the slot and the socket.
                         using (var reader = new System.IO.StreamReader(request.InputStream, Encoding.UTF8))
                         {
                             body = reader.ReadToEnd();
                         }
                     }
-                    
-                    RequestJob job = null;
-                    try
+
+                    job = RentRequestJob();
+                    job.Prepare(
+                        context,
+                        request.HttpMethod,
+                        url.AbsolutePath,
+                        body,
+                        $"req_{Interlocked.Increment(ref _requestIdCounter):X8}",
+                        DetectAgent(request),
+                        url.Query,
+                        request.Headers["If-None-Match"],
+                        request.Headers["Accept-Encoding"]);
+
+                    Interlocked.Increment(ref _totalRequestsReceived);
+
+                    // Enqueue for main thread processing, split across the two priority lanes.
+                    // MaxQueuedRequests stays a single shared budget so the admission ceiling
+                    // is unchanged; only the service order differs.
+                    if (QueuedRequests >= MaxQueuedRequests)
                     {
-                        job = RentRequestJob();
-                        job.Prepare(
-                            context,
-                            request.HttpMethod,
-                            request.Url.AbsolutePath,
-                            body,
-                            $"req_{Interlocked.Increment(ref _requestIdCounter):X8}",
-                            DetectAgent(request),
-                            request.Url.Query);
-
-                        Interlocked.Increment(ref _totalRequestsReceived);
-
-                        // Enqueue for main thread processing
-                        lock (_queueLock)
-                        {
-                            if (_jobQueue.Count >= MaxQueuedRequests)
-                            {
-                                job.StatusCode = 503;
-                                job.ResponseJson = SkillErrorResponse.Build(
-                                    SkillErrorCode.QueueFull,
-                                    "Request queue is full",
-                                    details: new { queueLimit = MaxQueuedRequests },
-                                    retryStrategy: SkillErrorResponse.RetryWaitAndRetry,
-                                    retryAfterSeconds: 2);
-                                job.IsProcessed = true;
-                                job.CompletionSignal.Set();
-                            }
-                            else
-                            {
-                                _jobQueue.Enqueue(job);
-                            }
-                        }
-
-                        // Queue the responder with an explicit state object to avoid closure-capture races.
-                        ThreadPool.QueueUserWorkItem(WaitAndRespondCallback, job);
-                        handedOffToResponder = true;
-                        job = null; // Prevent finally from returning to pool (ownership transferred to WaitAndRespond)
+                        job.StatusCode = 503;
+                        job.ResponseJson = SkillErrorResponse.Build(
+                            SkillErrorCode.QueueFull,
+                            "Request queue is full",
+                            details: new { queueLimit = MaxQueuedRequests },
+                            retryStrategy: SkillErrorResponse.RetryWaitAndRetry,
+                            retryAfterSeconds: 2);
+                        job.IsProcessed = true;
+                        job.CompletionSignal.Set();
                     }
-                    finally
+                    else if (IsLightRequest(job.HttpMethod, job.Path))
                     {
-                        if (reservedPendingSlot && !handedOffToResponder)
-                            ReleasePendingSlot();
-                        if (job != null)
-                            ReturnRequestJob(job);
+                        // Increment before enqueue: the counter may briefly over-report, but it
+                        // can never go negative by a consumer draining an item we have not
+                        // counted yet.
+                        Interlocked.Increment(ref _lightQueued);
+                        _lightQueue.Enqueue(job);
                     }
+                    else
+                    {
+                        Interlocked.Increment(ref _heavyQueued);
+                        _heavyQueue.Enqueue(job);
+                    }
+
+                    // Queue the responder with an explicit state object to avoid closure-capture races.
+                    var handoffJob = job;
+                    job = null; // Queue owns it now; must not go back to the pool even if QueueUserWorkItem throws
+                    ThreadPool.QueueUserWorkItem(WaitAndRespondCallback, handoffJob);
+                    handedOffToResponder = true;
                 }
-                catch (HttpListenerException)
+                catch (Exception ex)
                 {
+                    // Per-request failure (aborted upload, malformed body, ...). The finally
+                    // below returns the slot and the socket, so only yield briefly — a long
+                    // sleep here would park the sole accept thread for one broken client.
                     if (!_isRunning) break;
-                    Thread.Sleep(500); // avoid tight exception loop; watchdog will restart if needed
+                    SkillsLogger.LogVerbose($"Request dropped: {ex.GetType().Name}: {ex.Message}");
+                    Thread.Sleep(50);
                 }
-                catch (ObjectDisposedException) { break; } // listener destroyed; watchdog will restart
-                catch (Exception)
+                finally
                 {
-                    if (!_isRunning) break;
-                    Thread.Sleep(1000); // back off on unknown error; watchdog will intervene
+                    if (reservedPendingSlot && !handedOffToResponder)
+                        ReleasePendingSlot();
+                    if (job != null)
+                        ReturnRequestJob(job);
+                    if (!handedOffToResponder)
+                        CloseContextSafely(context);
                 }
             }
         }
@@ -1124,6 +1810,10 @@ namespace UnitySkills
         
         /// <summary>
         /// Sends HTTP response. Thread-safe (no Unity API).
+        ///
+        /// job.ETag is set (by <see cref="ApplyCacheableGetHeaders"/>) only for the two
+        /// cacheable GET endpoints; its presence is what enables the ETag/Vary headers and
+        /// gzip negotiation here, so every other endpoint keeps its exact previous behaviour.
         /// </summary>
         private static void SendResponse(RequestJob job)
         {
@@ -1139,14 +1829,20 @@ namespace UnitySkills
                 response.Headers.Add("X-Request-Id", job.RequestId);
                 response.Headers.Add("X-Agent-Id", job.AgentId);
 
+                if (job.ETag != null)
+                {
+                    response.Headers.Add("ETag", $"\"{job.ETag}\"");
+                    response.Headers.Add("Vary", "Accept-Encoding");
+                }
+
                 response.StatusCode = job.StatusCode;
-                
+
+                // A 304 arrives here with ResponseJson already cleared, so it never reaches
+                // the body branch and never carries a Content-Encoding.
                 if (!string.IsNullOrEmpty(job.ResponseJson))
                 {
                     response.ContentType = "application/json; charset=utf-8";
-                    byte[] buffer = Encoding.UTF8.GetBytes(job.ResponseJson);
-                    response.ContentLength64 = buffer.Length;
-                    response.OutputStream.Write(buffer, 0, buffer.Length);
+                    WriteNegotiatedBody(response, job.ResponseJson, job.ETag, job.AcceptEncoding);
                 }
             }
             catch { /* Ignore write errors - client may have disconnected */ }
@@ -1156,7 +1852,7 @@ namespace UnitySkills
             }
         }
 
-        // ===== GET /events long-polling (v2.1) =====
+        // ===== GET /events long-polling =====
 
         private const int EventsDefaultTimeoutSeconds = 25;
         private const int EventsMinTimeoutSeconds = 1;
@@ -1185,6 +1881,8 @@ namespace UnitySkills
             {
                 // Client disconnected or the listener died mid-poll — reconnecting is the
                 // established protocol; never let this kill the ThreadPool thread noisily.
+                // A throw before WriteEventsResponse means nobody closed the response yet.
+                CloseContextSafely(poll.Context);
             }
             finally
             {
@@ -1349,54 +2047,62 @@ namespace UnitySkills
         /// </summary>
         private static void ProcessJobQueue()
         {
+            // Main-thread liveness mirror, written before anything else in the frame. The HTTP
+            // thread subtracts this from "now" to report /health.mainThreadIdleMs, which is
+            // what lets a caller tell "server dead" from "Unity busy". Writing it up front
+            // means a long job inside THIS tick is already counted as idle time by the next
+            // prober, which is the honest reading.
+            Interlocked.Exchange(ref _mainThreadTickUtc, DateTime.UtcNow.Ticks);
+
             // Startup diagnostic counter (lightweight volatile increment, stops at 10000)
             var diagTick = _pjqTicksSinceStart;
             if (diagTick >= 0 && diagTick < 10000)
                 _pjqTicksSinceStart = diagTick + 1;
 
-            int processed = 0;
-            const int maxPerFrame = 20; // Process more per frame for high throughput
-            
-            while (processed < maxPerFrame)
-            {
-                RequestJob job = null;
-                
-                lock (_queueLock)
-                {
-                    if (_jobQueue.Count > 0)
-                    {
-                        job = _jobQueue.Dequeue();
-                    }
-                }
-                
-                if (job == null) break;
-                
-                try
-                {
-                    ProcessJob(job);
-                }
-                catch (Exception ex)
-                {
-                    job.StatusCode = 500;
-                    job.ResponseJson = SkillErrorResponse.Build(
-                        SkillErrorCode.Internal,
-                        ex.Message,
-                        details: new { type = ex.GetType().Name },
-                        retryStrategy: SkillErrorResponse.RetryWaitAndRetry);
-                    SkillsLogger.LogWarning($"Job processing error: {ex.Message}");
-                }
-                finally
-                {
-                    job.IsProcessed = true;
-                    job.CompletionSignal?.Set();
-                    Interlocked.Increment(ref _totalRequestsProcessed);
-                    // Only invalidate scene cache when request may have mutated state (POST = skill execution)
-                    if (job.HttpMethod == "POST")
-                        GameObjectFinder.InvalidateCache();
-                }
+            double frameStart = EditorApplication.timeSinceStartup;
 
+            // /health snapshot: the cheap half every frame, the expensive half only when the
+            // permission state changed or the 1s floor elapsed.
+            bool fullSnapshot = _healthSnapshotDirty || !_snapReady ||
+                                frameStart - _lastHealthSnapshot >= HealthSnapshotInterval;
+            if (fullSnapshot)
+            {
+                _healthSnapshotDirty = false;
+                _lastHealthSnapshot = frameStart;
+            }
+            RefreshHealthSnapshot(fullSnapshot);
+
+            // Lane 1 — light: drained completely, exempt from the frame budget. These are the
+            // read-only millisecond handlers (see IsLightRequest); starving them behind a slow
+            // skill is exactly the failure the split exists to prevent, and capping them would
+            // reintroduce it at a smaller scale.
+            while (TryDequeueJob(_lightQueue, ref _lightQueued, out var lightJob))
+                RunJob(lightJob);
+
+            // Lane 2 — heavy: two gates, a count cap AND a wall-clock budget, both checked
+            // BEFORE starting each job. A single skill may legitimately run for seconds; the
+            // budget cannot interrupt one, it only declines to start another, which is what
+            // keeps the editor repainting between bursts.
+            int processed = 0;
+            while (processed < MaxHeavyJobsPerFrame)
+            {
+                // The budget never blocks the FIRST heavy job of a frame. A busy light lane
+                // can legitimately consume the whole 12ms, and letting that zero out the heavy
+                // lane would turn a priority split into starvation of skill execution.
+                if (processed > 0 && EditorApplication.timeSinceStartup - frameStart >= HeavyFrameBudgetSeconds)
+                    break;
+
+                if (!TryDequeueJob(_heavyQueue, ref _heavyQueued, out var heavyJob))
+                    break;
+
+                RunJob(heavyJob);
                 processed++;
             }
+
+            // Work left over: request the next tick now instead of waiting up to
+            // KeepAlivePollingMs for the keep-alive thread to notice.
+            if (Volatile.Read(ref _heavyQueued) > 0)
+                EditorApplication.QueuePlayerLoopUpdate();
 
             double now = EditorApplication.timeSinceStartup;
 
@@ -1443,7 +2149,10 @@ namespace UnitySkills
                 {
                     _lastSafetyNetCheck = now;
                     bool shouldRun = EditorPrefs.GetBool(PREF_SERVER_SHOULD_RUN, false);
-                    if (shouldRun && AutoStart)
+                    // 也兜住 editor-launch：首次启动时 shouldRun 恰好是 false（退出时被清），
+                    // 否则新路径会是唯一一条 delayCall 不触发就彻底失效的自启路径。
+                    bool editorLaunchRequested = _editorLaunchPending && StartOnEditorLaunch && !Application.isBatchMode;
+                    if ((shouldRun && AutoStart) || editorLaunchRequested)
                     {
                         int failures = EditorPrefs.GetInt(PREF_CONSECUTIVE_FAILURES, 0);
                         if (failures < MaxConsecutiveFailures)
@@ -1457,6 +2166,62 @@ namespace UnitySkills
                 }
             }
         }
+
+        /// <summary>
+        /// Runs one dequeued job to completion and releases its waiting responder. Extracted
+        /// from <see cref="ProcessJobQueue"/> so both lanes share identical error handling and
+        /// bookkeeping. MAIN THREAD ONLY.
+        /// </summary>
+        private static void RunJob(RequestJob job)
+        {
+            try
+            {
+                ProcessJob(job);
+            }
+            catch (Exception ex)
+            {
+                job.StatusCode = 500;
+                job.ResponseJson = SkillErrorResponse.Build(
+                    SkillErrorCode.Internal,
+                    ex.Message,
+                    details: new { type = ex.GetType().Name },
+                    retryStrategy: SkillErrorResponse.RetryWaitAndRetry);
+                SkillsLogger.LogWarning($"Job processing error: {ex.Message}");
+            }
+            finally
+            {
+                job.IsProcessed = true;
+                job.CompletionSignal?.Set();
+                Interlocked.Increment(ref _totalRequestsProcessed);
+                // Only invalidate scene cache when request may have mutated state (POST = skill execution)
+                if (job.HttpMethod == "POST")
+                    GameObjectFinder.InvalidateCache();
+            }
+        }
+
+        /// <summary>
+        /// Main-thread counterpart of the HTTP-thread fast path for GET /skills and
+        /// GET /skills/schema: tags the just-built body with the ETag
+        /// <see cref="SkillRouter.GetEtagForCachedGet"/> derives from the same cache key the
+        /// fast path uses, then collapses the response to an empty-body 304 when the caller's
+        /// If-None-Match already matches.
+        ///
+        /// Only 200 bodies are tagged. An error body must never be handed to the client under
+        /// a content hash it would then cache.
+        /// </summary>
+        private static void ApplyCacheableGetHeaders(RequestJob job, string path)
+        {
+            if (job.StatusCode != 200)
+                return;
+
+            job.ETag = SkillRouter.GetEtagForCachedGet(path, job.QueryString, job.ResponseJson);
+            if (job.ETag != null && IfNoneMatchSatisfied(job.IfNoneMatch, job.ETag))
+            {
+                job.StatusCode = 304; // Not Modified — must not carry a body
+                job.ResponseJson = null;
+            }
+        }
+
         private static void ProcessJob(RequestJob job)
         {
             // Handle OPTIONS (CORS preflight)
@@ -1469,49 +2234,15 @@ namespace UnitySkills
             
             string path = job.Path;
 
-            // Health check
+            // Health check. Reached only when the HTTP-thread fast path declined: either the
+            // caller asked for ?live=1, or the first snapshot has not been taken yet. Same
+            // payload shape either way — BuildHealthJson is the single source of that shape.
             if (path == "/" || string.Equals(path, "/health", StringComparison.OrdinalIgnoreCase))
             {
-                int pendingCount = SkillsModeManager.PendingGrantRequests.Count;
-                int allowlistCount = SkillsModeManager.AllowlistSkills.Count;
+                // Reading live also refreshes the mirror, so the next fast-path probe is current.
+                RefreshHealthSnapshot(full: true);
                 job.StatusCode = 200;
-                job.ResponseJson = JsonConvert.SerializeObject(new {
-                    status = "ok",
-                    service = "UnitySkills",
-                    version = SkillsLogger.Version,
-                    unityVersion = Application.unityVersion,
-                    instanceId = RegistryService.InstanceId,
-                    projectName = RegistryService.ProjectName,
-                    serverRunning = _isRunning,
-                    queuedRequests = QueuedRequests,
-                    totalProcessed = _totalRequestsProcessed,
-                    autoRestart = AutoStart,
-                    requestTimeoutMinutes = RequestTimeoutMinutes,
-                    domainReloadRecovery = "enabled",
-                    architecture = "Producer-Consumer (Thread-Safe)",
-                    currentMode = SkillsModeManager.ModeToWire(SkillsModeManager.CurrentMode),
-                    panelApprovalRequired = SkillsModeManager.PanelApprovalRequired,
-                    pendingCount,
-                    allowlistCount,
-                    // Deprecated alias for allowlistCount, kept for v1.9.x backward compatibility
-                    // (mirrors the `granted` / `counts.granted` aliases on /permission/status).
-                    // Safe to remove in a future major version once external consumers migrate.
-                    grantedCount = allowlistCount,
-                    threads = new {
-                        listenerAlive = _listenerThread?.IsAlive ?? false,
-                        keepAliveAlive = _keepAliveThread?.IsAlive ?? false,
-                    },
-                    compilation = new {
-                        isCompiling = EditorApplication.isCompiling,
-                        isUpdating = EditorApplication.isUpdating,
-                        domainReloadPending = _domainReloadPending,
-                    },
-                    queueStats = new {
-                        queued = QueuedRequests,
-                        totalReceived = _totalRequestsReceived,
-                    },
-                    note = "If you get 'Connection Refused', Unity may be reloading scripts. Wait 2-3 seconds and retry."
-                }, _jsonSettings);
+                job.ResponseJson = BuildHealthJson(HealthVitals.FromLive(), live: true);
                 return;
             }
 
@@ -1544,13 +2275,18 @@ namespace UnitySkills
                 return;
             }
 
-            // Get skills manifest (with optional filtering)
+            // Get skills manifest (with optional filtering).
+            // A request only reaches the main thread when the HTTP-thread fast path missed,
+            // i.e. this is the call that builds the cache. ApplyCacheableGetHeaders gives it
+            // the same ETag the fast path will serve from here on, so a client that keeps
+            // sending If-None-Match gets a 304 from the very next request.
             if (string.Equals(path, "/skills", StringComparison.OrdinalIgnoreCase) && job.HttpMethod == "GET")
             {
                 job.StatusCode = 200;
                 job.ResponseJson = string.IsNullOrEmpty(job.QueryString)
                     ? SkillRouter.GetManifest()
                     : SkillRouter.GetFilteredManifest(job.QueryString);
+                ApplyCacheableGetHeaders(job, path);
                 return;
             }
 
@@ -1560,6 +2296,7 @@ namespace UnitySkills
                 job.ResponseJson = string.IsNullOrEmpty(job.QueryString)
                     ? SkillRouter.GetSchema()
                     : SkillRouter.GetFilteredSchema(job.QueryString);
+                ApplyCacheableGetHeaders(job, path);
                 return;
             }
 
@@ -1656,7 +2393,7 @@ namespace UnitySkills
             }
 
 
-            // Permission system (v1.9): mode + grant token + audit log.
+            // Permission system: mode + grant token + audit log.
             if (path.StartsWith("/permission/", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/permission", StringComparison.OrdinalIgnoreCase))
             {
@@ -1835,7 +2572,7 @@ namespace UnitySkills
             return true;
         }
 
-        // ===== Execution telemetry (v2.1) =====
+        // ===== Execution telemetry =====
 
         /// <summary>
         /// Records one POST /skill/{name} outcome to <see cref="SkillTelemetryService"/>. Uses a
@@ -1918,7 +2655,7 @@ namespace UnitySkills
             return end > start ? json.Substring(start, end - start) : null;
         }
 
-        // ===== Cross-skill batch execution (v2.1) =====
+        // ===== Cross-skill batch execution =====
 
         private const int MaxBatchSteps = 50;
 
@@ -1947,7 +2684,7 @@ namespace UnitySkills
         ///   may use both, but a single node is one or the other, never both
         ///   ({"$param":..,"$ref":..} is rejected SEMANTIC_INVALID). Any $ref left after
         ///   substitution goes through the $ref stage below.
-        /// - Inter-step references (v2): inside a step's structured args, any object whose ONLY
+        /// - Inter-step references: inside a step's structured args, any object whose ONLY
         ///   key is "$ref" (e.g. {"$ref":"$0.instanceId"}), at any depth, is replaced before that
         ///   step executes. "$N" is the 0-based index of an EARLIER successful step; the part
         ///   after the dot is a Newtonsoft SelectToken path into that step's unwrapped result
@@ -2103,7 +2840,7 @@ namespace UnitySkills
                         : rawArgs.ToString(Formatting.None);
                 }
 
-                // ---- Static $param substitution (v2, resolved before $ref) ----
+                // ---- Static $param substitution (resolved before $ref) ----
                 // Pure static replacement from the body-level "params" object, so dryRun and
                 // execute resolve it identically (real values exist either way). Any $ref left
                 // in the substituted args is handled by the $ref stage below.
@@ -2167,7 +2904,7 @@ namespace UnitySkills
                     }
                 }
 
-                // ---- Inter-step $ref references (v2) ----
+                // ---- Inter-step $ref references ----
                 List<BatchRefNode> refNodes = null;          // dryRun bookkeeping
                 HashSet<string> strippedRefParams = null;    // dryRun: params removed from the validation body
                 bool wholeArgsFromRef = false;               // dryRun: the args root itself is a $ref
@@ -2597,7 +3334,7 @@ namespace UnitySkills
             return true;
         }
 
-        // ===== Static $param substitution (batch v2) =====
+        // ===== Static $param substitution (batch) =====
 
         /// <summary>
         /// A {"$param":"name"} / {"$param":"name","default":X} slot found inside a step's args.
@@ -2734,7 +3471,7 @@ namespace UnitySkills
             return false;
         }
 
-        // ===== Inter-step $ref references (batch v2) =====
+        // ===== Inter-step $ref references (batch) =====
 
         /// <summary>
         /// A {"$ref":"$N.path"} node found inside a step's args. RefString is null when the
@@ -3200,7 +3937,7 @@ namespace UnitySkills
             }, _jsonSettings);
         }
 
-        // ===== Permission system (v1.9) =====
+        // ===== Permission system =====
 
         private static void HandlePermissionRequest(RequestJob job)
         {
@@ -3309,7 +4046,7 @@ namespace UnitySkills
             }
 
             job.StatusCode = 200;
-            // v1.9 字段重命名：`granted` → `allowlist`。`granted` 字段作为兼容别名保留一个版本，
+            // 字段重命名：`granted` → `allowlist`。`granted` 字段作为兼容别名保留一个版本，
             // 下个 minor 版本会移除——客户端应迁移到 `allowlist` 字段。
             job.ResponseJson = JsonConvert.SerializeObject(new
             {
@@ -3384,6 +4121,11 @@ namespace UnitySkills
                 {
                     // 方案 B 一步执行：one-shot 令牌已由 TryGrantAndReturnArgs 设置在当前线程，
                     // SkillRouter.Execute → CheckAccess 会立刻消费该令牌、单次放行。
+                    //
+                    // 但消费点不是必经之路：Execute 的四道参数校验（UnknownParam / MissingParam /
+                    // TypeMismatch / SemanticInvalid）都在权限门之前早退，任何一道早退——以及这里
+                    // catch 到的异常——都会让令牌留在主线程上，被后续同名 skill 的请求带着别的参数
+                    // 命中。finally 无条件清除是唯一能覆盖全部路径的位置。
                     string execJson;
                     try
                     {
@@ -3398,6 +4140,10 @@ namespace UnitySkills
                             skill: cachedSkill,
                             details: new { type = ex.GetType().Name },
                             retryStrategy: SkillErrorResponse.RetryWaitAndRetry);
+                    }
+                    finally
+                    {
+                        SkillsModeManager.ClearOneShotBypass();
                     }
 
                     SkillsAuditLog.Append("grant_executed", new { skill = cachedSkill, token });
@@ -3518,7 +4264,7 @@ namespace UnitySkills
             }, _jsonSettings);
         }
 
-        // ===== Allowlist endpoints (v1.9 改版) =====
+        // ===== Allowlist endpoints =====
 
         private static void HandlePermissionAllowlistList(RequestJob job)
         {

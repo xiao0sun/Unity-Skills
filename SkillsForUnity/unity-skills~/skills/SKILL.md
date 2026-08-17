@@ -1,7 +1,13 @@
 ---
 name: unity-skills-index
-description: Index of all Unity Skills modules — functional (REST) modules and advisory (design) modules. Browse available modules, check operating-mode requirements (Approval/Auto/Bypass), and pick the right module for a task. Use when looking for which Unity module handles something, browsing the module catalog, or checking a module's mode requirements, even if the user just says "有哪些 Unity 技能" or "Unity 模块列表". Unity Skills 所有模块的索引(功能型 REST 模块与建议型设计模块);当用户要查找某事由哪个 Unity 模块处理、浏览模块目录、或确认模块的模式要求时使用。
+description: Index of all Unity Skills modules with per-module mode labels (SA/FA/Mixed). Use to find which module covers a task before loading its doc.
 ---
+
+## Triggers
+- Browsing the module catalog
+- Finding which module handles a task
+- Checking mode requirements
+- 浏览模块目录、查找某事由哪个模块处理、确认模式要求
 
 # Unity Skills - Module Index
 
@@ -72,6 +78,8 @@ Module docs. Start with [../SKILL.md](../SKILL.md) for mode switching and schema
 | [yooasset](./yooasset/SKILL.md) | Mixed* | YooAsset hot-update: build bundles, Collector CRUD, BuildReport asset/dependency analysis, PlayMode runtime validation, Reporter/Debugger/AssetArtScanner tools | Yes |
 | [dotween](./dotween/SKILL.md) | Mixed* | DOTween Pro DOTweenAnimation editor-time configuration (add/batch/stagger/tune) | Yes |
 | [primetween](./primetween/SKILL.md) | Mixed* | PrimeTween Free inspection, factory discovery, and runtime tween/sequence script generation | No |
+| [behavior](./behavior/SKILL.md) | Mixed* | Unity Behavior graph assets, agents, blackboard variables (com.unity.behavior, reflection-based) | Yes |
+| [hybridclr](./hybridclr/SKILL.md) | Mixed* | HybridCLR hot-update settings, codegen, DLL compile/copy pipeline (com.code-philosophy.hybridclr, reflection-based) | Yes |
 
 ## Advisory Design Modules
 
@@ -99,7 +107,12 @@ These modules provide design guidance only.
 | [dotween-design](./dotween-design/SKILL.md) | DOTween 1.3.015 source-anchored rules (basics/tween/sequence/shortcuts/ease/lifetime/integration/pitfalls) |
 | [primetween-design](./primetween-design/SKILL.md) | PrimeTween 1.4.6 source-anchored rules (factories/handles/sequences/cycles/callbacks/lifetime/integration) |
 | [shadergraph-design](./shadergraph-design/SKILL.md) | ShaderGraph dual-version source-anchored rules (versions/node subset/recipes/pitfalls/review) |
+| [pico-design](./pico-design/SKILL.md) | PICO Unity Integration SDK v3.4.0 doc-anchored rules (setup/rendering/interaction/MR/SecureMR/platform/API signatures/version diffs 2.x-3.4/pitfalls) |
 | [yaml-editing](./yaml-editing/SKILL.md) | Safe hand-edit rules for serialized YAML (.unity/.prefab/.asset/.meta/ProjectSettings) when REST cannot reach — reference/fileID repair, .meta/GUID safety, ProjectSettings patch, merge conflict |
+| [manual-gameobject](./manual-gameobject/SKILL.md) | Manually create GameObjects, organize the Hierarchy, and adjust Transforms using Unity Editor UI |
+| [manual-component](./manual-component/SKILL.md) | Manually add, configure, reorder, and copy components on GameObjects using Unity Editor UI |
+| [manual-material](./manual-material/SKILL.md) | Manually create and edit Materials and assign them to objects using Unity Editor UI |
+| [manual-scene](./manual-scene/SKILL.md) | Manually navigate, save, and manage scenes using Unity Editor UI |
 
 ## Batch-First Rule
 

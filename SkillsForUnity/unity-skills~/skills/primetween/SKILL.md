@@ -1,7 +1,15 @@
 ---
 name: unity-primetween
-description: Inspect PrimeTween Free, discover its public animation factories, and generate lifecycle-aware PrimeTween runtime scripts. Use when checking a PrimeTween installation, exploring supported animation APIs, or generating Transform/Sequence animation code. 检查 PrimeTween Free 安装状态、探索其公开动画工厂方法、或生成生命周期感知的 PrimeTween 运行时代码(Transform/Sequence 动画)时使用。
+description: Inspect PrimeTween Free and generate runtime tween scripts
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Checking a PrimeTween installation
+- Exploring supported animation APIs
+- Generating Transform/Sequence animation code
+- 检查 PrimeTween 安装状态、探索动画 API、生成 Transform/Sequence 动画代码
 
 # PrimeTween Skills
 

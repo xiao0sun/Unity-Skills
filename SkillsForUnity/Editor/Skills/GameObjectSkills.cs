@@ -7,7 +7,7 @@ namespace UnitySkills
 {
     /// <summary>
     /// GameObject management skills - create, modify, delete, find.
-    /// Now supports finding by name, entityId, legacy instanceId, or path.
+    /// Supports finding by name, entityId, legacy instanceId, or path.
     /// </summary>
     public static class GameObjectSkills
     {
@@ -38,14 +38,14 @@ namespace UnitySkills
                 }
                 else
                 {
-                    throw new System.Exception($"Unknown primitive type: {primitiveType}");
+                    return new { error = $"Unknown primitive type: {primitiveType}" };
                 }
 
                 // Set parent if specified
                 if (!string.IsNullOrEmpty(item.parentEntityId) || !string.IsNullOrEmpty(item.parentName) || item.parentInstanceId != 0 || !string.IsNullOrEmpty(item.parentPath))
                 {
                     var (parentGo, parentErr) = GameObjectFinder.FindOrError(item.parentName, item.parentInstanceId, item.parentPath, entityId: item.parentEntityId);
-                    if (parentErr != null) throw new System.Exception($"Parent not found for '{item.name}'");
+                    if (parentErr != null) return new { error = $"Parent not found for '{item.name}'" };
                     go.transform.SetParent(parentGo.transform, false);
                 }
 
@@ -185,10 +185,10 @@ namespace UnitySkills
             return BatchExecutor.Execute<BatchRenameItem>(items, item =>
             {
                 if (string.IsNullOrEmpty(item.newName))
-                    throw new System.Exception("newName is required");
+                    return new { error = "newName is required" };
 
                 var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path, entityId: item.entityId);
-                if (error != null) throw new System.Exception("Object not found");
+                if (error != null) return new { error = "Object not found", target = item.name ?? item.path ?? item.entityId };
 
                 var oldName = go.name;
                 WorkflowManager.SnapshotObject(go);
@@ -231,7 +231,8 @@ namespace UnitySkills
             Tags = new[] { "destroy", "remove", "hierarchy", "batch" },
             Outputs = new[] { "deleted" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true)]
+            TracksWorkflow = true, SkipAutoPresnapshot = true,
+            RiskLevel = "medium")]
         public static object GameObjectDeleteBatch(string items)
         {
             if (Validate.RequiredJsonArray(items, "items") is object err) return err;
@@ -243,11 +244,11 @@ namespace UnitySkills
                 {
                     var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path, entityId: item.entityId);
                     if (error != null)
-                        throw new System.Exception("Object not found");
+                        return new { error = "Object not found", target = item.name ?? item.path ?? item.entityId };
 
                     var deletedName = go.name;
                     if (!WorkflowManager.DeleteSceneObject(go))
-                        throw new System.Exception("Failed to capture and delete object");
+                        return new { error = "Failed to capture and delete object" };
                     return new { target = deletedName, success = true };
                 }, item => item.name ?? item.path ?? item.entityId ?? item.instanceId.ToString());
             }
@@ -450,7 +451,7 @@ namespace UnitySkills
             return BatchExecutor.Execute<BatchTransformItem>(items, item =>
             {
                 var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path, entityId: item.entityId);
-                if (error != null) throw new System.Exception("Object not found");
+                if (error != null) return new { error = "Object not found", target = item.name ?? item.path ?? item.entityId };
 
                 WorkflowManager.SnapshotObject(go.transform);
                 Undo.RecordObject(go.transform, "Batch Set Transform");
@@ -583,7 +584,7 @@ namespace UnitySkills
             return BatchExecutor.Execute<BatchDuplicateItem>(items, item =>
             {
                 var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path, entityId: item.entityId);
-                if (error != null) throw new System.Exception("Object not found");
+                if (error != null) return new { error = "Object not found", target = item.name ?? item.path ?? item.entityId };
 
                 var copy = Object.Instantiate(go, go.transform.parent);
                 copy.name = go.name + "_Copy";
@@ -756,7 +757,7 @@ namespace UnitySkills
             return BatchExecutor.Execute<BatchSetActiveItem>(items, item =>
             {
                 var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path, entityId: item.entityId);
-                if (error != null) throw new System.Exception("Object not found");
+                if (error != null) return new { error = "Object not found", target = item.name ?? item.path ?? item.entityId };
 
                 WorkflowManager.SnapshotObject(go);
                 Undo.RecordObject(go, "Batch Set Active");
@@ -784,11 +785,11 @@ namespace UnitySkills
             return BatchExecutor.Execute<BatchSetLayerItem>(items, item =>
             {
                 var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path, entityId: item.entityId);
-                if (error != null) throw new System.Exception("Object not found");
+                if (error != null) return new { error = "Object not found", target = item.name ?? item.path ?? item.entityId };
 
                 int layerId = LayerMask.NameToLayer(item.layer);
                 if (layerId == -1)
-                    throw new System.Exception($"Layer not found: {item.layer}");
+                    return new { error = $"Layer not found: {item.layer}" };
 
                 WorkflowManager.SnapshotObject(go);
                 Undo.RecordObject(go, "Batch Set Layer");
@@ -827,7 +828,7 @@ namespace UnitySkills
             return BatchExecutor.Execute<BatchSetTagItem>(items, item =>
             {
                 var (go, error) = GameObjectFinder.FindOrError(item.name, item.instanceId, item.path, entityId: item.entityId);
-                if (error != null) throw new System.Exception("Object not found");
+                if (error != null) return new { error = "Object not found", target = item.name ?? item.path ?? item.entityId };
 
                 WorkflowManager.SnapshotObject(go);
                 Undo.RecordObject(go, "Batch Set Tag");
@@ -855,14 +856,14 @@ namespace UnitySkills
             return BatchExecutor.Execute<BatchSetParentItem>(items, item =>
             {
                 var (child, childError) = GameObjectFinder.FindOrError(item.childName, item.childInstanceId, item.childPath, entityId: item.childEntityId);
-                if (childError != null) throw new System.Exception("Child object not found");
+                if (childError != null) return new { error = "Child object not found", target = item.childName ?? item.childPath ?? item.childEntityId };
 
                 Transform parent = null;
                 if (!string.IsNullOrEmpty(item.parentEntityId) || !string.IsNullOrEmpty(item.parentName) || item.parentInstanceId != 0 || !string.IsNullOrEmpty(item.parentPath))
                 {
                     var (parentGo, parentError) = GameObjectFinder.FindOrError(item.parentName, item.parentInstanceId, item.parentPath, entityId: item.parentEntityId);
                     if (parentError != null)
-                        throw new System.Exception($"Parent not found: {item.parentName ?? item.parentPath}");
+                        return new { error = $"Parent not found: {item.parentName ?? item.parentPath ?? item.parentEntityId}" };
                     parent = parentGo.transform;
                 }
 

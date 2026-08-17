@@ -1,7 +1,15 @@
 ---
 name: unity-animator
-description: Edit Unity Animator Controllers and control runtime parameters — manage states, transitions, layers, and parameters (float/int/bool/trigger). Use when setting up or wiring an Animator, adjusting animation state machines, or driving animation parameters at runtime, even if the user just mentions "动画" or "状态机". 编辑 Unity Animator Controller 并控制运行时参数(状态、过渡、层、参数 float/int/bool/trigger);当用户要搭建或连接 Animator、调整动画状态机、或在运行时驱动动画参数时使用。
+description: Edit Unity Animator Controllers and drive runtime parameters
 ---
+
+> **Before calling any skill in this module:** if you are about to call a skill with parameters guessed from its name or description, STOP — read this file (or fetch its schema via `GET /skills/recommend?includeSchema=true`) first. If you already have the parameter definitions from recommend/schema, you may proceed straight to dryRun.
+
+## Triggers
+- Setting up or wiring an Animator
+- Adjusting animation state machines
+- Driving animation parameters at runtime
+- 搭建或连接 Animator、调整动画状态机、运行时驱动动画参数
 
 # Unity Animator Skills
 
