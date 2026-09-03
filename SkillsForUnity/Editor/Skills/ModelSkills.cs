@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System.Linq;
 using System.Collections.Generic;
@@ -6,10 +6,44 @@ using System.Collections.Generic;
 namespace UnitySkills
 {
     /// <summary>
-    /// Model import settings skills - get/set model importer properties (FBX, OBJ, etc).
+    /// Model import settings skills: read/write ModelImporter properties (FBX, OBJ, etc.).
     /// </summary>
     public static class ModelSkills
     {
+        /// <summary>
+        /// Rejects model-import writes that could never actually land on disk before attempting them: paths
+        /// under Packages/ (registry or otherwise immutable packages), and paths where
+        /// AssetDatabase.MakeEditable refuses to unlock them (read-only on disk, or checkout rejected by version control).
+        ///
+        /// <para>Without this gate, the following ModelImporter.SaveAndReimport() would run to completion
+        /// without throwing, the importer's in-memory property getters would echo back the new values as-is, and
+        /// the skill would return success + changesApplied with a full change list — but the asset's .meta was
+        /// never writable to begin with, and Unity's immediately following reimport would wipe all of it out.
+        /// The caller is told a change took effect that never actually happened.</para>
+        /// </summary>
+        private static object CheckModelAssetWritable(string assetPath, string target = null)
+        {
+            var normalized = assetPath.Replace('\\', '/');
+            bool underPackages = normalized.StartsWith("Packages/", System.StringComparison.OrdinalIgnoreCase);
+
+            if (underPackages || !AssetDatabase.MakeEditable(assetPath))
+            {
+                return new
+                {
+                    error = $"Model import settings cannot be persisted for a read-only asset: {assetPath}",
+                    errorCode = SkillParamUtil.SemanticInvalidCode,
+                    parameter = "assetPath",
+                    reason = underPackages
+                        ? "Path is under Packages/ (registry or immutable package); its .meta file cannot be written."
+                        : "AssetDatabase.MakeEditable(assetPath) failed - read-only on disk or rejected by version control.",
+                    suggestion = "Copy the model under Assets/ first if its import settings need to change.",
+                    target = target ?? assetPath
+                };
+            }
+            return null;
+        }
+
+
         [UnitySkill("model_get_settings", "Get model import settings for a 3D model asset (FBX, OBJ, etc)",
             Category = SkillCategory.Model, Operation = SkillOperation.Query,
             Tags = new[] { "model", "import", "settings", "fbx" },
@@ -36,7 +70,7 @@ namespace UnitySkills
                 importVisibility = importer.importVisibility,
                 importCameras = importer.importCameras,
                 importLights = importer.importLights,
-                // Meshes
+                // Mesh
                 meshCompression = importer.meshCompression.ToString(),
                 isReadable = importer.isReadable,
                 optimizeMeshPolygons = importer.optimizeMeshPolygons,
@@ -45,22 +79,23 @@ namespace UnitySkills
                 // Geometry
                 keepQuads = importer.keepQuads,
                 weldVertices = importer.weldVertices,
-                // Normals & Tangents
+                // Normals and tangents
                 importNormals = importer.importNormals.ToString(),
                 importTangents = importer.importTangents.ToString(),
                 // Animation
                 animationType = importer.animationType.ToString(),
                 importAnimation = importer.importAnimation,
-                // Materials
+                // Material
                 materialImportMode = importer.materialImportMode.ToString()
             };
         }
 
-        [UnitySkill("model_set_settings", "Set model import settings. meshCompression: Off/Low/Medium/High. animationType: None/Legacy/Generic/Humanoid. materialImportMode: None/ImportViaMaterialDescription/ImportStandard",
+        [UnitySkill("model_set_settings", "Set model import settings. meshCompression: Off/Low/Medium/High. animationType: None/Legacy/Generic/Human (Inspector alias: Humanoid = Human). materialImportMode: None/ImportViaMaterialDescription/ImportStandard",
             Category = SkillCategory.Model, Operation = SkillOperation.Modify,
             Tags = new[] { "model", "import", "settings", "mesh" },
             Outputs = new[] { "changesApplied", "changes" },
-            RequiresInput = new[] { "assetPath" })]
+            RequiresInput = new[] { "assetPath" },
+            MutatesAssets = true)]
         public static object ModelSetSettings(
             string assetPath,
             float? globalScale = null,
@@ -88,13 +123,33 @@ namespace UnitySkills
             if (importer == null)
                 return new { error = $"Not a model file or asset not found: {assetPath}" };
 
-            // 修改前记录资产状态
+            // All five enums are parsed before anything is written: previously, a parse failure on
+            // importNormals/importTangents/materialImportMode would be silently skipped while the rest of the
+            // fields were written anyway, and the response would still report success + changesApplied>0.
+            if (!SkillParamUtil.TryParseOptionalEnum<ModelImporterMeshCompression>(meshCompression, "meshCompression", out var mc, out var mcError))
+                return mcError;
+            if (!SkillParamUtil.TryParseOptionalEnum<ModelImporterNormals>(importNormals, "importNormals", out var normals, out var normalsError))
+                return normalsError;
+            if (!SkillParamUtil.TryParseOptionalEnum<ModelImporterTangents>(importTangents, "importTangents", out var tangents, out var tangentsError))
+                return tangentsError;
+            if (!SkillParamUtil.TryParseOptionalEnum<ModelImporterAnimationType>(
+                    animationType, "animationType", SkillParamUtil.ModelAnimationTypeAliases, out var at, out var atError))
+                return atError;
+            if (!SkillParamUtil.TryParseOptionalEnum<ModelImporterMaterialImportMode>(materialImportMode, "materialImportMode", out var mim, out var mimError))
+                return mimError;
+
+            // Enum validation must happen before the writability check (consistent with ModelSetRig):
+            // otherwise an invalid enum value would still trigger AssetDatabase.MakeEditable's real
+            // version-control checkout side effect.
+            if (CheckModelAssetWritable(assetPath) is object writableErr) return writableErr;
+
+            // Record asset state before modifying it
             var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
             if (asset != null) WorkflowManager.SnapshotObject(asset);
 
             var changes = new List<string>();
 
-            // Scene settings
+            // Scene
             if (globalScale.HasValue)
             {
                 importer.globalScale = globalScale.Value;
@@ -131,18 +186,11 @@ namespace UnitySkills
                 changes.Add($"importLights={importLights.Value}");
             }
 
-            // Mesh settings
-            if (!string.IsNullOrEmpty(meshCompression))
+            // Mesh
+            if (mc.HasValue)
             {
-                if (System.Enum.TryParse<ModelImporterMeshCompression>(meshCompression, true, out var mc))
-                {
-                    importer.meshCompression = mc;
-                    changes.Add($"meshCompression={mc}");
-                }
-                else
-                {
-                    return new { error = $"Invalid meshCompression: {meshCompression}. Valid: Off, Low, Medium, High" };
-                }
+                importer.meshCompression = mc.Value;
+                changes.Add($"meshCompression={mc.Value}");
             }
 
             if (isReadable.HasValue)
@@ -182,37 +230,24 @@ namespace UnitySkills
                 changes.Add($"weldVertices={weldVertices.Value}");
             }
 
-            // Normals & Tangents
-            if (!string.IsNullOrEmpty(importNormals))
+            // Normals and tangents
+            if (normals.HasValue)
             {
-                if (System.Enum.TryParse<ModelImporterNormals>(importNormals, true, out var normals))
-                {
-                    importer.importNormals = normals;
-                    changes.Add($"importNormals={normals}");
-                }
+                importer.importNormals = normals.Value;
+                changes.Add($"importNormals={normals.Value}");
             }
 
-            if (!string.IsNullOrEmpty(importTangents))
+            if (tangents.HasValue)
             {
-                if (System.Enum.TryParse<ModelImporterTangents>(importTangents, true, out var tangents))
-                {
-                    importer.importTangents = tangents;
-                    changes.Add($"importTangents={tangents}");
-                }
+                importer.importTangents = tangents.Value;
+                changes.Add($"importTangents={tangents.Value}");
             }
 
             // Animation
-            if (!string.IsNullOrEmpty(animationType))
+            if (at.HasValue)
             {
-                if (System.Enum.TryParse<ModelImporterAnimationType>(animationType, true, out var at))
-                {
-                    importer.animationType = at;
-                    changes.Add($"animationType={at}");
-                }
-                else
-                {
-                    return new { error = $"Invalid animationType: {animationType}. Valid: None, Legacy, Generic, Humanoid" };
-                }
+                importer.animationType = at.Value;
+                changes.Add($"animationType={at.Value}");
             }
 
             if (importAnimation.HasValue)
@@ -221,17 +256,13 @@ namespace UnitySkills
                 changes.Add($"importAnimation={importAnimation.Value}");
             }
 
-            // Materials
-            if (!string.IsNullOrEmpty(materialImportMode))
+            // Material
+            if (mim.HasValue)
             {
-                if (System.Enum.TryParse<ModelImporterMaterialImportMode>(materialImportMode, true, out var mim))
-                {
-                    importer.materialImportMode = mim;
-                    changes.Add($"materialImportMode={mim}");
-                }
+                importer.materialImportMode = mim.Value;
+                changes.Add($"materialImportMode={mim.Value}");
             }
 
-            // Apply changes
             importer.SaveAndReimport();
 
             return new
@@ -246,7 +277,8 @@ namespace UnitySkills
         [UnitySkill("model_set_settings_batch", "Set model import settings for multiple 3D models. items: JSON array of {assetPath, meshCompression, animationType, ...}",
             Category = SkillCategory.Model, Operation = SkillOperation.Modify,
             Tags = new[] { "model", "import", "batch", "settings" },
-            Outputs = new[] { "totalItems", "successCount", "results" })]
+            Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
+            MutatesAssets = true)]
         public static object ModelSetSettingsBatch(string items)
         {
             return BatchExecutor.Execute<BatchModelItem>(items, item =>
@@ -254,6 +286,21 @@ namespace UnitySkills
                 var importer = AssetImporter.GetAtPath(item.assetPath) as ModelImporter;
                 if (importer == null)
                     throw new System.Exception("Not a model file");
+
+                // Same rule as the single-item setter; the error is pinned to this item's assetPath.
+                if (!SkillParamUtil.TryParseOptionalEnum<ModelImporterMeshCompression>(item.meshCompression, "meshCompression", out var mc, out _))
+                    return SkillParamUtil.InvalidEnumError<ModelImporterMeshCompression>(item.meshCompression, "meshCompression", item.assetPath);
+                if (!SkillParamUtil.TryParseOptionalEnum<ModelImporterAnimationType>(
+                        item.animationType, "animationType", SkillParamUtil.ModelAnimationTypeAliases, out var at, out _))
+                    return SkillParamUtil.InvalidEnumError<ModelImporterAnimationType>(
+                        item.animationType, "animationType", SkillParamUtil.ModelAnimationTypeAliases, item.assetPath);
+                if (!SkillParamUtil.TryParseOptionalEnum<ModelImporterMaterialImportMode>(item.materialImportMode, "materialImportMode", out var mim, out _))
+                    return SkillParamUtil.InvalidEnumError<ModelImporterMaterialImportMode>(item.materialImportMode, "materialImportMode", item.assetPath);
+
+                // Enum validation must happen before the writability check (consistent with ModelSetRig):
+                // otherwise an invalid enum value would still trigger AssetDatabase.MakeEditable's real
+                // version-control checkout side effect.
+                if (CheckModelAssetWritable(item.assetPath, item.assetPath) is object writableErr) return writableErr;
 
                 var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(item.assetPath);
                 if (asset != null) WorkflowManager.SnapshotObject(asset);
@@ -266,17 +313,9 @@ namespace UnitySkills
                 if (item.generateSecondaryUV.HasValue) importer.generateSecondaryUV = item.generateSecondaryUV.Value;
                 if (item.importAnimation.HasValue) importer.importAnimation = item.importAnimation.Value;
 
-                if (!string.IsNullOrEmpty(item.meshCompression) &&
-                    System.Enum.TryParse<ModelImporterMeshCompression>(item.meshCompression, true, out var mc))
-                    importer.meshCompression = mc;
-
-                if (!string.IsNullOrEmpty(item.animationType) &&
-                    System.Enum.TryParse<ModelImporterAnimationType>(item.animationType, true, out var at))
-                    importer.animationType = at;
-
-                if (!string.IsNullOrEmpty(item.materialImportMode) &&
-                    System.Enum.TryParse<ModelImporterMaterialImportMode>(item.materialImportMode, true, out var mim))
-                    importer.materialImportMode = mim;
+                if (mc.HasValue) importer.meshCompression = mc.Value;
+                if (at.HasValue) importer.animationType = at.Value;
+                if (mim.HasValue) importer.materialImportMode = mim.Value;
 
                 importer.SaveAndReimport();
                 return new { path = item.assetPath, success = true };
@@ -400,13 +439,16 @@ namespace UnitySkills
             Tags = new[] { "model", "animation", "clip", "splitting" },
             Outputs = new[] { "clipCount" },
             RequiresInput = new[] { "assetPath" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true,
+            MutatesAssets = true)]
         public static object ModelSetAnimationClips(string assetPath, string clips)
         {
             if (Validate.Required(assetPath, "assetPath") is object err) return err;
             if (Validate.Required(clips, "clips") is object err2) return err2;
             var importer = AssetImporter.GetAtPath(assetPath) as ModelImporter;
             if (importer == null) return new { error = $"Not a model: {assetPath}" };
+
+            if (CheckModelAssetWritable(assetPath) is object writableErr) return writableErr;
 
             var clipList = Newtonsoft.Json.JsonConvert.DeserializeObject<List<ClipDef>>(clips);
             if (clipList == null || clipList.Count == 0) return new { error = "No clips provided" };
@@ -451,27 +493,36 @@ namespace UnitySkills
                 optimizeGameObjects = importer.optimizeGameObjects, isHuman = importer.animationType == ModelImporterAnimationType.Human };
         }
 
-        [UnitySkill("model_set_rig", "Set rig/skeleton binding type. animationType: None/Legacy/Generic/Humanoid",
+        [UnitySkill("model_set_rig", "Set rig/skeleton binding type. animationType: None/Legacy/Generic/Human (Inspector alias: Humanoid = Human)",
             Category = SkillCategory.Model, Operation = SkillOperation.Modify,
             Tags = new[] { "model", "rig", "skeleton", "animation" },
             Outputs = new[] { "animationType" },
             RequiresInput = new[] { "assetPath" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true,
+            MutatesAssets = true)]
         public static object ModelSetRig(string assetPath, string animationType, string avatarSetup = null)
         {
             if (Validate.Required(assetPath, "assetPath") is object err) return err;
             var importer = AssetImporter.GetAtPath(assetPath) as ModelImporter;
             if (importer == null) return new { error = $"Not a model: {assetPath}" };
 
-            if (!System.Enum.TryParse<ModelImporterAnimationType>(animationType, true, out var at))
-                return new { error = $"Invalid animationType: {animationType}" };
+            // The Rig dropdown (and this skill's own description) writes "Humanoid", while the enum member is
+            // called Human, so it must go through the alias table — otherwise the word given in the docs would be rejected outright.
+            if (!SkillParamUtil.TryParseRequiredEnum<ModelImporterAnimationType>(
+                    animationType, "animationType", SkillParamUtil.ModelAnimationTypeAliases, out var at, out var atError))
+                return atError;
+            // Must validate before animationType is written: otherwise an invalid avatarSetup would be
+            // discarded while the rig type still got rewritten and reimported.
+            if (!SkillParamUtil.TryParseOptionalEnum<ModelImporterAvatarSetup>(avatarSetup, "avatarSetup", out var avs, out var avsError))
+                return avsError;
+
+            if (CheckModelAssetWritable(assetPath) is object writableErr) return writableErr;
 
             var asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
             if (asset != null) WorkflowManager.SnapshotObject(asset);
 
             importer.animationType = at;
-            if (!string.IsNullOrEmpty(avatarSetup) && System.Enum.TryParse<ModelImporterAvatarSetup>(avatarSetup, true, out var avs))
-                importer.avatarSetup = avs;
+            if (avs.HasValue) importer.avatarSetup = avs.Value;
             importer.SaveAndReimport();
 
             return new { success = true, path = assetPath, animationType = at.ToString() };

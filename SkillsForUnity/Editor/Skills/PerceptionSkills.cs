@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using UnityEditor.Compilation;
 using UnityEditorInternal;
@@ -18,7 +18,7 @@ using UnitySkills.Internal;
 namespace UnitySkills
 {
     /// <summary>
-    /// Scene Understanding Skills - Help AI quickly perceive project state.
+    /// Scene understanding skills: help AI quickly perceive project state.
     /// </summary>
     public static class PerceptionSkills
     {
@@ -389,7 +389,7 @@ namespace UnitySkills
             }
             catch
             {
-                // Ignore malformed manifest and fall back to empty detection.
+                // Ignore malformed manifest; degrade to detecting zero packages.
             }
 
             return packageIds;
@@ -410,7 +410,7 @@ namespace UnitySkills
                 }
                 catch
                 {
-                    // Ignore reflection failure and fall back to package-based inference.
+                    // Ignore reflection failure; fall back to inferring from installed packages.
                 }
             }
 
@@ -1023,11 +1023,10 @@ namespace UnitySkills
             {
                 if (go.activeInHierarchy) activeObjects++;
 
-                // Get depth from the request-level hierarchy cache.
+                // Depth comes from the per-request hierarchy-level cache.
                 int depth = GameObjectFinder.GetDepth(go);
                 if (depth > maxDepth) maxDepth = depth;
 
-                // Count components in single pass
                 componentBuffer.Clear();
                 go.GetComponents(componentBuffer);
                 foreach (var comp in componentBuffer)
@@ -1035,7 +1034,6 @@ namespace UnitySkills
                     if (comp == null) continue;
                     var typeName = comp.GetType().Name;
 
-                    // Count key types inline
                     if (comp is Light) lightCount++;
                     else if (comp is Camera) cameraCount++;
                     else if (comp is Canvas) canvasCount++;
@@ -1271,7 +1269,7 @@ namespace UnitySkills
                 })
                 .ToList();
 
-            // Unity callbacks only for MonoBehaviour
+            // Only MonoBehaviour has Unity callbacks
             List<string> unityEvents = null;
             if (typeof(MonoBehaviour).IsAssignableFrom(type))
             {
@@ -1413,7 +1411,6 @@ namespace UnitySkills
                 }
             }
 
-            // Group by shader
             var shaderGroups = materialMap.Values
                 .GroupBy(m => m.shader)
                 .Select(g => new
@@ -1466,7 +1463,6 @@ namespace UnitySkills
             var totalObjects = GameObjectFinder.GetSceneObjects().Count;
             int scopeObjects;
 
-            // Determine roots
             Transform[] roots;
             if (!string.IsNullOrEmpty(rootPath))
             {
@@ -1482,7 +1478,6 @@ namespace UnitySkills
                 scopeObjects = totalObjects;
             }
 
-            // BFS traversal
             var objects = new List<object>();
             var references = new List<object>();
             var queue = new Queue<(Transform t, int depth)>();
@@ -1566,14 +1561,14 @@ namespace UnitySkills
             var type = comp.GetType();
             var typeName = type.Name;
 
-            // MonoBehaviour → serialized fields
+            // MonoBehaviour goes through serialized fields
             if (comp is MonoBehaviour)
             {
                 var fields = ExtractSerializedFields(comp, objPath, includeValues, includeReferences, refs);
                 return new { type = typeName, kind = "MonoBehaviour", fields };
             }
 
-            // Built-in components: only output props when includeValues is true
+            // Built-in component: only emit props when includeValues is true
             if (includeValues)
             {
                 var props = GetBuiltinComponentProps(comp);
@@ -1603,7 +1598,7 @@ namespace UnitySkills
 
                 var fieldType = prop.propertyType.ToString();
 
-                // Always extract ObjectReference refs (independent of includeValues)
+                // ObjectReference references are always extracted, regardless of includeValues
                 if (prop.propertyType == SerializedPropertyType.ObjectReference && prop.objectReferenceValue != null)
                 {
                     var refObj = prop.objectReferenceValue;
@@ -1626,7 +1621,7 @@ namespace UnitySkills
                     continue;
                 }
 
-                // includeValues=true: extract actual values
+                // includeValues=true: extract the actual value
                 object value;
                 switch (prop.propertyType)
                 {
@@ -1642,7 +1637,7 @@ namespace UnitySkills
                     case SerializedPropertyType.Vector3: value = FormatVec(prop.vector3Value); break;
                     case SerializedPropertyType.Vector4: value = FormatVec(prop.vector4Value); break;
                     case SerializedPropertyType.Color: var c = prop.colorValue; value = $"({c.r:F2}, {c.g:F2}, {c.b:F2}, {c.a:F2})"; break;
-                    case SerializedPropertyType.ObjectReference: value = "null"; break; // ref is null (non-null handled above)
+                    case SerializedPropertyType.ObjectReference: value = "null"; break; // Reference is null (non-null already handled above)
                     default:
                         value = prop.isArray ? $"{prop.arrayElementType}[{prop.arraySize}]" : fieldType;
                         break;
@@ -1767,7 +1762,6 @@ namespace UnitySkills
             var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
             var roots = scene.GetRootGameObjects().Select(g => g.transform).ToArray();
 
-            // BFS collect objects
             var objList = new List<(GameObject go, int depth)>();
             var queue = new Queue<(Transform t, int depth)>();
             foreach (var r in roots) queue.Enqueue((r, 0));
@@ -1779,21 +1773,17 @@ namespace UnitySkills
                     foreach (Transform child in t) queue.Enqueue((child, depth + 1));
             }
 
-            // Collect serialized reference edges
             var allObjects = new GameObject[objList.Count];
             for (int i = 0; i < objList.Count; i++)
                 allObjects[i] = objList[i].go;
             var edges = CollectDependencyEdges(allObjects);
 
-            // Collect C# code-level dependencies
             var codeEdges = CollectCodeDependencies();
 
-            // Merge all edges
             var allEdges = new List<DependencyEdge>(edges);
             allEdges.AddRange(codeEdges);
             var reverseIndex = allEdges.GroupBy(e => e.toObject).ToDictionary(g => g.Key, g => g.ToList());
 
-            // Build markdown
             var sb = new StringBuilder();
             sb.AppendLine($"# Scene Report: {scene.name}");
             int userScriptCount = 0;
@@ -1816,7 +1806,7 @@ namespace UnitySkills
             sb.AppendLine($"> Generated: {DateTime.Now:yyyy-MM-dd HH:mm} | Objects: {objList.Count} | User Scripts: {userScriptCount} | References: {allEdges.Count}");
             sb.AppendLine();
 
-            // Hierarchy section — built-in components: name only; user scripts: name*
+            // Built-in components emit only the name; user scripts emit name*
             sb.AppendLine("## Hierarchy");
             sb.AppendLine();
             foreach (var (go, depth) in objList)
@@ -1846,7 +1836,7 @@ namespace UnitySkills
             }
             sb.AppendLine();
 
-            // Script Fields section — only user scripts, with values
+            // List only user scripts, with field values
             if (userMonos.Count > 0)
             {
                 sb.AppendLine("## Script Fields");
@@ -1883,7 +1873,6 @@ namespace UnitySkills
                 }
             }
 
-            // Code Dependencies section
             if (codeEdges.Count > 0)
             {
                 sb.AppendLine("## Code Dependencies (C# source analysis)");
@@ -1898,7 +1887,7 @@ namespace UnitySkills
                 }
             }
 
-            // Dependency Graph section (merged: serialized + code)
+            // Dependency graph: serialized references and code dependencies merged
             if (allEdges.Count > 0)
             {
                 sb.AppendLine("## Dependency Graph");
@@ -1913,7 +1902,6 @@ namespace UnitySkills
             sb.AppendLine("---");
             sb.AppendLine($"*Generated: {DateTime.Now:yyyy-MM-dd HH:mm}*");
 
-            // Save
             var dir = Path.GetDirectoryName(savePath);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
@@ -1935,7 +1923,7 @@ namespace UnitySkills
         {
             if (type == null) return false;
             var ns = type.Namespace;
-            if (string.IsNullOrEmpty(ns)) return true; // no namespace = user script
+            if (string.IsNullOrEmpty(ns)) return true; // No namespace is treated as a user script
             return !ns.StartsWith("UnityEngine") && !ns.StartsWith("Unity.") &&
                    !ns.StartsWith("TMPro") && !ns.StartsWith("UnityEditor");
         }
@@ -1988,7 +1976,7 @@ namespace UnitySkills
             return count;
         }
 
-        // Regex patterns for C# code-level dependency detection
+        // Regexes used for C# code-level dependency detection
         private static readonly System.Text.RegularExpressions.Regex RxGetComponent =
             new System.Text.RegularExpressions.Regex(@"(?:Get|Add)Component(?:InChildren|InParent|s)?<(\w+)>", System.Text.RegularExpressions.RegexOptions.Compiled);
         private static readonly System.Text.RegularExpressions.Regex RxFindObject =
@@ -2009,7 +1997,7 @@ namespace UnitySkills
             new System.Text.RegularExpressions.Regex(@"class\s+(\w+)\s*:\s*([\w\s,]+?)\s*\{", System.Text.RegularExpressions.RegexOptions.Compiled);
         private static readonly System.Text.RegularExpressions.Regex RxTypeCheck =
             new System.Text.RegularExpressions.Regex(@"(?:typeof|is|as)\s*[\(<]\s*(\w+)\s*[\)>]?", System.Text.RegularExpressions.RegexOptions.Compiled);
-        // Matches strings (group 1) OR comments (group 2/3). Strings are kept, comments replaced.
+        // Matches strings (group 1) or comments (groups 2/3): strings are kept, comments are stripped.
         private static readonly System.Text.RegularExpressions.Regex RxComment =
             new System.Text.RegularExpressions.Regex(@"(""(?:[^""\\]|\\.)*"")|(/\*[\s\S]*?\*/)|(//.*?$)",
                 System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.Multiline);
@@ -2021,7 +2009,7 @@ namespace UnitySkills
             var edges = new List<DependencyEdge>();
             var scriptGuids = AssetDatabase.FindAssets("t:MonoScript", new[] { "Assets" });
 
-            // Collect all user class names (MonoBehaviour, ScriptableObject, plain classes, etc.)
+            // First collect all user class names (MonoBehaviour, ScriptableObject, plain classes, etc.)
             var userClassNames = new HashSet<string>();
             var userScriptPaths = new List<(string path, string className)>();
             foreach (var guid in scriptGuids)
@@ -2043,10 +2031,10 @@ namespace UnitySkills
                 string rawSource;
                 try { rawSource = File.ReadAllText(path, System.Text.Encoding.UTF8); } catch { continue; }
 
-                // Strip comments to avoid false positives (preserve string literals, keep char offsets)
+                // Strip comments to avoid false positives (string literals kept, character offsets unchanged)
                 var source = RxComment.Replace(rawSource, m => m.Groups[1].Success ? m.Value : new string(' ', m.Length));
 
-                // Build line→method index for method-level granularity
+                // Build a line->method index for method-level granularity
                 var methodAtLine = BuildMethodIndex(source);
 
                 void AddEdge(string target, string pattern, string edgeType, int charIndex)
@@ -2071,7 +2059,7 @@ namespace UnitySkills
                 foreach (System.Text.RegularExpressions.Match m in RxSendMessage.Matches(source))
                     AddEdge(m.Groups[1].Value, m.Value, "Message", m.Index);
 
-                // Field referencing other user classes
+                // References a field of another user class
                 foreach (System.Text.RegularExpressions.Match m in RxFieldRef.Matches(source))
                     AddEdge(m.Groups[1].Value, $"field:{m.Groups[1].Value}", "FieldReference", m.Index);
 
@@ -2091,7 +2079,7 @@ namespace UnitySkills
                 foreach (System.Text.RegularExpressions.Match m in RxGenericArg.Matches(source))
                     AddEdge(m.Groups[1].Value, m.Value.TrimEnd('('), "GenericArg", m.Index);
 
-                // Inheritance: class X : BaseClass, IInterface (Matches for multi-class files)
+                // Inheritance: class X : BaseClass, IInterface (use Matches for full matching in multi-class files)
                 foreach (System.Text.RegularExpressions.Match inhMatch in RxInheritance.Matches(source))
                 {
                     var declaredClass = inhMatch.Groups[1].Value;
@@ -2108,7 +2096,6 @@ namespace UnitySkills
                     AddEdge(m.Groups[1].Value, m.Value.Trim(), "TypeCheck", m.Index);
             }
 
-            // Deduplicate
             return edges.GroupBy(e => $"{e.fromScript}→{e.toObject}:{e.fieldName}")
                 .Select(g => g.First()).ToList();
         }
@@ -2343,8 +2330,12 @@ namespace UnitySkills
         [UnitySkill("scene_dependency_analyze", "Analyze object dependency graph and impact of changes. Use ONLY when user explicitly asks about: dependency analysis, impact analysis, what depends on, what references, safe to delete/disable/remove, refactoring impact, reference check",
             Category = SkillCategory.Perception, Operation = SkillOperation.Analyze,
             Tags = new[] { "dependency", "impact", "reference", "analysis", "graph" },
-            Outputs = new[] { "sceneName", "totalReferences", "objectsAnalyzed", "analysis", "markdown" },
-            ReadOnly = true,
+            Outputs = new[] { "sceneName", "target", "totalReferences", "objectsAnalyzed", "analysis", "savedTo", "markdown" },
+            // Cannot mark ReadOnly: passing savePath makes this skill run Directory.CreateDirectory +
+            // File.WriteAllText + AssetDatabase.ImportAsset, producing a new project asset.
+            // ReadOnly is never hidden by the surface profile and also skips the router's diff
+            // capture, so a single optional parameter could bypass both gates to write into the project.
+            MutatesAssets = true,
             Mode = SkillMode.SemiAuto)]
         public static object SceneDependencyAnalyze(
             string targetPath = null,
@@ -2357,11 +2348,11 @@ namespace UnitySkills
 
             var edges = CollectDependencyEdges(allObjects);
 
-            // Build reverse index: who depends on each object
+            // Reverse index: who depends on each object
             var reverseIndex = edges.GroupBy(e => e.toObject)
                 .ToDictionary(g => g.Key, g => g.ToList());
 
-            // If targetPath specified, only analyze that subtree
+            // When targetPath is given, only analyze that subtree
             List<object> analysis;
             if (!string.IsNullOrEmpty(targetPath))
             {
@@ -2369,7 +2360,6 @@ namespace UnitySkills
                 if (targetGo == null)
                     return new { success = false, error = $"Target '{targetPath}' not found" };
 
-                // Collect target + all descendants
                 var targetPaths = new HashSet<string>();
                 var stack = new Stack<Transform>();
                 stack.Push(targetGo.transform);
@@ -2384,15 +2374,12 @@ namespace UnitySkills
             }
             else
             {
-                // All objects that are depended upon
                 var allTargets = new HashSet<string>(reverseIndex.Keys);
                 analysis = BuildAnalysis(allTargets, reverseIndex, edges);
             }
 
-            // Build markdown
             var md = BuildDependencyMarkdown(scene.name, targetPath, analysis, edges);
 
-            // Save if requested
             string savedPath = null;
             if (!string.IsNullOrEmpty(savePath))
             {
@@ -2434,7 +2421,6 @@ namespace UnitySkills
             if (string.IsNullOrEmpty(scriptName))
                 return new { success = false, error = "scriptName is required" };
 
-            // Find the entry script type
             var allTypes = SkillsCommon.GetAllLoadedTypes()
                 .Where(t => t.IsClass && IsUserScript(t))
                 .ToList();
@@ -2445,10 +2431,9 @@ namespace UnitySkills
 
             var entryName = entryType.Name;
 
-            // Collect all code-level dependency edges
             var codeEdges = CollectCodeDependencies();
 
-            // Build bidirectional adjacency: outgoing (A depends on B) and incoming (B is depended by A)
+            // Bidirectional adjacency list: outgoing means A depends on B, incoming means B is depended on by A
             var outgoing = new Dictionary<string, HashSet<string>>();
             var incoming = new Dictionary<string, HashSet<string>>();
 
@@ -2461,8 +2446,8 @@ namespace UnitySkills
                 incoming[e.toObject].Add(e.fromObject);
             }
 
-            // BFS from entry, expanding both directions, up to maxHops
-            var visited = new Dictionary<string, int>(); // scriptName → hop
+            // Bidirectional BFS spreading out from the entry, up to maxHops hops
+            var visited = new Dictionary<string, int>(); // script name -> hop count
             var queue = new Queue<(string name, int hop)>();
             visited[entryName] = 0;
             queue.Enqueue((entryName, 0));
@@ -2472,7 +2457,6 @@ namespace UnitySkills
                 var (current, hop) = queue.Dequeue();
                 if (hop >= maxHops) continue;
 
-                // Expand outgoing
                 if (outgoing.TryGetValue(current, out var outs))
                 {
                     foreach (var neighbor in outs)
@@ -2485,7 +2469,6 @@ namespace UnitySkills
                     }
                 }
 
-                // Expand incoming
                 if (incoming.TryGetValue(current, out var ins))
                 {
                     foreach (var neighbor in ins)
@@ -2499,7 +2482,7 @@ namespace UnitySkills
                 }
             }
 
-            // Build file path lookup via MonoScript assets
+            // Build a file-path lookup table via MonoScript assets
             var filePathMap = new Dictionary<string, string>();
             var scriptGuids = AssetDatabase.FindAssets("t:MonoScript", new[] { "Assets" });
             foreach (var guid in scriptGuids)
@@ -2512,7 +2495,6 @@ namespace UnitySkills
                     filePathMap[cls.Name] = path;
             }
 
-            // Build type lookup for reached scripts
             var typeMap = new Dictionary<string, Type>();
             foreach (var t in allTypes)
             {
@@ -2520,7 +2502,6 @@ namespace UnitySkills
                     typeMap[t.Name] = t;
             }
 
-            // Build script info list
             var scripts = new List<object>();
             foreach (var kv in visited.OrderBy(k => k.Value).ThenBy(k => k.Key))
             {
@@ -2580,7 +2561,6 @@ namespace UnitySkills
                 });
             }
 
-            // Filter edges to only those between reached scripts
             var reachedEdges = codeEdges
                 .Where(e => visited.ContainsKey(e.fromObject) && visited.ContainsKey(e.toObject))
                 .Select(e => (object)new { from = e.fromObject, to = e.toObject, type = e.fieldType, detail = e.fieldName })
@@ -2602,8 +2582,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Kahn's topological sort on dependency subgraph. Leaves with no outgoing edges come first.
-        /// Entry script is placed last. Cycle members appended alphabetically.
+        /// Kahn's topological sort over the dependency subgraph: leaves with no outgoing edges come
+        /// first, the entry script is placed last, and nodes stuck in a cycle are appended alphabetically.
         /// </summary>
         private static List<string> TopologicalSort(List<string> nodes, List<DependencyEdge> edges, string entryScript)
         {
@@ -2613,7 +2593,7 @@ namespace UnitySkills
             foreach (var e in edges)
             {
                 if (!adj.ContainsKey(e.toObject) || !inDegree.ContainsKey(e.fromObject)) continue;
-                adj[e.toObject].Add(e.fromObject); // dependency flows: if A depends on B, B should be read first → edge B→A
+                adj[e.toObject].Add(e.fromObject); // Dependency direction: A depends on B means B should be read first, so build the edge B->A
                 inDegree[e.fromObject] = inDegree.TryGetValue(e.fromObject, out var d) ? d + 1 : 1;
             }
 
@@ -2631,11 +2611,11 @@ namespace UnitySkills
                 }
             }
 
-            // Remaining nodes are in cycles — append alphabetically
+            // Remaining nodes are stuck in a cycle; append them alphabetically
             var remaining = nodes.Where(n => !result.Contains(n)).OrderBy(n => n).ToList();
             result.AddRange(remaining);
 
-            // Move entry script to end (read dependencies first, entry last)
+            // Move the entry script to the end: read dependencies first, entry last
             if (result.Remove(entryScript))
                 result.Add(entryScript);
 
@@ -2684,7 +2664,6 @@ namespace UnitySkills
             sb.AppendLine($"> Total references: {edges.Count} | Objects analyzed: {analysis.Count}");
             sb.AppendLine();
 
-            // High risk objects first
             sb.AppendLine("## Risk Summary");
             sb.AppendLine();
             sb.AppendLine("| Object | Risk | Depended By | Depends On |");
@@ -2695,7 +2674,6 @@ namespace UnitySkills
             }
             sb.AppendLine();
 
-            // Detail for objects with incoming dependencies
             var withDeps = analysis.Where(a => ((dynamic)a).dependedByCount > 0).ToList();
             if (withDeps.Count > 0)
             {
@@ -2767,7 +2745,7 @@ namespace UnitySkills
                 usedLayers.Add(go.layer);
             }
 
-            // Find layers with physics interactions that have no objects
+            // Find layers involved in physics interaction that have no objects
             var emptyLayers = new List<string>();
             for (int i = 0; i < 32; i++)
             {
@@ -2792,7 +2770,7 @@ namespace UnitySkills
         {
             var hints = new List<object>();
 
-            // 1. Realtime shadow lights
+            // 1. Real-time shadow lights
             var lights = FindHelper.FindAll<Light>();
             var shadowLights = lights.Where(l => l.shadows != LightShadows.None).ToArray();
             if (shadowLights.Length > 4)
@@ -2836,7 +2814,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Scene Diff
+        // Scene diff
         // ==================================================================================
 
         [UnitySkill("scene_diff", "Compare current scene against a previous snapshot to see what changed. Call without snapshotJson to capture a snapshot; call with snapshotJson to compare.",
@@ -2849,7 +2827,7 @@ namespace UnitySkills
         {
             if (string.IsNullOrWhiteSpace(snapshotJson))
             {
-                // Capture mode: return current scene snapshot
+                // Capture mode: return the current scene snapshot
                 var snapshot = CaptureSceneSnapshot();
                 return new
                 {
@@ -2861,7 +2839,7 @@ namespace UnitySkills
                 };
             }
 
-            // Compare mode: parse previous snapshot and diff
+            // Compare mode: parse the previous snapshot and diff
             JArray previousSnapshot;
             try { previousSnapshot = JArray.Parse(snapshotJson); }
             catch (Exception ex) { return new { error = $"Invalid snapshotJson: {ex.Message}" }; }
@@ -2887,7 +2865,7 @@ namespace UnitySkills
             var removed = new List<object>();
             var modified = new List<object>();
 
-            // Find added (in current but not in previous)
+            // added: present in current but not in the previous snapshot
             foreach (var kvp in currentMap)
             {
                 if (!previousMap.ContainsKey(kvp.Key))
@@ -2902,7 +2880,7 @@ namespace UnitySkills
                 }
             }
 
-            // Find removed (in previous but not in current)
+            // removed: present in the previous snapshot but not in current
             foreach (var kvp in previousMap)
             {
                 if (!currentMap.ContainsKey(kvp.Key))
@@ -2917,7 +2895,7 @@ namespace UnitySkills
                 }
             }
 
-            // Find modified (same instanceId, different properties)
+            // modified: same instanceId but differing properties
             foreach (var kvp in currentMap)
             {
                 if (previousMap.TryGetValue(kvp.Key, out var prev))

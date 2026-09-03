@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using UnityEditor.PackageManager;
 using UnityEditor.PackageManager.Requests;
@@ -12,7 +12,7 @@ using PkgInfo = UnityEditor.PackageManager.PackageInfo;
 namespace UnitySkills
 {
     /// <summary>
-    /// Unity Package Manager API 封装
+    /// Wrapper around the Unity Package Manager API
     /// </summary>
     [InitializeOnLoad]
     public static class PackageManagerHelper
@@ -91,7 +91,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 刷新已安装包列表
+        /// Refreshes the list of installed packages
         /// </summary>
         public static void RefreshPackageList(Action<bool> callback = null)
         {
@@ -103,8 +103,8 @@ namespace UnitySkills
             _isRefreshing = true;
             _currentOperation = "refresh";
             _currentPackageId = "(package_list)";
-            // Include resolved transitive dependencies. Cinemachine 3, for example, brings
-            // Splines indirectly and skills must still recognize it as installed.
+            // Must include resolved transitive dependencies: e.g. Cinemachine 3 pulls in Splines indirectly,
+            // and the skill still needs to recognize it as installed.
             try
             {
                 _listRequest = Client.List(offlineMode: true, includeIndirectDependencies: true);
@@ -149,7 +149,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 检查包是否已安装
+        /// Checks whether a package is installed
         /// </summary>
         public static bool IsPackageInstalled(string packageId)
         {
@@ -159,7 +159,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 获取已安装版本
+        /// Gets the installed version
         /// </summary>
         public static string GetInstalledVersion(string packageId)
         {
@@ -169,12 +169,11 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Synchronous single-package lookup, used when the cached list is not up yet.
-        /// <see cref="RefreshPackageList"/> is asynchronous and restarts after every domain reload,
-        /// so the first call of a session lands in the window where the cache is still null. Without
-        /// this fallback a skill would report a package as installed (a check that succeeded some
-        /// other way, e.g. a version define) while its version came back null — an internally
-        /// inconsistent answer that also made version gates silently evaluate to "unknown".
+        /// Synchronous single-package query, used as a fallback while the cached list isn't ready yet.
+        /// <see cref="RefreshPackageList"/> is asynchronous and has to redo its work after every domain reload,
+        /// so the first call in a session inevitably lands in the window where the cache is still null. Without this fallback,
+        /// a skill would report the package as installed (installation is determined via other means like version defines)
+        /// while returning null for the version -- a self-contradictory answer that would also make the version gate silently resolve to "unknown".
         /// </summary>
         private static PkgInfo ResolveDirectly(string packageId)
         {
@@ -193,7 +192,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 安装包（异步）
+        /// Installs a package (async)
         /// </summary>
         public static void InstallPackage(string packageId, string version, Action<bool, string> callback)
         {
@@ -235,7 +234,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 移除包（异步）
+        /// Removes a package (async)
         /// </summary>
         public static void RemovePackage(string packageId, Action<bool, string> callback)
         {
@@ -276,7 +275,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 获取当前 Unity 版本推荐的 Splines 版本
+        /// Gets the recommended Splines version for the current Unity version
         /// </summary>
         public static string GetRecommendedSplinesVersion()
         {
@@ -288,7 +287,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 安装 Splines 包
+        /// Installs the Splines package
         /// </summary>
         public static void InstallSplines(Action<bool, string> callback)
         {
@@ -296,13 +295,13 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 安装 Cinemachine（自动处理依赖）
+        /// Installs Cinemachine (automatically handles dependencies)
         /// </summary>
         public static void InstallCinemachine(bool useVersion3, Action<bool, string> callback)
         {
             if (useVersion3)
             {
-                // CM3 需要先安装 Splines
+                // CM3 requires Splines to be installed first
                 if (!IsPackageInstalled(SplinesPackageId))
                 {
                     InstallPackage(SplinesPackageId, GetRecommendedSplinesVersion(), (success, msg) =>
@@ -325,7 +324,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 获取 Cinemachine 安装状态
+        /// Gets the Cinemachine installation status
         /// </summary>
         public static (bool installed, string version, bool isVersion3) GetCinemachineStatus()
         {
@@ -380,8 +379,8 @@ namespace UnitySkills
         private const double RetryDelaySeconds = 3.0;
 
         /// <summary>
-        /// 自动安装 Cinemachine（如果未安装）
-        /// Unity 6+ 默认 CM3，Unity 2022 及以下默认 CM2
+        /// Auto-installs Cinemachine (if not already installed)
+        /// Unity 6+ defaults to CM3, Unity 2022 and below defaults to CM2
         /// </summary>
         private static void AutoInstallCinemachineIfNeeded()
         {

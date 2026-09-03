@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
@@ -9,9 +9,18 @@ namespace UnitySkills
     [InitializeOnLoad]
     internal static class BatchJobService
     {
-        /// <summary>Per-frame time budget for chunk item processing, in milliseconds. Prevents a single
-        /// EditorApplication.update tick (or a job_wait Pump loop) from stalling on an oversized chunk.</summary>
+        /// <summary>Time budget (ms) for processing chunk entries in a single frame, to avoid one
+        /// EditorApplication.update tick (or job_wait's Pump loop) getting stuck on an oversized chunk.</summary>
         private const double ChunkTimeBudgetMs = 12.0;
+
+        /// <summary>Hard cap (ms) on the <see cref="Wait"/> blocking loop. Wait busy-sleeps on the
+        /// Unity main thread (see the Thread.Sleep in the loop); without a cap it would freeze the
+        /// editor — and the HTTP main-thread queue along with it — for whatever duration the caller
+        /// requested. 30s is the longest wait any existing caller needs (the synchronous path of
+        /// batch_retry_failed in BatchSkills); batch chunks can reasonably run much longer than the
+        /// 2s cap AsyncJobService applies to engine-driven jobs, but callers needing more than this
+        /// must switch to job_status / GET /jobs/{id} polling.</summary>
+        internal const int MaxWaitTimeoutMs = 30000;
 
         private sealed class RuntimeJobContext
         {
@@ -99,7 +108,7 @@ namespace UnitySkills
             return job;
         }
 
-        /// <summary>Removes runtime context for a cancelled job so chunk execution stops.</summary>
+        /// <summary>Removes the runtime context of a cancelled job, stopping chunk execution.</summary>
         internal static void NotifyCancelled(string jobId)
         {
             if (!string.IsNullOrEmpty(jobId) && RuntimeJobs.TryGetValue(jobId, out var context))
@@ -108,7 +117,8 @@ namespace UnitySkills
 
         internal static BatchJobRecord Wait(string jobId, int timeoutMs)
         {
-            var deadline = DateTime.UtcNow.AddMilliseconds(Math.Max(100, timeoutMs));
+            var clampedTimeoutMs = Math.Min(MaxWaitTimeoutMs, Math.Max(100, timeoutMs));
+            var deadline = DateTime.UtcNow.AddMilliseconds(clampedTimeoutMs);
             BatchJobRecord job;
             do
             {
@@ -244,9 +254,10 @@ namespace UnitySkills
                         });
                     }
 
-                    // Dual gate: item count (chunkSize, via .Take above) AND time budget. At least one item is
-                    // always processed before this check runs, so a slow item can't stall progress indefinitely
-                    // — it just yields the rest of the chunk to the next frame instead of freezing this one.
+                    // Double gate: item count (chunkSize, controlled by .Take above) and time
+                    // budget. The check happens after at least one item has been processed, so
+                    // a slow item can't stall progress entirely — it just hands the rest of the
+                    // chunk to the next frame instead of freezing the current one.
                     if (IsChunkBudgetExpired(budgetDeadline))
                         break;
                 }

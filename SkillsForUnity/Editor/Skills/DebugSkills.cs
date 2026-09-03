@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using UnityEditor.Build;
 using UnityEditor.Compilation;
@@ -10,7 +10,7 @@ using Newtonsoft.Json;
 namespace UnitySkills
 {
     /// <summary>
-    /// Debug skills - self-healing, active error checking, compilation control.
+    /// Debug skills: self-healing, proactive error checks, compile control.
     /// </summary>
     public static class DebugSkills
     {
@@ -22,9 +22,9 @@ namespace UnitySkills
             public int line;
         }
 
-        // Serialized snapshot value for scripting define symbols. The build target group is
-        // captured alongside the defines so undo/redo applies to the correct group even if the
-        // active build target changed in between.
+        // Snapshot value of the Scripting Define Symbols. The build target group must be recorded
+        // alongside it, so that undo/redo still applies to the correct group even if the active
+        // build target was switched in the meantime.
         private sealed class DefinesSettingValue
         {
             public string group;
@@ -32,8 +32,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Registers the scripting-define restorer so debug_set_defines changes are reversible
-        /// via workflow undo/redo. Runs on domain load.
+        /// Registers the Scripting Define restorer, so debug_set_defines changes can be rolled
+        /// back through workflow undo/redo. Runs on domain load.
         /// </summary>
         [InitializeOnLoadMethod]
         private static void RegisterSettingRestorers()
@@ -87,12 +87,7 @@ namespace UnitySkills
             }
         }
 
-        // Unity LogEntry mode bits (from UnityCsReference)
-        // Error=1, Assert=2, Log=4, Fatal=16,
-        // DontPreprocessCondition=32, AssetImportError=64, AssetImportWarning=128,
-        // ScriptingError=256, ScriptingWarning=512, ScriptingLog=1024,
-        // ScriptCompileError=2048, ScriptCompileWarning=4096,
-        // ScriptingException=131072
+        // Unity LogEntry mode bits, values taken from UnityCsReference.
         private const int ModeError = 1;
         private const int ModeAssert = 2;
         private const int ModeLog = 4;
@@ -110,7 +105,7 @@ namespace UnitySkills
         internal const int WarningModeMask = ModeAssetImportWarning | ModeScriptingWarning | ModeScriptCompileWarning;
         internal const int LogModeMask = ModeLog | ModeScriptingLog;
 
-        // Cached reflection members (initialized on first use, cleared on failure to allow retry)
+        // Reflection member cache: initialized on first use, cleared on failure so the next attempt can retry.
         private static System.Type _logEntriesType;
         private static System.Type _logEntryType;
         private static MethodInfo _getCountMethod;

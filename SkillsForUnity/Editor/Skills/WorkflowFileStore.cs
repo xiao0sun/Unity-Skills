@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -11,33 +11,33 @@ namespace UnitySkills
 {
     /// <summary>
     /// Content-addressed file store for workflow snapshots.
-    /// Stores each file blob by its own SHA1 hash, deduplicating identical contents.
+    /// Each file blob is stored under its own SHA1 hash as the name; identical content is automatically deduplicated.
     /// </summary>
     internal static class WorkflowFileStore
     {
         /// <summary>
-        /// Root directory for all stored workflow file blobs.
+        /// Root directory for all workflow file blobs.
         /// </summary>
         internal static string OverrideStoreRootForTests;
         public static string StoreRoot => OverrideStoreRootForTests ??
             Path.GetFullPath(Path.Combine(Application.dataPath, "../Library/UnitySkills/workflow_files"));
 
         /// <summary>
-        /// Blobs that entered the store within this window are never reclaimed as unreferenced:
-        /// a caller may still be assembling the snapshot that will reference them.
+        /// Blobs stored within this time window are never reclaimed as "unreferenced":
+        /// the caller may still be assembling the snapshot that will reference them.
         /// </summary>
         private static readonly TimeSpan RecentWriteGrace = TimeSpan.FromMinutes(10);
 
-        /// <summary>Extension given to a blob whose contents no longer match its hash.</summary>
+        /// <summary>Extension used for blobs whose content no longer matches their own hash.</summary>
         private const string CorruptSuffix = ".corrupt";
 
         /// <summary>
-        /// Stores an asset file in the content-addressed store and optionally removes the source.
-        /// The companion .meta file is independently content-addressed.
+        /// Stores an asset file in the content-addressed store, optionally deleting the source file.
+        /// The companion .meta file is addressed independently by its own content.
         /// </summary>
-        /// <param name="assetPath">Project-relative asset path (e.g., "Assets/Materials/Red.mat").</param>
-        /// <param name="move">If true, deletes the source file (and meta) after storing.</param>
-        /// <returns>The SHA1 hash of the file contents, or null if the source does not exist.</returns>
+        /// <param name="assetPath">Project-relative asset path (e.g. "Assets/Materials/Red.mat").</param>
+        /// <param name="move">If true, deletes the source file (and its meta) after storing.</param>
+        /// <returns>SHA1 hash of the file content; returns null if the source file does not exist.</returns>
         public static string StoreFile(string assetPath, bool move)
         {
             return StoreFile(assetPath, move, out _);
@@ -73,7 +73,7 @@ namespace UnitySkills
                         return null;
                 }
 
-                // Sources are removed only after every required blob is durable.
+                // Only delete the source file after all required blobs have been persisted.
                 if (move)
                 {
                     SafeDelete(fullPath);
@@ -91,12 +91,12 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Restores a stored file (and its independently addressed .meta companion).
+        /// Restores a stored file (and its independently addressed companion .meta file).
         /// </summary>
-        /// <param name="hash">SHA1 hash of the stored contents.</param>
+        /// <param name="hash">SHA1 hash of the stored content.</param>
         /// <param name="assetPath">Project-relative asset path to restore to.</param>
-        /// <param name="removeFromStore">If true, removes the store entry after restoring (used for redo-created paths).</param>
-        /// <returns>True if the file was restored.</returns>
+        /// <param name="removeFromStore">If true, deletes the store entry after restoring (used by the "redo create" path).</param>
+        /// <returns>True if the restore succeeded.</returns>
         public static bool RestoreFile(string hash, string assetPath, bool removeFromStore)
         {
             return RestoreFile(hash, null, assetPath, removeFromStore);
@@ -115,7 +115,7 @@ namespace UnitySkills
             if (!File.Exists(hashPath))
                 return false;
 
-            // Verified before anything is written, so a corrupt blob leaves the project untouched.
+            // Verify before writing anything, so a corrupted blob never touches the project.
             if (!VerifyBlobIntegrity(hash))
                 return false;
             if (!string.IsNullOrEmpty(metaHash) && File.Exists(metaHashPath) && !VerifyBlobIntegrity(metaHash))
@@ -133,7 +133,7 @@ namespace UnitySkills
                 else
                     File.Copy(hashPath, fullPath);
 
-                // Restore .meta companion if present
+                // Restore the companion .meta file too, if present
                 if (File.Exists(metaHashPath))
                 {
                     string metaDestPath = fullPath + ".meta";
@@ -157,13 +157,13 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Removes store entries whose hashes are not referenced by any remaining snapshot.
+        /// Deletes store entries whose hash is no longer referenced by any surviving snapshot.
         /// </summary>
-        /// <param name="removedCount">Number of main hash entries removed.</param>
-        /// <param name="removedBytes">Total bytes reclaimed (including .meta sidecars).</param>
+        /// <param name="removedCount">Number of primary hash entries removed.</param>
+        /// <param name="removedBytes">Total bytes reclaimed (including .meta companion files).</param>
         /// <param name="includeRecentWrites">
-        /// Set only when the caller knows the reference set is complete by construction (clearing all
-        /// history); otherwise just-written blobs are kept, see <see cref="RecentWriteGrace"/>.
+        /// Only set this when the caller can be sure the reference set is inherently complete (e.g. clearing all history);
+        /// otherwise recently written blobs are preserved, see <see cref="RecentWriteGrace"/>.
         /// </param>
         public static void CollectGarbage(HashSet<string> referencedHashes, out int removedCount, out long removedBytes,
             Action<string> log = null, bool includeRecentWrites = false)
@@ -216,7 +216,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Returns the total size of the file store in bytes.
+        /// Returns the total size of the store, in bytes.
         /// </summary>
         public static long GetStoreSizeBytes()
         {
@@ -227,13 +227,13 @@ namespace UnitySkills
             foreach (var file in Directory.EnumerateFiles(StoreRoot, "*", SearchOption.TopDirectoryOnly))
             {
                 try { total += new FileInfo(file).Length; }
-                catch { /* ignore locked files */ }
+                catch { /* Ignore files that are locked by another process */ }
             }
             return total;
         }
 
         /// <summary>
-        /// Lists all stored file entries (main blobs only, not .meta sidecars).
+        /// Lists all stored file entries (primary blobs only, excluding .meta companion files).
         /// </summary>
         public static List<(string hash, long bytes, DateTime lastWrite)> ListEntries()
         {
@@ -246,7 +246,7 @@ namespace UnitySkills
                 string fileName = Path.GetFileName(file);
                 if (fileName.EndsWith(".meta", StringComparison.OrdinalIgnoreCase))
                     continue;
-                // Quarantined blobs are evidence of corruption; cleanup must not reclaim them.
+                // A quarantined blob is evidence of corruption and must not be reclaimed during cleanup.
                 if (fileName.EndsWith(CorruptSuffix, StringComparison.OrdinalIgnoreCase))
                     continue;
 
@@ -255,18 +255,18 @@ namespace UnitySkills
                     var info = new FileInfo(file);
                     result.Add((fileName.ToUpperInvariant(), info.Length, info.LastWriteTimeUtc));
                 }
-                catch { /* ignore locked files */ }
+                catch { /* Ignore files that are locked by another process */ }
             }
 
             return result;
         }
 
         /// <summary>
-        /// Prunes store entries older than <paramref name="olderThan"/>, then if necessary removes oldest
-        /// entries until the total size is below <paramref name="maxTotalBytes"/>.
-        /// Blobs referenced by retained history are never removed.
+        /// First removes store entries older than <paramref name="olderThan"/>, then, if needed, deletes from
+        /// oldest to newest until the total size is below <paramref name="maxTotalBytes"/>.
+        /// Blobs still referenced by preserved history are never deleted.
         /// </summary>
-        /// <returns>Number of main hash entries removed.</returns>
+        /// <returns>Number of primary hash entries removed.</returns>
         public static int PruneByAgeAndSize(DateTime? olderThan, long maxTotalBytes,
             HashSet<string> protectedHashes)
         {
@@ -283,8 +283,7 @@ namespace UnitySkills
                 if (protectedHashes.Contains(entry.hash))
                     continue;
 
-                // Same in-flight protection as CollectGarbage: a blob written moments ago may
-                // belong to a task not yet folded into the history's reference set.
+                // Same in-flight protection as CollectGarbage: a recently written blob may belong to a task not yet folded into the history reference set.
                 bool recentWrite = entry.lastWrite >= DateTime.UtcNow - RecentWriteGrace;
                 bool tooOld = olderThan.HasValue && entry.lastWrite < olderThan.Value;
                 bool tooBig = maxTotalBytes > 0 && totalBytes > maxTotalBytes;
@@ -323,7 +322,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Computes the SHA1 hash of a file's contents.
+        /// Computes the SHA1 hash of a file's content.
         /// </summary>
         public static string ComputeFileHash(string fullPath)
         {
@@ -428,7 +427,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Resolves a project-relative asset path to an absolute path and validates it for safety.
+        /// Resolves a project-relative asset path to an absolute path, with safety validation.
         /// </summary>
         public static bool TryGetSafeAssetFullPath(string assetPath, out string fullPath)
         {
@@ -466,9 +465,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Stamps a blob with the time it entered the store. File.Copy carries the source asset's
-        /// timestamp over, but cleanup ages entries by how long they have been stored, not by how
-        /// old the asset was when it was backed up.
+        /// Stamps the blob with the "stored at" timestamp. File.Copy carries over the source asset's timestamp,
+        /// but cleanup measures how long an entry has sat in the store, not how old the asset was at backup time.
         /// </summary>
         private static void TouchBlob(string hashPath)
         {
@@ -484,19 +482,18 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Reason the most recent restore refused to run, or null when the last one was clean.
-        /// The undo path reports per-snapshot failures, and integrity aborts are otherwise
-        /// indistinguishable from any other failure ("Unknown failure") — which is the one case
-        /// where the caller most needs to know the backup itself is the problem, not the target.
+        /// Reason the most recent restore was refused; null after a clean completion. The undo path reports
+        /// failures per-snapshot, while an integrity abort is otherwise indistinguishable from any other failure
+        /// (both surface as "Unknown failure") — yet that's exactly when the caller most needs to know "the problem is in the backup, not the target".
         /// </summary>
         internal static string LastIntegrityError { get; private set; }
 
         internal static void ClearLastIntegrityError() => LastIntegrityError = null;
 
         /// <summary>
-        /// Confirms a stored blob still hashes to the name it is filed under, quarantining it as
-        /// "&lt;hash&gt;.corrupt" when it does not. Legacy "&lt;hash&gt;.meta" sidecars are named after the
-        /// main file's hash rather than their own, so they are never checked here.
+        /// Confirms a stored blob's content still hashes to the name it was filed under; quarantines it as
+        /// "&lt;hash&gt;.corrupt" if not. Legacy "&lt;hash&gt;.meta" companion files are named after the primary
+        /// file's hash rather than their own, so they are never verified here.
         /// </summary>
         private static bool VerifyBlobIntegrity(string hash)
         {
@@ -580,14 +577,14 @@ namespace UnitySkills
     }
 
     /// <summary>
-    /// Registry for restoring setting snapshots that cannot be recovered via normal asset/scene paths.
-    /// Settings are identified by a key and restored from a JSON-encoded old value.
+    /// Registry for restoring setting-type snapshots that can't go through the regular asset/scene path.
+    /// Settings are identified by key and restored from JSON-encoded prior values.
     /// </summary>
     internal static class WorkflowSettingRestorerRegistry
     {
         private sealed class Handlers
         {
-            public Func<string> Getter;          // Reads current value as a JSON string (null if not supplied).
+            public Func<string> Getter;          // Reads the current value as a JSON string (null if not provided).
             public Func<string, bool> Restorer;  // Applies a JSON-encoded value; returns true on success.
         }
 
@@ -595,8 +592,8 @@ namespace UnitySkills
             new Dictionary<string, Handlers>(StringComparer.Ordinal);
 
         /// <summary>
-        /// Registers a restorer (setter) for a setting key. Legacy overload without a getter;
-        /// redo-side value capture is unavailable for keys registered this way.
+        /// Registers a restorer (setter) for a setting key. This is the legacy overload with no getter;
+        /// keys registered this way cannot capture the redo-side value.
         /// </summary>
         public static void Register(string key, Func<string, bool> restorer)
         {
@@ -607,9 +604,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Registers a getter/setter pair for a setting key. The getter returns the current
-        /// value as a JSON string (used to capture the redo value during undo); the setter
-        /// applies a JSON-encoded value and returns true on success.
+        /// Registers a getter/setter pair for a setting key. The getter returns the current value as a JSON string
+        /// (used to capture the redo value on undo); the setter applies a JSON-encoded value and returns true on success.
         /// </summary>
         public static void Register(string key, Func<string> getter, Func<string, bool> setter)
         {
@@ -631,7 +627,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Returns true if a handler is registered for the key.
+        /// Returns true if a handler is registered for this key.
         /// </summary>
         public static bool IsRegistered(string key)
         {
@@ -639,8 +635,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Reads the current value of a setting as a JSON string using its registered getter.
-        /// Returns null if no getter is registered for the key or the getter throws.
+        /// Reads a setting's current value as a JSON string using its registered getter.
+        /// Returns null if no getter is registered for the key, or if the getter throws.
         /// </summary>
         public static string TryGetCurrentValue(string key)
         {
@@ -662,7 +658,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Attempts to restore a setting from its JSON-encoded value.
+        /// Attempts to restore a setting from a JSON-encoded value.
         /// </summary>
         public static bool TryRestore(string key, string valueJson)
         {
@@ -684,7 +680,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Clears all registered handlers. Used primarily in tests.
+        /// Clears all registered handlers; primarily for test use.
         /// </summary>
         public static void Clear()
         {

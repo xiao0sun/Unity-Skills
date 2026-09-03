@@ -8,14 +8,13 @@ using UnityEngine;
 namespace UnitySkills.Tests.Core
 {
     /// <summary>
-    /// End-to-end coverage for SkillRouter.Execute called directly (no HTTP layer, EditMode only):
-    /// a genuinely read-only skill executes normally regardless of operating mode; an unknown
-    /// parameter is rejected before the mode gate even runs; and the Approval-mode MODE_RESTRICTED
-    /// path actually blocks a FullAuto skill's side effect rather than just returning an error
-    /// while still mutating the scene.
+    /// End-to-end coverage calling SkillRouter.Execute directly (not through the HTTP layer, EditMode only):
+    /// a genuinely read-only skill executes normally in any operating mode; unknown parameters are rejected before
+    /// the mode gate is even reached; Approval mode's MODE_RESTRICTED path must actually block a FullAuto skill's
+    /// side effects, rather than returning an error while still mutating the scene anyway.
     ///
-    /// Never assumes Bypass mode or any pre-existing scene/asset — every test sets
-    /// SkillsModeManager.CurrentMode explicitly and works against a fresh empty scene.
+    /// Never assumes the current mode is Bypass, nor that any pre-existing scene/asset exists - every test case
+    /// explicitly sets SkillsModeManager.CurrentMode and runs on a brand-new empty scene.
     /// </summary>
     [TestFixture]
     public class SkillRouterExecuteEndToEndTests
@@ -125,9 +124,11 @@ namespace UnitySkills.Tests.Core
         {
             SkillsModeManager.CurrentMode = SkillsOperatingMode.Bypass;
             bool saved = SkillRouter.SummaryAutoTruncate;
+            int savedPage = SkillRouter.SummaryPageSize;
             try
             {
                 SkillRouter.SummaryAutoTruncate = true;
+                SkillRouter.SummaryPageSize = 5;
 
                 var response = JObject.Parse(SkillRouter.Execute("asset_find",
                     "{\"searchFilter\":\"\",\"limit\":15,\"verbose\":false}"));
@@ -142,6 +143,7 @@ namespace UnitySkills.Tests.Core
             finally
             {
                 SkillRouter.SummaryAutoTruncate = saved;
+                SkillRouter.SummaryPageSize = savedPage;
             }
         }
 

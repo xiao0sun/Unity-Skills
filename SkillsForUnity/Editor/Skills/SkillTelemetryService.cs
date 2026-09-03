@@ -13,22 +13,22 @@ using UnityEngine;
 namespace UnitySkills
 {
     /// <summary>
-    /// Append-only JSONL log of skill EXECUTION telemetry — the data source behind
-    /// GET /analytics ("which skill was called how often, how slow, and how often did it fail").
+    /// Append-only JSONL log of skill "execution" telemetry — the data source for GET /analytics
+    /// ("how many times was a skill called, how slow, how high a failure rate").
     ///
-    /// Deliberately separate from <see cref="SkillsAuditLog"/>: that log records permission
-    /// events (grant/deny/allowlist), this one records every skill invocation outcome. They
-    /// live in different files (<c>Library/UnitySkillsTelemetry.jsonl</c>) so a high-frequency
-    /// execution stream never dilutes the permission audit trail.
+    /// Deliberately separate from <see cref="SkillsAuditLog"/>: that one records permission
+    /// events (authorized/denied/allowlist); this one records the outcome of every skill call.
+    /// The two land in different files (this one is <c>Library/UnitySkillsTelemetry.jsonl</c>),
+    /// so the high-frequency execution stream doesn't dilute the permission audit trail.
     ///
-    /// Structure mirrors SkillsAuditLog: writes are queued on the calling (main) thread and
-    /// flushed asynchronously; files roll over at 1MB keeping up to 3 historical copies. All
-    /// disk I/O is best-effort — a telemetry failure must never affect a business response.
+    /// Structure mirrors SkillsAuditLog: writes are queued on the calling thread (main thread)
+    /// and flushed to disk asynchronously; the file rotates at 1MB, keeping up to 3 historical
+    /// copies. All disk I/O is best-effort — a telemetry failure must never affect the business response.
     ///
     /// One JSONL line per call:
     /// <code>{"ts":"2026-07-09T...Z","skill":"gameobject_create","agent":"ClaudeCode",
     /// "mode":"execute","ok":true,"ms":12}</code>
-    /// (<c>errorCode</c> is present only when <c>ok</c> is false.)
+    /// (<c>errorCode</c> only appears when <c>ok</c> is false.)
     /// </summary>
     public static class SkillTelemetryService
     {
@@ -43,9 +43,9 @@ namespace UnitySkills
         private static string _cachedDir;
         private static string _cachedPath;
 
-        // Aggregation cache: keep the serialized /analytics JSON per window for 30s so a burst
-        // of polls doesn't re-read up to 4MB from disk on every request. Read/written only on
-        // the main thread (the endpoint handler), but locked defensively.
+        // Aggregation cache: caches the serialized /analytics JSON per window for 30 seconds, so
+        // continuous polling doesn't reread up to 4MB from disk on every request.
+        // Read/written only on the main thread (endpoint handler), but locked conservatively anyway.
         private const long AnalyticsCacheTtlTicks = 30L * TimeSpan.TicksPerSecond;
         private static readonly object _analyticsCacheLock = new object();
         private static readonly Dictionary<string, CachedAnalytics> _analyticsCache =
@@ -78,41 +78,48 @@ namespace UnitySkills
         private static Dictionary<string, RecommendationHealth> _recommendationHealthCache;
         private static long _recommendationHealthCacheAtTicks;
 
+        public static event Action OnChanged;
+
         /// <summary>
-        /// Master switch (EditorPrefs, default ON). When off, <see cref="Record"/> returns
-        /// immediately. The getter reads EditorPrefs, so it must be called on the main thread —
-        /// which every Record call site is (skill execution runs on the main thread).
+        /// Master switch (EditorPrefs, on by default). When off, <see cref="Record"/> returns immediately.
+        /// The getter reads EditorPrefs, so it must be called on the main thread — every Record
+        /// call site satisfies this (skill execution already runs on the main thread).
         /// </summary>
         public static bool Enabled
         {
             get => EditorPrefs.GetBool(PrefEnabled, true);
-            set => EditorPrefs.SetBool(PrefEnabled, value);
+            set
+            {
+                if (EditorPrefs.GetBool(PrefEnabled, true) == value) return;
+                EditorPrefs.SetBool(PrefEnabled, value);
+                OnChanged?.Invoke();
+            }
         }
 
         /// <summary>
-        /// Append one execution outcome. Non-blocking: the JSON line is queued and flushed on a
-        /// thread-pool worker. Call from the main thread (reads the Enabled EditorPref and
-        /// resolves the log path there so the flush worker never touches a Unity API).
+        /// Appends one execution result. Non-blocking: the JSON line is enqueued and flushed to
+        /// disk by a thread-pool worker. Must be called on the main thread (this is where the
+        /// Enabled EditorPref is read and the log path resolved, so the flush worker never touches Unity APIs).
         /// </summary>
         public static void Record(string skill, string agentId, string mode, bool ok, string errorCode, long durationMs)
         {
             try
             {
                 if (!Enabled) return;
-                // Resolve+cache the path here on the main thread so FlushPending (worker thread)
-                // reuses the cached value instead of reading Application.dataPath off-thread.
+                // Resolve and cache the path on the main thread, so FlushPending (a worker
+                // thread) can reuse the cached value instead of reading Application.dataPath off the main thread.
                 GetLogPath();
                 _queue.Enqueue(BuildLine(skill, agentId, mode, ok, errorCode, durationMs));
                 ScheduleFlush();
             }
             catch (Exception ex)
             {
-                // Telemetry MUST NOT crash or slow the caller. Best-effort, swallow.
+                // Telemetry must never drag down or slow the caller; best-effort and swallow the exception.
                 SkillsLogger.LogWarning($"Telemetry enqueue failed: {ex.Message}");
             }
         }
 
-        /// <summary>Resolve the telemetry log absolute path (cached after first call).</summary>
+        /// <summary>Resolves the absolute telemetry log path (cached after the first call).</summary>
         public static string GetLogPath()
         {
             if (_cachedPath != null) return _cachedPath;
@@ -122,9 +129,10 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Build (or return a cached) /analytics response for the given window. The window is
-        /// normalized to 1h|24h|7d|all (anything else → 24h). Result is cached 30s per window.
-        /// Returns a fully serialized JSON string ready to write to the HTTP response.
+        /// Builds (or returns a cached) /analytics response for the given window. window is
+        /// normalized to 1h|24h|7d|all (anything else falls back to 24h).
+        /// Results are cached per window for 30 seconds. Returns a complete JSON string ready to
+        /// write directly into the HTTP response.
         /// </summary>
         public static string BuildAnalyticsJson(string window)
         {
@@ -144,8 +152,8 @@ namespace UnitySkills
             }
             catch (Exception ex)
             {
-                // Aggregation is best-effort: on any failure return a well-formed empty report
-                // rather than a 500. The endpoint stays usable and never blocks on a bad line.
+                // Aggregation is best-effort: any failure returns a well-formed empty report
+                // instead of a 500, so the endpoint stays available and isn't jammed by one bad line.
                 SkillsLogger.LogWarning($"Telemetry analytics build failed: {ex.Message}");
                 json = JsonConvert.SerializeObject(BuildEmptyAnalytics(window, SafeEnabled()), SkillsCommon.JsonSettings);
             }
@@ -186,36 +194,35 @@ namespace UnitySkills
             return result;
         }
 
-        /// <summary>Internal: drain the queue synchronously on the calling thread (read consistency).</summary>
+        /// <summary>Internal: synchronously drains the queue on the calling thread, to guarantee read consistency.</summary>
         internal static void FlushSync() => FlushPending();
 
         /// <summary>
-        /// Delete telemetry records for an analytics window aligned with
+        /// Deletes telemetry records within a statistics window, using the same window values as
         /// <see cref="BuildAnalyticsJson"/>: <c>1h</c> / <c>24h</c> / <c>7d</c> / <c>all</c>.
-        /// <c>all</c> wipes every retained file; other windows remove only records with
-        /// <c>ts &gt;= cutoff</c> (i.e. inside the window) and rewrite the primary log with
-        /// the survivors. Always clears the analytics + recommendation caches so the next
+        /// <c>all</c> wipes every retained file; other windows only delete records with
+        /// <c>ts &gt;= cutoff</c> (i.e. falling within the window), and rewrite the primary log
+        /// from the survivors. Always clears the analytics and recommendation caches, so the next
         /// read is fresh. Best-effort — never throws to the caller.
         /// </summary>
         /// <returns>
-        /// <c>{ success, window, removed, remaining }</c>, or
-        /// <c>{ success:false, error }</c> on a hard failure.
+        /// <c>{ success, window, removed, remaining }</c>; on a hard failure returns <c>{ success:false, error }</c>.
         /// </returns>
         public static object DeleteWindow(string window)
         {
             try
             {
                 window = NormalizeWindow(window);
-                // Resolve the log path on the main thread before taking the write lock so the
-                // flush worker never has to touch Application.dataPath off-thread later.
+                // Resolve the log path on the main thread before taking the write lock, so the
+                // flush worker afterward never touches Application.dataPath off the main thread.
                 GetLogPath();
 
                 int removed;
                 int remaining;
                 lock (_writeLock)
                 {
-                    // Drain any in-flight queue entries under the same lock so a concurrent
-                    // Record/flush cannot re-append lines we are about to drop.
+                    // Drain the in-flight queue inside the same lock, so a concurrent
+                    // Record/flush can't re-append lines we're about to delete.
                     FlushPendingUnlocked();
                     var all = ReadAllUnlocked();
                     if (string.Equals(window, "all", StringComparison.Ordinal))
@@ -231,9 +238,9 @@ namespace UnitySkills
                         removed = 0;
                         foreach (var r in all)
                         {
-                            // Unparseable timestamps are kept — we only delete what we can place
-                            // confidently inside the window (matches BuildAnalyticsJsonUncached,
-                            // which excludes unparseable lines from windowed aggregates).
+                            // Timestamps that can't be parsed are always kept — only records
+                            // confidently within the window get deleted (consistent with
+                            // BuildAnalyticsJsonUncached, which also excludes unparseable lines from the window aggregation).
                             if (DateTime.TryParse(r.Ts, CultureInfo.InvariantCulture,
                                     DateTimeStyles.RoundtripKind, out var dt) && dt >= cutoff)
                             {
@@ -257,7 +264,7 @@ namespace UnitySkills
             }
         }
 
-        /// <summary>Internal: wipe the on-disk telemetry log (and rotated copies). Tests only.</summary>
+        /// <summary>Internal: clears the on-disk telemetry log and its rotated copies; for test use only.</summary>
         internal static void ResetForTests()
         {
             FlushPending();
@@ -280,8 +287,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Delete primary + rotated telemetry files. Caller must hold <see cref="_writeLock"/>
-        /// (or be single-threaded, as in tests).
+        /// Deletes the primary telemetry file and its rotated copies. The caller must hold
+        /// <see cref="_writeLock"/> (or be single-threaded, as in tests).
         /// </summary>
         private static void WipeAllFilesUnlocked()
         {
@@ -294,9 +301,9 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Rewrite the primary log with <paramref name="records"/> (chronological order) and
-        /// drop every rotated copy so the retained set is exactly the survivors. Caller must
-        /// hold <see cref="_writeLock"/>.
+        /// Rewrites the primary log from <paramref name="records"/> (in time order) and deletes
+        /// all rotated copies, so the retained set is exactly the surviving records.
+        /// The caller must hold <see cref="_writeLock"/>.
         /// </summary>
         private static void RewritePrimaryUnlocked(List<TelemetryRecord> records)
         {
@@ -304,8 +311,9 @@ namespace UnitySkills
             if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
             var path = _cachedPath ?? Path.Combine(dir, LogFileName);
 
-            // Drop rotated files first so a crash mid-write leaves at most the new primary
-            // (never a mix of old rotated + half-written primary that would double-count).
+            // Delete the rotated files first, so a crash mid-write leaves at most a new primary
+            // file — never a mixed state of "old rotations + a half-written primary file" that
+            // would double-count records.
             for (int n = 1; n <= MaxRotatedFiles; n++)
             {
                 var rotated = RotatedPath(n);
@@ -329,8 +337,8 @@ namespace UnitySkills
             {
                 foreach (var r in records)
                 {
-                    // Rebuild the JSONL line from the parsed record so we never re-emit a
-                    // corrupt original line we managed to deserialize.
+                    // Rebuild the JSONL line from the parsed record, instead of re-emitting a raw
+                    // line that only barely managed to deserialize despite being corrupted.
                     var payload = new Dictionary<string, object>(StringComparer.Ordinal)
                     {
                         ["ts"] = r.Ts,
@@ -348,8 +356,9 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Read every telemetry line without flushing (caller is expected to have flushed and
-        /// hold <see cref="_writeLock"/>). Same chronological order as <see cref="ReadAll"/>.
+        /// Reads all telemetry lines without triggering a flush (the caller must already have
+        /// flushed and must hold <see cref="_writeLock"/>).
+        /// Time order matches <see cref="ReadAll"/>.
         /// </summary>
         private static List<TelemetryRecord> ReadAllUnlocked()
         {
@@ -360,7 +369,7 @@ namespace UnitySkills
             return records;
         }
 
-        // ===== write path =====
+        // ===== Write path =====
 
         private static string BuildLine(string skill, string agentId, string mode, bool ok, string errorCode, long durationMs)
         {
@@ -372,7 +381,7 @@ namespace UnitySkills
                 ["mode"] = mode,
                 ["ok"] = ok,
             };
-            // Spec: omit errorCode entirely when ok=true; keep it (even if null) when ok=false.
+            // Convention: errorCode is omitted entirely when ok=true; kept (even if the value is null) when ok=false.
             if (!ok)
                 payload["errorCode"] = errorCode;
             payload["ms"] = durationMs;
@@ -381,7 +390,7 @@ namespace UnitySkills
 
         private static void ScheduleFlush()
         {
-            // Coalesce many appends into a single flush task.
+            // Coalesce multiple appends into a single flush task.
             if (Interlocked.CompareExchange(ref _flushScheduled, 1, 0) != 0) return;
             Task.Run(() =>
             {
@@ -400,10 +409,9 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Drain the write queue onto disk. Caller must hold <see cref="_writeLock"/>
-        /// (or be single-threaded, as in tests). Used both by the normal flush path and
-        /// by <see cref="DeleteWindow"/> so a concurrent Record can't re-append lines
-        /// that are about to be dropped.
+        /// Drains the write queue to disk. The caller must hold <see cref="_writeLock"/> (or be
+        /// single-threaded, as in tests). The regular flush path shares this method with
+        /// <see cref="DeleteWindow"/>, so a concurrent Record can't re-append lines that are about to be deleted.
         /// </summary>
         private static void FlushPendingUnlocked()
         {
@@ -436,7 +444,7 @@ namespace UnitySkills
                 var fi = new FileInfo(path);
                 if (!fi.Exists || fi.Length < MaxFileBytes) return;
 
-                // Shift .2 -> .3, .1 -> .2, primary -> .1
+                // Shift each file in turn: .2 -> .3, .1 -> .2, primary file -> .1
                 for (int i = MaxRotatedFiles; i >= 1; i--)
                 {
                     var src = i == 1 ? path : RotatedPath(i - 1);
@@ -465,7 +473,7 @@ namespace UnitySkills
 
         /// <summary>
         /// Returns <c>&lt;project&gt;/Library</c>. Falls back to <c>Application.persistentDataPath</c>
-        /// when accessed before the Unity Editor is ready (mirrors SkillsAuditLog).
+        /// (matching SkillsAuditLog) if accessed before the Unity editor is ready.
         /// </summary>
         private static string ResolveLibraryDir()
         {
@@ -478,15 +486,15 @@ namespace UnitySkills
                     return Path.Combine(projectRoot, "Library");
                 }
             }
-            catch { /* Unity API not ready on this thread; fall through */ }
+            catch { /* Unity APIs aren't ready on this thread yet; keep going */ }
 
             try { return Application.persistentDataPath; }
             catch { return Path.GetTempPath(); }
         }
 
-        // ===== read + aggregation path =====
+        // ===== Read and aggregation path =====
 
-        /// <summary>Parsed telemetry line. Field names bound to the JSONL keys.</summary>
+        /// <summary>A parsed telemetry line, with field names bound to the JSONL keys.</summary>
         private sealed class TelemetryRecord
         {
             [JsonProperty("ts")] public string Ts;
@@ -555,7 +563,7 @@ namespace UnitySkills
             };
         }
 
-        /// <summary>Per-skill running aggregate.</summary>
+        /// <summary>Per-skill running aggregates.</summary>
         private sealed class SkillAgg
         {
             public int Calls;
@@ -563,9 +571,10 @@ namespace UnitySkills
             public long TotalMs;
             public long MaxMs;
 
-            // Success-only duration stats. A rejected call (unknown skill, failed validation,
-            // permission gate) never entered the skill body, so its duration says nothing about how
-            // slow that skill is — the "slowest" ranking uses these instead of the totals above.
+            // Only successful calls' durations are tracked. A rejected call (unknown skill,
+            // validation failure, permission gate) never entered the skill body at all, so its
+            // duration says nothing about how slow the skill is — the "slowest" leaderboard uses
+            // this data instead of the totals above.
             public int OkCalls;
             public long OkTotalMs;
             public long OkMaxMs;
@@ -575,7 +584,7 @@ namespace UnitySkills
             public double OkAvgMs => OkCalls > 0 ? (double)OkTotalMs / OkCalls : 0.0;
         }
 
-        /// <summary>Per-errorCode running aggregate.</summary>
+        /// <summary>Per-errorCode running aggregates.</summary>
         private sealed class ErrAgg
         {
             public int Count;
@@ -583,18 +592,19 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Read every telemetry line from the primary file plus the 3 rotated copies, oldest to
-        /// newest, into memory. Unlike SkillsAuditLog.ReadRecent (tail-only) this is a full read —
-        /// /analytics aggregates the whole retained window (≤4MB total). Flushes pending writes
-        /// first so freshly recorded calls are visible.
+        /// Reads all telemetry lines from the primary file and its 3 rotated copies into memory,
+        /// oldest to newest.
+        /// Unlike SkillsAuditLog.ReadRecent (which only reads the tail), this is a full read —
+        /// /analytics has to aggregate the entire retention window (≤4MB total).
+        /// Flushes pending writes first, so a just-recorded call is visible.
         /// </summary>
         private static List<TelemetryRecord> ReadAll()
         {
             FlushSync();
             var records = new List<TelemetryRecord>();
-            // Rotation shifts primary -> .1, so .3 is oldest and the primary is newest. Reading
-            // in this order (each file top-to-bottom) yields global chronological order, which
-            // "recentErrors" and firstTs/lastTs rely on.
+            // Rotation moves the primary file to .1, so .3 is oldest and the primary file is
+            // newest. Reading in this order (top to bottom within each file) gives global time
+            // order, which "recentErrors" and firstTs/lastTs depend on.
             for (int n = MaxRotatedFiles; n >= 1; n--)
                 ReadFileInto(RotatedPath(n), records);
             ReadFileInto(GetLogPath(), records);
@@ -615,7 +625,7 @@ namespace UnitySkills
                         if (line.Length == 0) continue;
                         TelemetryRecord rec;
                         try { rec = JsonConvert.DeserializeObject<TelemetryRecord>(line); }
-                        catch { continue; } // skip a malformed line rather than failing the read
+                        catch { continue; } // Skip malformed lines rather than failing the whole read over one bad line
                         if (rec != null && !string.IsNullOrEmpty(rec.Ts))
                             into.Add(rec);
                     }
@@ -638,7 +648,7 @@ namespace UnitySkills
             var perErrorCode = new Dictionary<string, ErrAgg>(StringComparer.Ordinal);
             var perMode = new Dictionary<string, int>(StringComparer.Ordinal);
             var perAgent = new Dictionary<string, int>(StringComparer.Ordinal);
-            var errorRecords = new List<TelemetryRecord>(); // chronological (read order)
+            var errorRecords = new List<TelemetryRecord>(); // In time order (i.e. read order)
 
             int totalCalls = 0, okCalls = 0, errorCalls = 0;
             string firstTs = null, lastTs = null;
@@ -648,7 +658,7 @@ namespace UnitySkills
                 if (!unbounded)
                 {
                     if (!DateTime.TryParse(r.Ts, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dt))
-                        continue; // can't place it in the window → exclude
+                        continue; // Can't be placed within the window, so excluded
                     if (dt < cutoff) continue;
                 }
 
@@ -723,7 +733,7 @@ namespace UnitySkills
                 })
                 .ToArray();
 
-            // Error-prone: only skills with a meaningful sample (calls>=5) rank by error rate.
+            // Error-prone leaderboard: only skills with a large enough sample size (calls>=5) rank by error rate.
             var errorProneSkills = perSkill
                 .Where(kv => kv.Value.Calls >= 5 && kv.Value.Errors > 0)
                 .OrderByDescending(kv => kv.Value.ErrorRate)
@@ -739,10 +749,11 @@ namespace UnitySkills
                 })
                 .ToArray();
 
-            // Slowest: successful calls only, and only skills with >=3 of them so a single outlier
-            // can't top the chart. Failed calls are excluded because a rejection (unknown skill,
-            // validation, permission gate) is timed on the routing layer, not the skill body —
-            // including it would rank a name that never executed as if it were a slow skill.
+            // Slowest leaderboard: only counts successful calls, and only with >=3 successes, to
+            // avoid a single outlier dominating the list. Failed calls are excluded because the
+            // duration of a rejected call (unknown skill, validation, permission gate) is charged
+            // to the router layer rather than the skill body — including it would rank a name
+            // that never actually executed as a "slow skill".
             var slowestSkills = perSkill
                 .Where(kv => kv.Value.OkCalls >= 3)
                 .OrderByDescending(kv => kv.Value.OkAvgMs)
@@ -764,7 +775,7 @@ namespace UnitySkills
                 .Select(kv => new { agent = kv.Key, calls = kv.Value })
                 .ToArray();
 
-            // Most recent 10 errors, newest first.
+            // The 10 most recent errors, newest first.
             var recentSlice = errorRecords.Skip(Math.Max(0, errorRecords.Count - 10)).ToList();
             recentSlice.Reverse();
             var recentErrors = recentSlice
@@ -842,7 +853,7 @@ namespace UnitySkills
                 case "1h": return now.AddHours(-1);
                 case "7d": return now.AddDays(-7);
                 case "all": return DateTime.MinValue;
-                default: return now.AddHours(-24); // "24h"
+                default: return now.AddHours(-24); // "24h" (default)
             }
         }
 

@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -44,6 +44,42 @@ namespace UnitySkills.Tests.Core
             Assert.That(missing, Is.Empty,
                 "Missing fixed UI characters: " + string.Join(" ",
                     missing.Select(value => $"{value} (U+{(int)value:X4})")));
+        }
+
+        /// <summary>
+        /// Every character in the atlas must exclusively own one glyph.
+        ///
+        /// HasCharacter can't see this class of failure: if incremental glyph top-up appends a character record but reuses a glyph index,
+        /// every HasCharacter check still passes, yet the panel will render one character's glyph shape at another character's position —
+        /// affected text renders completely wrong with no error raised, and none of the existing assertions catch it. Two characters sharing one glyph index
+        /// is the numeric signature of this failure.
+        ///
+        /// Assert by count, not by enumerating characters: the atlas grows with every new piece of UI copy, so what we assert is "the bijection itself", not some particular size.
+        /// </summary>
+        [Test]
+        public void FontAsset_MapsEveryCharacterToItsOwnGlyph()
+        {
+            var fontAsset = AssetDatabase.LoadAssetAtPath<FontAsset>(UISkillsFont.FontAssetPath);
+            Assert.That(fontAsset, Is.Not.Null);
+
+            var characterTable = fontAsset.characterTable;
+            Assert.That(characterTable, Is.Not.Null.And.Not.Empty, "Character table is empty.");
+
+            var duplicated = characterTable
+                .GroupBy(character => character.glyphIndex)
+                .Where(group => group.Count() > 1)
+                .ToArray();
+
+            Assert.That(duplicated, Is.Empty,
+                $"{duplicated.Length} glyph index/indices are shared by more than one character, " +
+                "so those characters render each other's shapes. Offenders: " +
+                string.Join("; ", duplicated.Take(10).Select(group =>
+                    $"glyph {group.Key} <- " + string.Join(", ",
+                        group.Select(character => $"U+{character.unicode:X4}")))));
+
+            Assert.That(characterTable.Select(character => character.glyphIndex).Distinct().Count(),
+                Is.EqualTo(characterTable.Count),
+                "Character-to-glyph mapping must be a bijection.");
         }
 
         [Test]

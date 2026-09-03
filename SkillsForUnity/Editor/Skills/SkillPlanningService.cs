@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -20,8 +20,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Returns steps/changes data for inclusion in DryRun responses.
-        /// Returns null if no semantic planner exists for this skill.
+        /// Returns steps/changes data embeddable in a DryRun response; returns null when the skill has no semantic planner.
         /// </summary>
         public static IDictionary<string, object> BuildPlanData(SkillRouter.SkillInfo skill, SkillRouter.ParameterValidationResult validation)
         {
@@ -31,7 +30,7 @@ namespace UnitySkills
             var plan = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
             ApplySemanticPlanner(skill, validation, plan);
 
-            // If planLevel was not set to "semantic", no planner matched
+            // planLevel was never set to "semantic", meaning no planner matched
             if (!plan.ContainsKey("planLevel") || !"semantic".Equals(plan["planLevel"]?.ToString(), StringComparison.OrdinalIgnoreCase))
                 return null;
 
@@ -43,7 +42,12 @@ namespace UnitySkills
             return result.Count > 0 ? result : null;
         }
 
-        public static object BuildPlan(SkillRouter.SkillInfo skill, SkillRouter.ParameterValidationResult validation)
+        /// <summary>
+        /// The payload for <c>?mode=plan</c>. Returns a concrete dictionary rather than <c>object</c>, so callers
+        /// can append their own envelope-level blocks (the surface profile's <c>authorization</c> preview) without
+        /// reflection; key insertion order is serialization order, so appended blocks land after "note".
+        /// </summary>
+        public static Dictionary<string, object> BuildPlan(SkillRouter.SkillInfo skill, SkillRouter.ParameterValidationResult validation)
         {
             var plan = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
             {
@@ -327,6 +331,261 @@ namespace UnitySkills
             return "(unspecified)";
         }
 
+        // RequiresInput holds *semantic* tokens ("gameObject", "assetPath", "component"), not parameter names -
+        // so SkillRouter.IsParameterRequired comparing by name almost never hits; before this check existed,
+        // the 136 skills that can't act without a target all dryRun'd an empty body as valid:true.
+        // Each token maps to the parameter names that satisfy it; a widely-used token is mapped only once five+
+        // skills declare it; the rest keep old behavior instead of guessing. The exception: a mapping written
+        // *together with* a specific skill's token (last two entries) - not a guess, but a mandate that ships with it.
+        // Every candidate must be a name genuinely accepted by some skill declaring this token. The intersection
+        // below silently drops the rest, so a name no skill accepts isn't a harmless fallback: it reads like a cover that doesn't exist.
+        // Two names were removed for this: "materialPath" under material (none of the 16 declaring skills accept it,
+        // the material asset path goes through the dual-purpose `path`), and "path" under assetPath.
+        // "componentName" was kept because smart_reference_bind does accept it - exactly the case easiest to miss
+        // by eye: "only one real consumer".
+        // The rule is pinned by SkillMetadataGuardTests.RequiredInputGroups_NameOnlyRealParameters.
+        private static readonly Dictionary<string, string[]> _requiredInputGroups =
+            new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["gameObject"] = new[] { "name", "path", "instanceId", "entityId" },
+            // "A or B" token: the material setter can act on either a scene object or a material asset,
+            // and both are passed in via the same `path` parameter - which is why the token is written as `path`
+            // rather than "materialPath", which those skills don't accept at all.
+            ["gameObject|path"] = new[] { "name", "path", "instanceId", "entityId" },
+            ["assetPath"] = new[] { "assetPath" },
+            ["component"] = new[] { "componentType", "componentName" },
+            // The two entries below are each declared by only one skill, yet are still mapped: written alongside
+            // that skill's token (2026-08-23) - not guesswork; without the mapping the token would read like a contract
+            // that enforces nothing, exactly why these two skills used to dryRun an empty body as valid.
+            // find_objects_by_name: `name` is the documented alias of `nameContains`.
+            ["nameContains|name"] = new[] { "nameContains", "name" },
+            // behavior_blackboard_list: accepts either a graph asset path *or* an agent locator. entityId belongs here
+            // (this skill accepts instanceId + name + path, so the synthesized locator works for it) - omitting it would
+            // stack another "provide one of ..." on top of an entityId that simply failed to resolve. find_objects_by_name
+            // above omits entityId for the mirror-image reason: it has no instanceId, so the synthesized locator isn't
+            // available, and a candidate accepted by no declaring skill reads like a cover that doesn't actually exist
+            // (SkillMetadataGuardTests.RequiredInputGroups_NameOnlyRealParameters).
+            ["gameObject|graphAssetPath"] = new[] { "name", "path", "instanceId", "entityId", "graphAssetPath" },
+            // dotween_pro_set_loops: two mutually independent halves, either one alone makes a complete request.
+            // Same reasoning as the two entries above (written 2026-08-23 alongside this skill's token) - without the
+            // mapping the token enforces nothing, and "neither passed" is exactly the call that used to succeed and
+            // silently reset loops to the CLR default of 1. Note HasUsableArgument treats numeric 0 as unusable,
+            // which is correct here: 0 isn't a loop count DOTween accepts either (skill explains more at execution time).
+            ["loops|loopType"] = new[] { "loops", "loopType" },
+        };
+
+        /// <summary>
+        /// Enforces the half of RequiresInput that says "you must specify a target" - nothing enforced it before:
+        /// a group-level check that confirms at least one parameter able to satisfy a semantic token carries a usable value.
+        ///
+        /// <para>Only adds the "whole group is missing" verdict. Per-parameter requiredness is still MissingParams's job
+        /// and is left as-is - when the two overlap (the token's key is itself a required CLR parameter), this stays
+        /// silent instead of reporting the same empty request body twice in two different wordings.</para>
+        ///
+        /// <para>The candidate list is intersected with what this skill actually accepts. Without this step, for the 35
+        /// skills that declare RequiresInput "gameObject" but only accept <c>items</c> (all the <c>*_batch</c> ones)
+        /// or use differently-named locators (component_copy's sourceName/targetName), this check could never be
+        /// satisfied - turning a metadata inconsistency into a skill nobody could ever call. This is also why the
+        /// token vocabulary stops here: cinemachine's <c>vcam</c> token, intersected, leaves only {instanceId, path},
+        /// which would reject the perfectly reasonable <c>{vcamName: "CM vcam1"}</c>.</para>
+        /// </summary>
+        private static void ApplyRequiredInputGroups(
+            SkillRouter.SkillInfo skill,
+            SkillRouter.ParameterValidationResult validation)
+        {
+            // BuildPlan allows validation to be null, and unlike the per-skill analyzers below, this check runs for
+            // every skill - so this is the one place that must explicitly handle that case.
+            if (skill == null || validation?.Args == null)
+                return;
+
+            var tokens = skill.RequiresInput;
+            if (tokens == null || tokens.Length == 0)
+                return;
+
+            foreach (var token in tokens)
+            {
+                if (token == null || !_requiredInputGroups.TryGetValue(token, out var candidates))
+                    continue;
+
+                var accepted = candidates.Where(candidate => SkillAcceptsParameter(skill, candidate)).ToArray();
+                if (accepted.Length == 0)
+                    continue;
+
+                if (accepted.Any(candidate => validation.MissingParams.Any(missing =>
+                        string.Equals(missing, candidate, StringComparison.OrdinalIgnoreCase))))
+                {
+                    continue;
+                }
+
+                if (accepted.Any(candidate => HasUsableArgument(validation.Args, candidate)))
+                    continue;
+
+                if (TokenAlreadyReported(validation, token, accepted))
+                    continue;
+
+                AddSemanticError(validation, RequiredInputGroupField(token),
+                    $"Provide one of: {string.Join(", ", accepted)}.");
+            }
+        }
+
+        /// <summary>
+        /// Determines whether some analyzer has already spoken about this target - if so, the generic "Provide one
+        /// of: ..." is just a second wording of the same complaint. An empty gameobject_delete request body used to
+        /// get both this <c>field: "target"</c> and AnalyzeGameObjectDelete's <c>field: "gameObject"</c>, leaving the
+        /// agent to guess whether it has one problem or two.
+        ///
+        /// <para>Matching checks not just accepted parameters but also the token's own parts: the object-locator
+        /// analyzer reports under "gameObject" (the token name, not any skill parameter); the two-sided token "gameObject|path" needs either half recognized.</para>
+        /// </summary>
+        private static bool TokenAlreadyReported(
+            SkillRouter.ParameterValidationResult validation, string token, string[] accepted)
+        {
+            if (validation.SemanticErrors.Count == 0)
+                return false;
+
+            var tokenParts = token.Split('|');
+
+            foreach (var entry in validation.SemanticErrors)
+            {
+                if (!SkillResultHelper.TryGetMemberValue(entry, "field", out var fieldValue))
+                    continue;
+
+                var field = fieldValue?.ToString();
+                if (string.IsNullOrEmpty(field))
+                    continue;
+
+                if (tokenParts.Any(part => string.Equals(field, part, StringComparison.OrdinalIgnoreCase)) ||
+                    accepted.Any(candidate => string.Equals(field, candidate, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// Which <c>field</c> name the whole-group-missing error is reported under. The two object-locator
+        /// tokens use "target", because no single parameter should be blamed - the caller supplied none of them.
+        /// </summary>
+        private static string RequiredInputGroupField(string token)
+        {
+            if (token.StartsWith("gameObject", StringComparison.OrdinalIgnoreCase))
+                return "target";
+            return token;
+        }
+
+        /// <summary>
+        /// Determines whether this skill accepts this key: its declared parameters, plus the synthesized entityId
+        /// locator the router injects for skills that accept instanceId. AllowedParameterSet is exactly the router's
+        /// answer to this question, so reading it keeps the two sides consistent.
+        /// </summary>
+        private static bool SkillAcceptsParameter(SkillRouter.SkillInfo skill, string parameterName)
+        {
+            if (skill.AllowedParameterSet != null)
+                return skill.AllowedParameterSet.Contains(parameterName);
+
+            return skill.ParameterNames != null &&
+                skill.ParameterNames.Any(name => string.Equals(name, parameterName, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// Determines whether the request body gives a value the locator layer would actually act on. Consistent with
+        /// <see cref="ReadObjectLocator"/>: a blank string and instanceId 0 both mean "not supplied" - counting them as
+        /// provided here would let the <c>{"name": ""}</c> or <c>{"instanceId": 0}</c> agents routinely send verbatim slip past this check.
+        ///
+        /// <para>A quoted number in a numeric key is judged as a number, not as a non-empty string:
+        /// <see cref="GetIntArg"/> converts <c>{"instanceId": "0"}</c> to 0, so the locator layer then finds no
+        /// target - counting it as provided is exactly what would let a request body that can never resolve pass
+        /// dryRun and only fail at execution time. String locators keep string semantics -
+        /// <c>{"name": "0"}</c> refers to a GameObject named "0", and the executor accepts it.</para>
+        /// </summary>
+        private static bool HasUsableArgument(JObject args, string key)
+        {
+            if (!args.TryGetValue(key, StringComparison.OrdinalIgnoreCase, out var token) ||
+                token == null ||
+                token.Type == JTokenType.Null)
+            {
+                return false;
+            }
+
+            if (token.Type == JTokenType.Integer || token.Type == JTokenType.Float)
+            {
+                try { return token.ToObject<double>() != 0d; }
+                catch { return false; }
+            }
+
+            if (token.Type == JTokenType.String && IsNumericLocatorKey(key))
+            {
+                // Applies the same conversion as GetIntArg, hence the same verdict: any input that ends up as 0
+                // (including text it can't parse at all) leaves the locator layer with no target.
+                try { return token.ToObject<int>() != 0; }
+                catch { return false; }
+            }
+
+            return !string.IsNullOrWhiteSpace(token.ToString());
+        }
+
+        /// <summary>
+        /// Keys the locator layer reads via <see cref="GetIntArg"/>. Every instanceId-shaped skill parameter in this
+        /// package is declared as <c>int</c> (instanceId, parentInstanceId, sourceInstanceId, vcamInstanceId, ...),
+        /// so recognizing it by suffix is enough, with no list to keep in sync with twenty-odd call sites.
+        /// </summary>
+        private static bool IsNumericLocatorKey(string key) =>
+            key != null && key.EndsWith("instanceId", StringComparison.OrdinalIgnoreCase);
+
+        /// <summary>
+        /// A validation-only planner, for cases where the only risk worth planning for is a setter on an enum
+        /// parameter. Rejects invalid values at the dryRun layer - exactly where the agent looks before submitting - and does nothing else.
+        ///
+        /// <para>It supplements rather than replaces the skill's own rejection: the skill body is responsible for
+        /// stopping the invalid value from being written, while this is responsible for stopping the agent from being
+        /// told "this call is ready to go". Reusing <see cref="SkillParamUtil.TryParseEnumParam{TEnum}"/> means the
+        /// same case-insensitive parsing that rejects integer literals, and the same "Invalid value 'X' for parameter
+        /// 'Y'. Valid values: ..." wording as actual execution time.</para>
+        ///
+        /// <para>Deliberately does not call <see cref="MarkSemantic"/>: that would attach steps/changes to every
+        /// dryRun of these skills, changing the response an already-correct request body would get. The only goal
+        /// here is to stop saying valid:true for an incorrect request body.</para>
+        /// </summary>
+        private static void AnalyzeEnumSetterParameter<TEnum>(
+            SkillRouter.ParameterValidationResult validation,
+            string parameterName) where TEnum : struct
+        {
+            var raw = GetStringArg(validation?.Args, parameterName);
+            if (string.IsNullOrWhiteSpace(raw))
+                return;
+
+            if (!SkillParamUtil.TryParseEnumParam<TEnum>(raw, parameterName, out _, out var error))
+                AddSemanticError(validation, parameterName, ExtractError(error));
+        }
+
+        /// <summary>
+        /// A validation-only planner, for create-style enum parameters a skill reads via
+        /// <see cref="SkillParamUtil.TryParseRequiredEnum{TEnum}"/> - ones whose declared default is already a member name (e.g. "Point", "soft").
+        ///
+        /// <para>Differs from <see cref="AnalyzeEnumSetterParameter{TEnum}"/> in exactly one place, and must: empty
+        /// values. Omitting this key is valid, since it binds to the CLR default and that default is valid. Explicitly
+        /// passing an empty string or null is not valid, because ValidateParameters binds the given value without
+        /// substituting the default, so the skill's TryParseRequiredEnum rejects it - while the setter analyzer's rule
+        /// that "empty means leave it alone, let it through" would answer valid:true for the one body that can never run.</para>
+        /// </summary>
+        private static void AnalyzeRequiredEnumParameter<TEnum>(
+            SkillRouter.ParameterValidationResult validation,
+            string parameterName) where TEnum : struct
+        {
+            var args = validation?.Args;
+            if (args == null ||
+                !args.TryGetValue(parameterName, StringComparison.OrdinalIgnoreCase, out var token))
+            {
+                return;
+            }
+
+            var raw = token == null || token.Type == JTokenType.Null ? null : token.ToString();
+            if (!SkillParamUtil.TryParseRequiredEnum<TEnum>(raw, parameterName, out _, out var error))
+                AddSemanticError(validation, parameterName, ExtractError(error));
+        }
+
         private static void ApplySemanticPlanner(
             SkillRouter.SkillInfo skill,
             SkillRouter.ParameterValidationResult validation,
@@ -334,6 +593,16 @@ namespace UnitySkills
         {
             switch (skill.Name)
             {
+                case "camera_set_properties":
+                    AnalyzeEnumSetterParameter<CameraClearFlags>(validation, "clearFlags");
+                    break;
+                case "light_set_properties":
+                    AnalyzeEnumSetterParameter<LightShadows>(validation, "shadows");
+                    break;
+                case "light_create":
+                    AnalyzeRequiredEnumParameter<LightType>(validation, "lightType");
+                    AnalyzeRequiredEnumParameter<LightShadows>(validation, "shadows");
+                    break;
                 case "gameobject_create":
                     AnalyzeGameObjectCreate(validation, plan);
                     break;
@@ -438,6 +707,11 @@ namespace UnitySkills
                     AnalyzeTimelineSceneLocatorSkill(skill.Name, validation);
                     break;
             }
+
+            // Must go last, not first: the per-skill analyzers above name the parameter that genuinely can't be resolved,
+            // and this generic check actively yields when one of them already covers the same target (see TokenAlreadyReported).
+            // If placed first, an empty request body would get both verdicts at once, since nothing would yet be reported to yield to.
+            ApplyRequiredInputGroups(skill, validation);
         }
 
         private static void AnalyzeTimelineSceneLocatorSkill(string skillName, SkillRouter.ParameterValidationResult validation)
@@ -452,7 +726,7 @@ namespace UnitySkills
                 AddSemanticError(
                     validation,
                     "path",
-                    $"{skillName} 的 path 参数是场景层级路径，不是 Assets 资源路径。请改用场景中的 Timeline GameObject 名称、instanceId 或层级路径。");
+                    $"The path parameter of {skillName} is a scene hierarchy path, not an Assets resource path. Use the name, instanceId or hierarchy path of the Timeline GameObject in the scene instead.");
             }
 
             var name = GetStringArg(args, "name");
@@ -461,7 +735,7 @@ namespace UnitySkills
                 AddSemanticError(
                     validation,
                     "name",
-                    $"{skillName} 面向场景中的 PlayableDirector GameObject，不接受 Assets 资源路径作为 name。");
+                    $"{skillName} targets a PlayableDirector GameObject in the scene; it does not accept an Assets resource path as name.");
             }
         }
 
@@ -1541,7 +1815,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Scene Semantic Planners
+        // Scene semantic planner
         // ==================================================================================
 
         private static void AnalyzeSceneCreate(SkillRouter.ParameterValidationResult validation, IDictionary<string, object> plan)
@@ -1677,7 +1951,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Prefab Semantic Planners
+        // Prefab semantic planner
         // ==================================================================================
 
         private static void AnalyzePrefabCreate(SkillRouter.ParameterValidationResult validation, IDictionary<string, object> plan)
@@ -1776,7 +2050,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Script Semantic Planners
+        // Script semantic planner
         // ==================================================================================
 
         private static void AnalyzeScriptCreate(SkillRouter.ParameterValidationResult validation, IDictionary<string, object> plan)
@@ -1790,7 +2064,7 @@ namespace UnitySkills
 
             if (!string.IsNullOrWhiteSpace(scriptName))
             {
-                // Validate C# class name
+                // Validate the C# class name
                 if (!System.Text.RegularExpressions.Regex.IsMatch(scriptName, @"^[A-Za-z_][A-Za-z0-9_]*$"))
                     AddSemanticError(validation, "scriptName", $"'{scriptName}' is not a valid C# class name.");
 
@@ -2147,7 +2421,7 @@ namespace UnitySkills
             return semanticError?.ToString() ?? "Unknown semantic error";
         }
 
-        // ===================== Batch Analyze Helper =====================
+        // ===================== Batch analysis helpers =====================
 
         private class BatchAnalyzeContext
         {

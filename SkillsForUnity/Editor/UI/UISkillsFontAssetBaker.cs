@@ -77,7 +77,7 @@ namespace UnitySkills
             {
                 foreach (var value in File.ReadAllText(path, Encoding.UTF8))
                 {
-                    if (!char.IsControl(value) && !char.IsSurrogate(value) && value != '\u26A0')
+                    if (!char.IsControl(value) && !char.IsSurrogate(value) && value != '\u26A0' && value != '\u8017')
                         chars.Add(value);
                 }
             }

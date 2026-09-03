@@ -11,7 +11,7 @@ namespace UnitySkills
     /// <summary>
     /// Unity Editor Window — UnitySkills layout.
     /// Topbar (server status + URL + toggle + settings) — persistent.
-    /// 4 tabs: Skills / AI Config / History / Analytics.
+    /// 6 tabs: Skills / AI Config / Permissions / Unity CLI / History / Analytics.
     /// Footer: version + live stats pill + segmented language switch.
     /// Settings panel: slide-in drawer from the right.
     /// </summary>
@@ -20,11 +20,56 @@ namespace UnitySkills
         private const string UxmlPath = "Packages/com.besty.unity-skills/Editor/UI/UnitySkillsWindow.uxml";
         private const string UssPath  = "Packages/com.besty.unity-skills/Editor/UI/UnitySkillsWindow.uss";
 
-        // 一次性 first-run toast 标记。
-        // 仅在 "新安装 + 未设过 OperatingMode" 时弹出，避免老用户/已配置用户被打扰。
+        // One-time first-run toast flag.
+        // Only shown for "fresh install + OperatingMode never set", to avoid disturbing existing/configured users.
         private const string PrefKeyFirstRunToast = "UnitySkills_FirstRunToastShown";
 
         [SerializeField] private int _selectedTab = 0;
+        [SerializeField] private int _selectedTabLayoutVersion;
+        private const int CurrentTabLayoutVersion = 1;
+
+        // Main tab registry. Ordering is part of the serialized selection contract; add new tabs by
+        // appending an entry and wiring its content/controller below rather than scattering indices.
+        private enum MainTabId
+        {
+            Skills,
+            AiConfig,
+            UnityCli,
+            History,
+            Analytics,
+        }
+
+        private sealed class MainTabDefinition
+        {
+            public readonly MainTabId Id;
+            public readonly string ButtonName;
+            public readonly string WrapName;
+            public readonly string ContentName;
+            public readonly string UnderlineName;
+            public readonly string LocalizationKey;
+
+            public MainTabDefinition(MainTabId id, string buttonName, string wrapName, string contentName,
+                string underlineName, string localizationKey)
+            {
+                Id = id;
+                ButtonName = buttonName;
+                WrapName = wrapName;
+                ContentName = contentName;
+                UnderlineName = underlineName;
+                LocalizationKey = localizationKey;
+            }
+        }
+
+        private static readonly MainTabDefinition[] MainTabs =
+        {
+            new MainTabDefinition(MainTabId.Skills, "tab-btn-skills", "tab-wrap-skills", "tab-content-skills", "tab-underline-skills", "tab_skills"),
+            new MainTabDefinition(MainTabId.AiConfig, "tab-btn-ai-config", "tab-wrap-ai-config", "tab-content-ai-config", "tab-underline-ai-config", "tab_ai_config"),
+            new MainTabDefinition(MainTabId.UnityCli, "tab-btn-unity-cli", "tab-wrap-unity-cli", "tab-content-unity-cli", "tab-underline-unity-cli", "tab_unity_cli"),
+            new MainTabDefinition(MainTabId.History, "tab-btn-history", "tab-wrap-history", "tab-content-history", "tab-underline-history", "tab_history"),
+            new MainTabDefinition(MainTabId.Analytics, "tab-btn-analytics", "tab-wrap-analytics", "tab-content-analytics", "tab-underline-analytics", "tab_analytics"),
+        };
+
+        private const float FixedTabWidth = 120f;
 
         // ----- Skill catalog (unchanged data contract — Controllers consume it) -----
         public class SkillInfo
@@ -36,14 +81,22 @@ namespace UnitySkills
         private Dictionary<string, List<SkillInfo>> _skillsByCategory;
         public Dictionary<string, List<SkillInfo>> SkillsByCategory => _skillsByCategory;
 
+        // Coalesces surface-profile switches into one deferred catalog rebuild.
+        private bool _catalogRebuildQueued;
+
         // ----- Sub-controllers -----
         private TopbarController         _topbar;
         private FooterController         _footer;
         private SettingsDrawerController _drawer;
         private PendingApprovalBannerController _pendingBanner;
         private VersionUpdateBannerController _versionUpdateBanner;
+        private VisualElement            _narrowWarningBanner;
+        private Label                    _narrowWarningText;
+        private Button                   _narrowWarningClose;
+        private bool                     _narrowWarningDismissed = false;
         private SkillsTabController      _skillsController;
         private AIConfigTabController    _configController;
+        private UnityCliTabController    _cliController;
         private HistoryTabController     _historyController;
         private AnalyticsTabController   _analyticsController;
 
@@ -51,6 +104,9 @@ namespace UnitySkills
         private VisualElement[] _tabContents;
         private Button[]        _tabButtons;
         private VisualElement[] _tabUnderlines;
+        private VisualElement[]  _tabWraps;
+        private ScrollView       _tabBarScroll;
+        private VisualElement    _tabBarContent;
 
         // ----- Live tick — routed through EditorUiScheduler to avoid mutating the
         // visual tree during repaint/generateVisualContent (issue #44); paused on disable
@@ -59,30 +115,43 @@ namespace UnitySkills
 
         // Single flat entry: clicking "Window ▸ UnitySkills" opens the main panel directly.
         // CONSTRAINT: a "Window/UnitySkills" leaf cannot coexist with any
-        // "Window/UnitySkills/..." submenu item — Unity swallows the leaf. Secondary panels
+        // "Window/UnitySkills/..." submenu item — Unity swallows the leaf.
         // Secondary panels (such as Audit Log) are therefore reachable only via in-panel buttons and
         // shortcuts (ShortcutActions); never add another [MenuItem] under this prefix.
         [MenuItem("Window/UnitySkills", false, 1)]
         public static void ShowWindow()
         {
             var window = GetWindow<UnitySkillsWindow>(SkillsLocalization.Get("window_title"));
-            window.minSize = new Vector2(420, 480);
+            window.minSize = new Vector2(450, 420);
         }
 
         private void OnEnable()
         {
+            minSize = new Vector2(450, 420);
             RefreshSkillsList();
-            // 模式/授权变化时联动 topbar/footer 的下次重绘，避免分别在每个子 Controller 里订阅。
+            // Links a mode/authorization change to the topbar/footer's next repaint, avoiding subscribing separately in every sub-controller.
             SkillsModeManager.OnChanged += Repaint;
+            // A profile switch changes the visible skill set, so the catalog needs rebuilding
+            // rather than repainting — see OnSurfaceProfileChanged.
+            SkillsSurfaceProfile.OnChanged += OnSurfaceProfileChanged;
+            TabVisibilitySettings.OnChanged += RefreshTabVisibility;
             MaybeShowFirstRunToast();
         }
 
         private void OnDisable()
         {
             SkillsModeManager.OnChanged -= Repaint;
+            SkillsSurfaceProfile.OnChanged -= OnSurfaceProfileChanged;
             SkillsLocalization.LanguageChanged -= RefreshLocalization;
+            TabVisibilitySettings.OnChanged -= RefreshTabVisibility;
             _liveUpdateItem?.Pause();
             _liveUpdateItem = null;
+            _skillsController?.Dispose();
+            _skillsController = null;
+            _cliController?.Dispose();
+            _cliController = null;
+            _drawer?.Dispose();
+            _drawer = null;
         }
 
         public void CreateGUI()
@@ -115,10 +184,25 @@ namespace UnitySkills
             _pendingBanner  = new PendingApprovalBannerController(rootVisualElement, this);
             _versionUpdateBanner = new VersionUpdateBannerController(rootVisualElement);
 
-            _skillsController  = new SkillsTabController(_tabContents[0], this);
-            _configController  = new AIConfigTabController(_tabContents[1], this);
-            _historyController = new HistoryTabController(_tabContents[2], this);
-            _analyticsController = new AnalyticsTabController(_tabContents[3], this);
+            _narrowWarningBanner = rootVisualElement.Q<VisualElement>("narrow-warning-banner");
+            _narrowWarningText   = rootVisualElement.Q<Label>("narrow-warning-text");
+            _narrowWarningClose  = rootVisualElement.Q<Button>("narrow-warning-close");
+            if (_narrowWarningClose != null)
+            {
+                _narrowWarningClose.clicked += () =>
+                {
+                    _narrowWarningDismissed = true;
+                    if (_narrowWarningBanner != null)
+                        _narrowWarningBanner.style.display = DisplayStyle.None;
+                };
+            }
+            rootVisualElement.RegisterCallback<GeometryChangedEvent>(OnRootGeometryChanged);
+
+            _skillsController  = new SkillsTabController(GetTabContent(MainTabId.Skills), this);
+            _configController  = new AIConfigTabController(GetTabContent(MainTabId.AiConfig), this);
+            _cliController = new UnityCliTabController(GetTabContent(MainTabId.UnityCli), this);
+            _historyController = new HistoryTabController(GetTabContent(MainTabId.History), this);
+            _analyticsController = new AnalyticsTabController(GetTabContent(MainTabId.Analytics), this);
 
             // --- Tab clicks ---
             for (int i = 0; i < _tabButtons.Length; i++)
@@ -128,6 +212,7 @@ namespace UnitySkills
                     _tabButtons[i].clicked += () => SwitchTab(idx);
             }
 
+            RefreshTabVisibility();
             SwitchTab(_selectedTab);
             RefreshLocalization();
 
@@ -137,16 +222,155 @@ namespace UnitySkills
             _liveUpdateItem = EditorUiScheduler.RepeatSafe(rootVisualElement, 500, OnLiveDataUpdate);
         }
 
+        private void OnRootGeometryChanged(GeometryChangedEvent evt)
+        {
+            float width = evt.newRect.width;
+            if (width <= 0) return;
+
+            if (width >= 360)
+            {
+                _narrowWarningDismissed = false;
+                if (_narrowWarningBanner != null)
+                    _narrowWarningBanner.style.display = DisplayStyle.None;
+            }
+            else if (!_narrowWarningDismissed)
+            {
+                if (_narrowWarningBanner != null)
+                    _narrowWarningBanner.style.display = DisplayStyle.Flex;
+            }
+        }
+
+        // ----- Tab scroll buttons -----
+        private Button _tabScrollPrevBtn;
+        private Button _tabScrollNextBtn;
+        private VisualElement _tabScrollPrevIcon;
+        private VisualElement _tabScrollNextIcon;
+
         private void CacheTabReferences()
         {
-            _tabButtons    = new Button[4];
-            _tabContents   = new VisualElement[4];
-            _tabUnderlines = new VisualElement[4];
-            for (int i = 0; i < 4; i++)
+            _tabBarScroll = rootVisualElement.Q<ScrollView>("tab-bar-scroll");
+            _tabBarContent = rootVisualElement.Q<VisualElement>("tab-bar-content");
+            _tabScrollPrevBtn = rootVisualElement.Q<Button>("tab-scroll-prev-btn");
+            _tabScrollNextBtn = rootVisualElement.Q<Button>("tab-scroll-next-btn");
+            _tabScrollPrevIcon = rootVisualElement.Q<VisualElement>("tab-scroll-prev-icon");
+            _tabScrollNextIcon = rootVisualElement.Q<VisualElement>("tab-scroll-next-icon");
+
+            if (_tabScrollPrevIcon != null)
+                _tabScrollPrevIcon.generateVisualContent += DrawLeftTriangle;
+            if (_tabScrollNextIcon != null)
+                _tabScrollNextIcon.generateVisualContent += DrawRightTriangle;
+
+            if (_tabScrollPrevBtn != null)
+                _tabScrollPrevBtn.clicked += () => ScrollTabBar(-FixedTabWidth);
+            if (_tabScrollNextBtn != null)
+                _tabScrollNextBtn.clicked += () => ScrollTabBar(FixedTabWidth);
+
+            _tabButtons    = new Button[MainTabs.Length];
+            _tabContents   = new VisualElement[MainTabs.Length];
+            _tabUnderlines = new VisualElement[MainTabs.Length];
+            _tabWraps      = new VisualElement[MainTabs.Length];
+            for (int i = 0; i < MainTabs.Length; i++)
             {
-                _tabButtons[i]    = rootVisualElement.Q<Button>($"tab-btn-{i}");
-                _tabContents[i]   = rootVisualElement.Q<VisualElement>($"tab-content-{i}");
-                _tabUnderlines[i] = rootVisualElement.Q<VisualElement>($"tab-underline-{i}");
+                var tab = MainTabs[i];
+                _tabButtons[i]    = rootVisualElement.Q<Button>(tab.ButtonName);
+                _tabContents[i]   = rootVisualElement.Q<VisualElement>(tab.ContentName);
+                _tabUnderlines[i] = rootVisualElement.Q<VisualElement>(tab.UnderlineName);
+                _tabWraps[i]      = rootVisualElement.Q<VisualElement>(tab.WrapName);
+            }
+
+            if (_tabBarScroll != null)
+            {
+                _tabBarScroll.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
+                _tabBarScroll.verticalScrollerVisibility = ScrollerVisibility.Hidden;
+                _tabBarScroll.RegisterCallback<GeometryChangedEvent>(_ => RefreshTabLayout());
+                _tabBarScroll.RegisterCallback<WheelEvent>(evt =>
+                {
+                    if (Mathf.Abs(evt.delta.y) > 0.01f || Mathf.Abs(evt.delta.x) > 0.01f)
+                    {
+                        float delta = Mathf.Abs(evt.delta.x) > 0.01f ? evt.delta.x : evt.delta.y;
+                        ScrollTabBar(delta * 25f);
+                        evt.StopPropagation();
+                    }
+                });
+            }
+            RefreshTabLayout();
+        }
+
+        private static void DrawLeftTriangle(MeshGenerationContext context)
+        {
+            var rect = context.visualElement.contentRect;
+            if (rect.width <= 0f || rect.height <= 0f) return;
+            var painter = context.painter2D;
+            var enabled = context.visualElement.parent?.enabledSelf ?? true;
+            painter.fillColor = enabled
+                ? new Color(0.80f, 0.80f, 0.84f, 0.9f)
+                : new Color(0.80f, 0.80f, 0.84f, 0.22f);
+            painter.BeginPath();
+            painter.MoveTo(new Vector2(rect.xMax - 1f, rect.yMin));
+            painter.LineTo(new Vector2(rect.xMin + 1f, rect.center.y));
+            painter.LineTo(new Vector2(rect.xMax - 1f, rect.yMax));
+            painter.ClosePath();
+            painter.Fill();
+        }
+
+        private static void DrawRightTriangle(MeshGenerationContext context)
+        {
+            var rect = context.visualElement.contentRect;
+            if (rect.width <= 0f || rect.height <= 0f) return;
+            var painter = context.painter2D;
+            var enabled = context.visualElement.parent?.enabledSelf ?? true;
+            painter.fillColor = enabled
+                ? new Color(0.80f, 0.80f, 0.84f, 0.9f)
+                : new Color(0.80f, 0.80f, 0.84f, 0.22f);
+            painter.BeginPath();
+            painter.MoveTo(new Vector2(rect.xMin + 1f, rect.yMin));
+            painter.LineTo(new Vector2(rect.xMax - 1f, rect.center.y));
+            painter.LineTo(new Vector2(rect.xMin + 1f, rect.yMax));
+            painter.ClosePath();
+            painter.Fill();
+        }
+
+        private void ScrollTabBar(float deltaX)
+        {
+            if (_tabBarScroll == null) return;
+            var maxScroll = GetMaxTabScroll();
+            var newX = Mathf.Clamp(_tabBarScroll.scrollOffset.x + deltaX, 0f, maxScroll);
+            _tabBarScroll.scrollOffset = new Vector2(newX, 0f);
+            UpdateTabScrollButtons();
+        }
+
+        private float GetMaxTabScroll()
+        {
+            if (_tabBarScroll == null) return 0f;
+            int visibleCount = 0;
+            for (int i = 0; i < MainTabs.Length; i++)
+            {
+                if (_tabWraps != null && i < _tabWraps.Length && _tabWraps[i] != null && _tabWraps[i].style.display != DisplayStyle.None)
+                    visibleCount++;
+            }
+            if (visibleCount == 0) visibleCount = 1;
+            var contentWidth = _tabBarContent != null ? _tabBarContent.layout.width : (FixedTabWidth * visibleCount);
+            var viewportWidth = _tabBarScroll.contentViewport != null
+                ? _tabBarScroll.contentViewport.layout.width
+                : _tabBarScroll.layout.width;
+            return Mathf.Max(0f, contentWidth - viewportWidth);
+        }
+
+        private void UpdateTabScrollButtons()
+        {
+            var maxScroll = GetMaxTabScroll();
+            bool isScrollable = maxScroll > 2f;
+            if (_tabScrollPrevBtn != null)
+            {
+                _tabScrollPrevBtn.style.display = isScrollable ? DisplayStyle.Flex : DisplayStyle.None;
+                _tabScrollPrevBtn.SetEnabled(_tabBarScroll != null && _tabBarScroll.scrollOffset.x > 1f);
+                _tabScrollPrevIcon?.MarkDirtyRepaint();
+            }
+            if (_tabScrollNextBtn != null)
+            {
+                _tabScrollNextBtn.style.display = isScrollable ? DisplayStyle.Flex : DisplayStyle.None;
+                _tabScrollNextBtn.SetEnabled(_tabBarScroll != null && _tabBarScroll.scrollOffset.x < maxScroll - 1f);
+                _tabScrollNextIcon?.MarkDirtyRepaint();
             }
         }
 
@@ -175,9 +399,108 @@ namespace UnitySkills
 
             if (_tabButtons[index] != null) _tabButtons[index].Blur();
 
+            EnsureTabVisible(index);
+
             // Analytics pulls aggregates on demand (30s cache in SkillTelemetryService),
             // so activating the tab is the natural refresh point — no live tick involved.
-            if (index == 3) _analyticsController?.OnTabSelected();
+            if (MainTabs[index].Id == MainTabId.Analytics) _analyticsController?.OnTabSelected();
+        }
+
+        private int GetTabIndex(MainTabId id)
+        {
+            for (int i = 0; i < MainTabs.Length; i++)
+                if (MainTabs[i].Id == id) return i;
+            return -1;
+        }
+
+        private VisualElement GetTabContent(MainTabId id)
+        {
+            var index = GetTabIndex(id);
+            return index >= 0 && _tabContents != null && index < _tabContents.Length
+                ? _tabContents[index]
+                : null;
+        }
+
+        public void RefreshTabVisibility()
+        {
+            if (_tabWraps == null) return;
+            int visibleCount = 0;
+            int firstVisibleIndex = -1;
+            bool currentTabVisible = false;
+
+            for (int i = 0; i < MainTabs.Length; i++)
+            {
+                var tab = MainTabs[i];
+                string key = tab.Id.ToString().ToLowerInvariant();
+                bool isVisible = TabVisibilitySettings.IsTabVisible(key);
+                if (_tabWraps[i] != null)
+                    _tabWraps[i].style.display = isVisible ? DisplayStyle.Flex : DisplayStyle.None;
+
+                if (isVisible)
+                {
+                    visibleCount++;
+                    if (firstVisibleIndex == -1) firstVisibleIndex = i;
+                    if (i == _selectedTab) currentTabVisible = true;
+                }
+            }
+
+            if (!currentTabVisible && firstVisibleIndex != -1)
+            {
+                SwitchTab(firstVisibleIndex);
+            }
+            else
+            {
+                RefreshTabLayout();
+            }
+        }
+
+        private void RefreshTabLayout()
+        {
+            if (_tabBarScroll == null || _tabBarContent == null || _tabWraps == null || _tabWraps.Length == 0)
+                return;
+
+            var viewportWidth = _tabBarScroll.contentViewport != null
+                ? _tabBarScroll.contentViewport.layout.width
+                : _tabBarScroll.layout.width;
+            if (viewportWidth <= 0f) return;
+
+            int visibleCount = 0;
+            for (int i = 0; i < MainTabs.Length; i++)
+            {
+                if (_tabWraps[i] != null && _tabWraps[i].style.display != DisplayStyle.None)
+                    visibleCount++;
+            }
+            if (visibleCount == 0) visibleCount = 1;
+
+            var equalWidth = viewportWidth >= FixedTabWidth * visibleCount;
+            var tabWidth = equalWidth ? viewportWidth / visibleCount : FixedTabWidth;
+            _tabBarContent.style.width = tabWidth * visibleCount;
+            _tabBarContent.style.flexGrow = 0f;
+
+            foreach (var wrap in _tabWraps)
+            {
+                if (wrap == null) continue;
+                wrap.style.width = tabWidth;
+                wrap.style.flexGrow = 0f;
+                wrap.style.flexShrink = 0f;
+            }
+            UpdateTabScrollButtons();
+        }
+
+        private void EnsureTabVisible(int index)
+        {
+            if (_tabBarScroll == null || index < 0 || index >= _tabWraps.Length || _tabWraps[index] == null)
+                return;
+
+            var target = _tabWraps[index];
+            _tabBarScroll.schedule.Execute(() =>
+            {
+                if (this && _tabBarScroll != null && target != null)
+                {
+                    _tabBarScroll.ScrollTo(target);
+                    UpdateTabScrollButtons();
+                }
+            });
         }
 
         /// <summary>
@@ -187,12 +510,22 @@ namespace UnitySkills
         /// </summary>
         public void SelectTestSkill(string skillName, string defaultParams)
         {
-            SwitchTab(0);
+            SwitchTab(GetTabIndex(MainTabId.Skills));
             _skillsController?.SelectSkillByName(skillName, defaultParams);
         }
 
         public void OpenSettings()  => _drawer?.Open();
         public void CloseSettings() => _drawer?.Close();
+
+        /// <summary>Opens the Settings drawer where permissions are configured.</summary>
+        public void OpenPermissionsTab() => OpenSettings();
+
+        /// <summary>Switches to the top-level Unity CLI tab.</summary>
+        public void OpenUnityCliTab()
+        {
+            int index = GetTabIndex(MainTabId.UnityCli);
+            if (index >= 0) SwitchTab(index);
+        }
 
         // ----- Live tick — fanned out to controllers that care -----
         private void OnLiveDataUpdate()
@@ -214,18 +547,22 @@ namespace UnitySkills
             UISkillsFont.Apply(rootVisualElement);
 
             // Main tabs
-            if (_tabButtons[0] != null) _tabButtons[0].text = SkillsLocalization.Get("tab_skills");
-            if (_tabButtons[1] != null) _tabButtons[1].text = SkillsLocalization.Get("tab_ai_config");
-            if (_tabButtons[2] != null) _tabButtons[2].text = SkillsLocalization.Get("tab_history");
-            if (_tabButtons[3] != null) _tabButtons[3].text = SkillsLocalization.Get("tab_analytics");
+            for (int i = 0; i < MainTabs.Length; i++)
+            {
+                if (_tabButtons != null && i < _tabButtons.Length && _tabButtons[i] != null)
+                    _tabButtons[i].text = SkillsLocalization.Get(MainTabs[i].LocalizationKey);
+            }
 
             _topbar?.RefreshLocalization();
             _footer?.RefreshLocalization();
             _drawer?.RefreshLocalization();
             _pendingBanner?.RefreshLocalization();
             _versionUpdateBanner?.RefreshLocalization();
+            if (_narrowWarningText != null)
+                _narrowWarningText.text = SkillsLocalization.Get("narrow_screen_tip");
             _skillsController?.RefreshLocalization();
             _configController?.RefreshLocalization();
+            _cliController?.RefreshLocalization();
             _historyController?.RefreshLocalization();
             _analyticsController?.RefreshLocalization();
         }
@@ -235,30 +572,72 @@ namespace UnitySkills
         public void RefreshSkillsList()
         {
             _skillsByCategory = new Dictionary<string, List<SkillInfo>>();
-            // 与路由器使用相同的 Unity 编辑器索引，避免窗口刷新时再次全量枚举类型。
-            var methods = TypeCache.GetMethodsWithAttribute<UnitySkillAttribute>();
 
-            foreach (var method in methods)
+            // Must go through the router's PROFILE-FILTERED snapshot, not a raw TypeCache sweep.
+            // The surface profile is the user's statement about which skills may be offered at all;
+            // enumerating types directly ignores it, so under the guide profile the panel would
+            // still list gameobject_create, let the user select it and press Run, and answer with a
+            // SURFACE_EXCLUDED rejection whose wording is addressed to an AI agent. Same source and
+            // same reasoning as AllowlistPickerWindow.
+            SkillRouter.SkillInfo[] snapshot;
+            try
             {
-                if (!method.IsPublic || !method.IsStatic || method.DeclaringType == null)
+                snapshot = SkillRouter.GetAllSkillsSnapshot();
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[UnitySkills] Skill snapshot failed; Skills tab left empty: {ex.Message}");
+                return;
+            }
+
+            foreach (var skill in snapshot ?? Array.Empty<SkillRouter.SkillInfo>())
+            {
+                if (skill == null || string.IsNullOrEmpty(skill.Name) || skill.Method == null)
                     continue;
 
-                UnitySkillAttribute attr;
-                try { attr = method.GetCustomAttribute<UnitySkillAttribute>(); }
-                catch { continue; }
-                if (attr == null) continue;
+                // Group by the declared category rather than the declaring type's file name: the
+                // two agree for most modules but not all (skills split across helper files landed
+                // in their own bogus group), and the category is what the rest of the product uses.
+                var category = skill.Category.ToString();
+                if (!_skillsByCategory.TryGetValue(category, out var list))
+                    _skillsByCategory[category] = list = new List<SkillInfo>();
 
-                var category = method.DeclaringType.Name.Replace("Skills", "");
-                if (!_skillsByCategory.ContainsKey(category))
-                    _skillsByCategory[category] = new List<SkillInfo>();
-
-                _skillsByCategory[category].Add(new SkillInfo
+                list.Add(new SkillInfo
                 {
-                    Name = attr.Name ?? method.Name,
-                    Description = attr.Description ?? "",
-                    Method = method
+                    Name = skill.Name,
+                    Description = skill.Description ?? "",
+                    Method = skill.Method
                 });
             }
+        }
+
+        /// <summary>
+        /// The surface profile decides which skills exist at all, so a switch has to rebuild the
+        /// catalog and the rows, not merely repaint. Deferred through EditorUiScheduler because
+        /// OnChanged can arrive mid-layout and rebuilding the tree there throws (issue #44); the
+        /// flag coalesces a burst of switches into a single rebuild.
+        /// </summary>
+        private void OnSurfaceProfileChanged()
+        {
+            if (_catalogRebuildQueued) return;
+            _catalogRebuildQueued = true;
+
+            // Routed through EditorUiScheduler.RepeatSafe rather than a bare delayCall: the
+            // rebuild below mutates the visual tree, and a hand-written delayCall has none of
+            // RepeatSafe's InvalidOperationException/MissingReferenceException guard for a
+            // deferred callback that lands mid-render (issue #44). RepeatSafe's item is a
+            // recurring schedule, so it is paused from inside its own first firing to keep this a
+            // one-shot coalesced rebuild rather than a real repeating tick.
+            IVisualElementScheduledItem rebuildItem = null;
+            rebuildItem = EditorUiScheduler.RepeatSafe(rootVisualElement, 1, () =>
+            {
+                rebuildItem?.Pause();
+                _catalogRebuildQueued = false;
+                if (!this) return; // window closed while the rebuild was queued
+                RefreshSkillsList();
+                _skillsController?.RefreshCatalog();
+                Repaint();
+            });
         }
 
         public string BuildDefaultParams(MethodInfo method)
@@ -291,12 +670,12 @@ namespace UnitySkills
         private void MaybeShowFirstRunToast()
         {
             if (EditorPrefs.HasKey(PrefKeyFirstRunToast)) return;
-            // 已显式选过模式 → 不是新安装的首启，无需提示。
+            // A mode has already been explicitly chosen -> this isn't a fresh install's first launch, no need to prompt.
             if (EditorPrefs.HasKey("UnitySkills_OperatingMode")) return;
             if (PermissionUiHelpers.IsExistingInstall()) return;
 
-            // 先落标记再弹窗：弹窗在 delayCall 里执行，期间用户可能关闭窗口；
-            // 立即写 pref 保证"无论是否真弹出"都不会重复触发。
+            // Set the flag before showing the dialog: the dialog runs inside delayCall, and the user might close the window in the meantime; writing the pref immediately guarantees
+            // this won't re-trigger "regardless of whether the dialog actually appeared."
             EditorPrefs.SetBool(PrefKeyFirstRunToast, true);
 
             EditorApplication.delayCall += () =>
@@ -308,8 +687,8 @@ namespace UnitySkills
 
                 if (EditorUtility.DisplayDialog(title, msg, openBtn, okBtn))
                 {
-                    // 主窗口 + Settings 抽屉作为权限 UI 唯一入口。
-                    // delayCall 让 CreateGUI 先完成，OpenSettings 才能拿到 drawer 引用。
+                    // The main window + Settings drawer is the single entry point for permission UI.
+                    // delayCall lets CreateGUI finish first, so OpenSettings can obtain the drawer reference.
                     var window = GetWindow<UnitySkillsWindow>(SkillsLocalization.Get("window_title"));
                     window.minSize = new Vector2(420, 480);
                     EditorApplication.delayCall += () => window.OpenSettings();
@@ -319,21 +698,23 @@ namespace UnitySkills
     }
 
     /// <summary>
-    /// 权限/审计面板共享小工具。
-    /// 集中处理 Localization fallback 与"老安装"判定，让 EditorWindow 实现保持薄。
+    /// Shared helpers for the permission/audit panels.
+    /// Centralizes Localization fallback and "existing install" detection, keeping the EditorWindow implementations thin.
     /// </summary>
     internal static class PermissionUiHelpers
     {
         /// <summary>
-        /// 与 <c>SkillsModeManager</c> 内部 IsExistingInstall 同步的 UI 侧判定，
-        /// 用于决定是否对老用户隐藏首启 toast；保持两侧 key 列表一致即可。
+        /// UI-side determination kept in sync with <c>SkillsModeManager</c>'s internal IsExistingInstall, used to decide whether to hide the first-run toast for existing
+        /// users; just keep the two key lists consistent.
         /// </summary>
         public static bool IsExistingInstall()
         {
             return EditorPrefs.HasKey("UnitySkills_RequireConfirmation")
                 || EditorPrefs.HasKey("UnitySkills_PreferredPort")
                 || EditorPrefs.HasKey("UnitySkills_LogLevel")
+                || EditorPrefs.HasKey("UnitySkills_TelemetryEnabled")
                 || EditorPrefs.HasKey("UnitySkills_Language")
+                || EditorPrefs.HasKey("UnitySkills_GuideMode")
                 || EditorPrefs.HasKey("UnitySkills_RequestTimeoutMinutes")
                 || EditorPrefs.HasKey("UnitySkills_KeepAliveIntervalSeconds")
                 || EditorPrefs.HasKey("UnitySkills_AutoInstallPackagesOnStartup");
@@ -356,21 +737,21 @@ namespace UnitySkills
     }
 
     /// <summary>
-    /// 审计日志查看器 — UI Toolkit / UXML 实现的控制台风格列表。
-    /// Toolbar(路径 + Reveal + Refresh) → Filter(搜索 + 类型下拉 + 计数) → ListView(图标+时间+徽章+摘要) → Detail(原始 JSON)。
-    /// 入口：主窗口 → 齿轮 → Settings Drawer → Permissions 组 → [View Audit Log]。
-    /// 未单独挂菜单，避免 Window/UnitySkills 子菜单泛滥。
+    /// Audit log viewer -- a console-style list implemented with UI Toolkit / UXML.
+    /// Toolbar (path + Reveal + Refresh) -> Filter (search + type dropdown + count) -> ListView (icon+time+badge+summary) -> Detail (raw JSON).
+    /// Entry point: main window -> gear -> Settings Drawer -> Permissions group -> [View Audit Log].
+    /// Not mounted as its own menu item, to avoid Window/UnitySkills submenu sprawl.
     /// </summary>
     public sealed class UnitySkillsAuditWindow : EditorWindow
     {
         private const string UxmlPath = "Packages/com.besty.unity-skills/Editor/UI/AuditLogWindow.uxml";
         private const string UssPath  = "Packages/com.besty.unity-skills/Editor/UI/AuditLogWindow.uss";
-        // 主题变量（--color-*）唯一源：主窗口 USS 先于本窗口 USS 加载（同 UnityCliWindow 范式）。
+        // Single source of theme variables (--color-*): the main window's USS loads before this window's USS (same pattern as UnityCliWindow).
         private const string ThemeUssPath = "Packages/com.besty.unity-skills/Editor/UI/UnitySkillsWindow.uss";
         private const int MaxEntries = 500;
 
-        // 类型筛选下拉选项；"All" 表示不过滤。新事件类型在 AuditLog 添加后同步追加。
-        // revoke / revoke_all 保留以兼容旧日志。
+        // Type-filter dropdown options; "All" means no filtering. New event types get appended here after being added to AuditLog.
+        // revoke / revoke_all are kept for compatibility with old logs.
         private static readonly string[] _typeOptions = new[]
         {
             "All",
@@ -401,7 +782,7 @@ namespace UnitySkills
             w.Focus();
         }
 
-        // ----- 语言跟随：主面板切换语言时整树重建（含窗口标题） -----
+        // ----- Language follow: the whole tree rebuilds (including the window title) when the main panel switches language -----
 
         private void OnEnable() => SkillsLocalization.LanguageChanged += RebuildForLanguage;
         private void OnDisable() => SkillsLocalization.LanguageChanged -= RebuildForLanguage;
@@ -500,7 +881,7 @@ namespace UnitySkills
                 _list.makeItem = MakeRow;
                 _list.bindItem = BindRow;
                 _list.selectionType = SelectionType.Single;
-                // Unity 6 / 2022.2+ 用 selectedIndicesChanged；老 API 仍兼容但已 obsolete。
+                // Unity 6 / 2022.2+ uses selectedIndicesChanged; the old API still works but is obsolete.
                 _list.selectedIndicesChanged += _ => RefreshDetail();
             }
 
@@ -525,7 +906,7 @@ namespace UnitySkills
                         if (entry != null) _all.Add(entry);
                     }
                 }
-                // 最新在上
+                // Newest on top
                 _all.Reverse();
             }
             catch (Exception ex)
@@ -608,7 +989,7 @@ namespace UnitySkills
             catch { return raw; }
         }
 
-        // ===== ListView row 渲染 =====
+        // ===== ListView row rendering =====
 
         private VisualElement MakeRow()
         {
@@ -688,7 +1069,7 @@ namespace UnitySkills
 
         // ===== Entry parsing =====
 
-        /// <summary>每条审计事件的强类型投影；只挑出 UI 展示用到的字段，原始 JSON 仍保留在 RawJson 里。</summary>
+        /// <summary>A strongly-typed projection of each audit event; only the fields the UI displays are picked out, the raw JSON is still kept in RawJson.</summary>
         private sealed class AuditEntry
         {
             public string Ts;
@@ -749,7 +1130,7 @@ namespace UnitySkills
             {
                 return dt.ToLocalTime().ToString("HH:mm:ss");
             }
-            // 解析失败兜底：ISO 字符串里 "T" 后 8 个字符通常就是 HH:mm:ss。
+            // Fallback for a parse failure: the 8 characters after "T" in an ISO string are usually HH:mm:ss.
             return isoTs.Length >= 19 ? isoTs.Substring(11, 8) : isoTs;
         }
 

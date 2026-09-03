@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using Newtonsoft.Json;
@@ -6,14 +6,13 @@ using Newtonsoft.Json;
 namespace UnitySkills
 {
     /// <summary>
-    /// Generic batch execution framework for UnitySkills.
-    /// Eliminates boilerplate from batch skill methods by handling JSON deserialization,
-    /// per-item error handling, and result aggregation.
+    /// UnitySkills' generic batch execution framework: unifies JSON deserialization, per-item error
+    /// capture, and result aggregation, saving every batch skill from repeating that boilerplate.
     /// </summary>
     public static class BatchExecutor
     {
-        // Reflection results per result type are immutable — cache the "has error member" flag to avoid
-        // repeating GetProperty/GetField for every item in large batches.
+        // The reflection verdict for a given result type never changes, so cache "does it have an error member"
+        // to avoid repeating GetProperty/GetField per item on large batches.
         private static readonly ConcurrentDictionary<Type, bool> _hasErrorMemberCache = new ConcurrentDictionary<Type, bool>();
 
         private static bool HasErrorMember(Type type)
@@ -23,18 +22,17 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Execute a batch operation on a JSON array of items.
-        /// Handles deserialization, per-item try/catch, and result aggregation.
+        /// Executes a batch operation over a JSON array item by item, handling deserialization,
+        /// per-item try/catch, and result aggregation.
         /// </summary>
-        /// <typeparam name="TItem">The item type to deserialize from JSON</typeparam>
-        /// <param name="itemsJson">JSON array string</param>
-        /// <param name="processor">Function that processes each item and returns a result object.
-        /// On success, return an anonymous object with the desired fields.
-        /// On failure, throw an exception or return an object with an "error" field.</param>
-        /// <param name="itemIdentifier">Optional function to extract a display name from each item for error reporting</param>
-        /// <param name="setup">Optional action to run before processing items (e.g. AssetDatabase.StartAssetEditing)</param>
-        /// <param name="teardown">Optional action to run after processing items, even if errors occur (e.g. AssetDatabase.StopAssetEditing)</param>
-        /// <returns>Standardized batch result with success, totalItems, successCount, failCount, results</returns>
+        /// <typeparam name="TItem">The item type deserialized from JSON</typeparam>
+        /// <param name="itemsJson">The JSON array string</param>
+        /// <param name="processor">Per-item processing function: return an anonymous object with the
+        /// needed fields on success; on failure, either throw or return an object with an "error" field.</param>
+        /// <param name="itemIdentifier">Optional; extracts a display name from an item for error reporting</param>
+        /// <param name="setup">Optional; runs before processing (e.g. AssetDatabase.StartAssetEditing)</param>
+        /// <param name="teardown">Optional; always runs after processing, even on error (e.g. AssetDatabase.StopAssetEditing)</param>
+        /// <returns>Standard batch result: success, totalItems, successCount, failCount, results</returns>
         public static object Execute<TItem>(
             string itemsJson,
             Func<TItem, object> processor,
@@ -69,7 +67,7 @@ namespace UnitySkills
                     try
                     {
                         var result = processor(item);
-                        // Check if result contains an error field (processor returned error without throwing)
+                        // processor may also return an object with an "error" field instead of throwing; count that as a failure too.
                         bool isError = result != null && HasErrorMember(result.GetType());
                         results.Add(result);
                         if (isError)

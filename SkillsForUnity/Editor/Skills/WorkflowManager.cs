@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -14,14 +14,14 @@ namespace UnitySkills
         private static WorkflowTask _currentTask;
         private static string _currentSessionId;
 
-        // Set when the history file could not be read. Whatever history we end up with then
-        // references fewer blobs than the store actually holds, so reclaiming "unreferenced"
-        // entries would delete live backups; leaking them is the cheaper failure.
-        // volatile: SkillsHttpServer 的 /health 快路径在 HTTP 线程上读 IsHistoryRecoveryMode，
-        // 写入始终发生在主线程（LoadHistory / ClearHistory）。
+        // Set when the history file fails to load. In that state, the history in hand references fewer
+        // blobs than the store actually holds, so reclaiming "unreferenced" entries would delete live
+        // backups; better to leak than to pay that cost.
+        // volatile: SkillsHttpServer's /health fast path reads IsHistoryRecoveryMode on the HTTP thread,
+        // while writes always happen on the main thread (LoadHistory / ClearHistory).
         private static volatile bool _historyRecoveryMode;
 
-        // Path to store the history file (Library folder persists but is local)
+        // Path where the history file is stored (persists in the Library directory, but local to this machine only)
         internal static string OverrideHistoryFilePathForTests;
         private static string HistoryFilePath => OverrideHistoryFilePathForTests ??
             Path.Combine(Application.dataPath, "../Library/UnitySkills/workflow_history.json");
@@ -42,8 +42,8 @@ namespace UnitySkills
         public static bool HasActiveSession => !string.IsNullOrEmpty(_currentSessionId);
 
         /// <summary>
-        /// True when the history file failed to load this session and file store cleanup is
-        /// therefore suspended. Cleared by ClearHistory.
+        /// True when this session's history file failed to load, suspending file-store cleanup as a
+        /// result. Cleared by ClearHistory.
         /// </summary>
         public static bool IsHistoryRecoveryMode => _historyRecoveryMode;
 
@@ -61,7 +61,7 @@ namespace UnitySkills
 
         public static void LoadHistory()
         {
-            // Crash recovery: if main file is missing but .tmp exists, promote it
+            // Crash recovery: if the main file is missing but a .tmp exists, promote the .tmp to the main file
             string tmpPath = HistoryFilePath + ".tmp";
             if (!File.Exists(HistoryFilePath) && File.Exists(tmpPath))
             {
@@ -91,7 +91,7 @@ namespace UnitySkills
             {
                 if (TryLoadHistoryFrom(backupPath, out string backupError))
                 {
-                    // The backup is one save behind, so anything recorded after it is still missing.
+                    // The backup lags one save behind current, so what was recorded after it is still gone.
                     _historyRecoveryMode = true;
                     recoveredFromBackup = true;
                     SkillsLogger.LogWarning(
@@ -113,8 +113,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Parses a history file into <see cref="_history"/>. On failure _history is left null so
-        /// the caller can try the next candidate file, and <paramref name="error"/> carries the reason.
+        /// Parses the history file into <see cref="_history"/>. On failure, _history stays null,
+        /// letting the caller try the next candidate file, with the failure reason surfaced via <paramref name="error"/>.
         /// </summary>
         private static bool TryLoadHistoryFrom(string path, out string error)
         {
@@ -143,8 +143,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Moves an unreadable history file aside under a timestamped name so the next save cannot
-        /// overwrite it. Returns the quarantine file name, or null if the move failed.
+        /// Moves an unreadable history file aside under a timestamped name, so the next save doesn't overwrite it.
+        /// Returns the quarantined file name, or null if the move failed.
         /// </summary>
         private static string QuarantineHistoryFile(string path)
         {
@@ -182,8 +182,7 @@ namespace UnitySkills
                 File.WriteAllText(tmpPath, json, SkillsCommon.Utf8NoBom);
                 if (File.Exists(HistoryFilePath))
                 {
-                    // The replaced file is retained as .bak: LoadHistory falls back to it when the
-                    // main file turns out to be unreadable.
+                    // The file being replaced is kept as .bak: if the main file becomes unreadable, LoadHistory falls back to it.
                     File.Replace(tmpPath, HistoryFilePath, backupPath);
                 }
                 else
@@ -244,7 +243,7 @@ namespace UnitySkills
         public static WorkflowTask BeginTask(string tag, string description)
         {
             if (_currentTask != null)
-                EndTask(); // Auto-close previous task if open
+                EndTask(); // Automatically finish off the previous task if it's still open
 
             _currentTask = new WorkflowTask
             {
@@ -263,9 +262,9 @@ namespace UnitySkills
         {
             if (_currentTask == null) return;
 
-            // Only record tasks that captured at least one snapshot. A tracked skill that failed
-            // or made no changes has nothing to undo, so recording it would leave an empty
-            // (changes=0) entry that clutters the history and confuses undo/redo navigation.
+            // Only tasks that captured at least one snapshot get recorded. If a tracked skill fails or made
+            // no changes, there's nothing to undo, and recording it anyway would just leave an empty entry
+            // (changes=0) that both pollutes the history and gets in the way of undo/redo navigation.
             if (_currentTask.snapshots.Count == 0)
             {
                 _currentTask = null;
@@ -297,8 +296,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Registers a snapshot in the current task, deduplicating by globalObjectId.
-        /// When upgradeExisting is true, replaces a previously registered snapshot for the same id.
+        /// Registers a snapshot on the current task, deduplicating by globalObjectId.
+        /// When upgradeExisting is true, replaces any snapshot already registered under the same id.
         /// </summary>
         internal static ObjectSnapshot AddSnapshot(ObjectSnapshot snap, bool upgradeExisting = false)
         {
@@ -332,8 +331,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Captures the state of an object/component BEFORE modification.
-        /// Supports both scene objects and project assets (Materials, scripts, etc.).
+        /// Captures an object's/component's state before it's modified.
+        /// Supports both scene objects and project assets (materials, scripts, etc.).
         /// Asset file backups are stored in the content-addressed WorkflowFileStore.
         /// </summary>
         public static void SnapshotObject(UnityEngine.Object obj, SnapshotType type = SnapshotType.Modified)
@@ -346,7 +345,7 @@ namespace UnitySkills
                 return;
             }
 
-            // Limit snapshots per task to prevent unbounded memory growth
+            // Cap the number of snapshots per task, to avoid unbounded memory growth
             const int MaxSnapshotsPerTask = 500;
             if (_currentTask.snapshots.Count >= MaxSnapshotsPerTask)
             {
@@ -366,7 +365,7 @@ namespace UnitySkills
                 json = EditorJsonUtility.ToJson(obj);
                 assetPath = AssetDatabase.GetAssetPath(obj);
 
-                // Backup asset file bytes in the content-addressed store (all extensions, including .cs)
+                // Back up the asset file's bytes into the content-addressed store (any extension, including .cs)
                 if (!string.IsNullOrEmpty(assetPath))
                 {
                     if (WorkflowFileStore.TryGetSafeAssetFullPath(assetPath, out string fullPath) && File.Exists(fullPath))
@@ -396,8 +395,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Records a newly created component for undo tracking.
-        /// Stores additional info (parent GameObject, component type) for reliable deletion.
+        /// Registers a newly-created component for undo.
+        /// Also stores the parent GameObject and the component type, to make deletion reliable.
         /// </summary>
         public static void SnapshotCreatedComponent(Component comp)
         {
@@ -410,7 +409,7 @@ namespace UnitySkills
             {
                 globalObjectId = gid,
                 objectInstanceId = UnityObjectIdUtility.GetLegacyInstanceId(comp),
-                originalJson = "",  // New objects don't need original state
+                originalJson = "",  // A newly-created object needs no original state
                 objectName = comp.name,
                 typeName = comp.GetType().Name,
                 type = SnapshotType.Created,
@@ -421,8 +420,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Records a newly created asset (Material, Prefab, ScriptableObject, script, etc.) for undo tracking.
-        /// Does not store file contents; undo of a created asset deletes the asset file.
+        /// Registers a newly-created asset (material, prefab, ScriptableObject, script, etc.) for undo.
+        /// Doesn't store the file content; undoing "create asset" just means deleting that asset file.
         /// </summary>
         public static void SnapshotCreatedAsset(UnityEngine.Object asset)
         {
@@ -444,20 +443,20 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Records a settings change (e.g. console flags, gravity, quality level) for undo tracking.
-        /// The setting must have a getter/setter registered in <see cref="WorkflowSettingRestorerRegistry"/>.
-        /// Undo restores <paramref name="oldValueJson"/>; redo re-applies the value captured at undo time.
+        /// Registers a setting change (e.g. console flags, gravity, quality level) for undo.
+        /// This setting must already have a getter/setter registered in <see cref="WorkflowSettingRestorerRegistry"/>.
+        /// Undo restores <paramref name="oldValueJson"/>; redo reapplies whatever value was captured at the moment of undo.
         /// </summary>
-        /// <param name="settingKey">Stable setting key, "module.property" (e.g. "console.pauseOnError").</param>
-        /// <param name="oldValueJson">JSON-encoded value BEFORE the change (captured by the caller).</param>
-        /// <param name="description">Human-readable label for display.</param>
+        /// <param name="settingKey">A stable setting key of the form "module.property" (e.g. "console.pauseOnError").</param>
+        /// <param name="oldValueJson">The value before the change, JSON-encoded (captured by the caller).</param>
+        /// <param name="description">A human-readable label for display.</param>
         public static ObjectSnapshot SnapshotSetting(string settingKey, string oldValueJson, string description)
         {
             if (_currentTask == null || string.IsNullOrEmpty(settingKey))
                 return null;
 
-            // Stable pseudo id so repeated changes to the same setting within one task dedupe
-            // (only the first snapshot's old value matters for a full undo of the task).
+            // Uses a stable pseudo-id, so multiple changes to the same setting within one task can be
+            // deduplicated (undoing the whole task only cares about the old value in the first snapshot).
             return AddSnapshot(new ObjectSnapshot
             {
                 globalObjectId = "setting:" + settingKey,
@@ -470,8 +469,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Records a newly created GameObject for undo/redo tracking.
-        /// Stores primitiveType for recreation during redo.
+        /// Registers a newly-created GameObject for undo/redo.
+        /// Stores primitiveType, for reconstruction on redo.
         /// </summary>
         public static void SnapshotCreatedGameObject(GameObject go, string primitiveType = null)
         {
@@ -519,8 +518,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Records an asset move (source -> destination) for undo/redo tracking.
-        /// Replaces any existing snapshot for the same global object id.
+        /// Registers an asset move (source -> destination) for undo/redo.
+        /// Replaces any existing snapshot under the same global object id.
         /// </summary>
         public static ObjectSnapshot SnapshotAssetMove(string sourcePath, string destinationPath)
         {
@@ -551,8 +550,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Records a newly created folder for undo tracking.
-        /// Folder deletions are handled via AssetDatabase.DeleteAsset (empty folders only).
+        /// Registers a newly-created folder for undo.
+        /// Folder deletion goes through AssetDatabase.DeleteAsset (empty folders only).
         /// </summary>
         public static ObjectSnapshot SnapshotCreatedFolder(string folderPath)
         {
@@ -579,9 +578,9 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Deletes an asset after backing it up to the content-addressed file store.
-        /// Creates a Deleted snapshot so the operation can be undone.
-        /// Folder deletions capture every child file and folder .meta before deleting anything.
+        /// Backs up an asset into the content-addressed file store, then deletes it.
+        /// Also creates a Deleted snapshot, making the operation undoable.
+        /// When deleting a folder, captures every child file's and folder's .meta before deletion begins.
         /// </summary>
         public static bool DeleteAssetToTrash(string assetPath)
         {
@@ -778,8 +777,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Undoes a specific task. Returns detailed per-snapshot results.
-        /// Saves the inverse operations to undoneStack for potential redo.
+        /// Undoes a given task, returning per-snapshot detailed results.
+        /// Stores the inverse operation into undoneStack for redo.
         /// </summary>
         public static TaskUndoResult UndoTask(string taskId)
         {
@@ -793,7 +792,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Redoes a previously undone task. Returns detailed per-snapshot results.
+        /// Redoes a previously-undone task, returning per-snapshot detailed results.
         /// </summary>
         public static TaskUndoResult RedoTask(string taskId)
         {
@@ -863,7 +862,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Gets the list of undone tasks that can be redone.
+        /// Gets the list of tasks available to redo (already undone).
         /// </summary>
         public static List<WorkflowTask> GetUndoneStack()
         {
@@ -871,7 +870,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Clears the undo stack (called when new changes are made after undo).
+        /// Clears the undone stack (called when new changes occur after an undo).
         /// </summary>
         public static void ClearUndoneStack()
         {
@@ -883,7 +882,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Alias for UndoTask (backward compatibility).
+        /// An alias for UndoTask (backward compatibility).
         /// </summary>
         public static TaskUndoResult RevertTask(string taskId)
         {
@@ -895,7 +894,18 @@ namespace UnitySkills
             if (_history == null) LoadHistory();
             var task = _history.tasks.FirstOrDefault(t => t.id == taskId);
             if (task != null)
+            {
                 _history.tasks.Remove(task);
+            }
+            else
+            {
+                // A task that's already been undone lives in undoneStack, not in tasks. Leaving it there
+                // after a "delete" would make workflow_redo_task's default behavior (take the last item in
+                // undoneStack) resurrect an object the caller believes is already gone.
+                var undoneTask = _history.undoneStack.FirstOrDefault(t => t.id == taskId);
+                if (undoneTask != null)
+                    _history.undoneStack.Remove(undoneTask);
+            }
 
             SaveHistory();
 
@@ -909,8 +919,8 @@ namespace UnitySkills
         #region Session Management (Conversation-Level Undo)
 
         /// <summary>
-        /// Starts a new session (conversation-level). All tasks created during this session
-        /// will be grouped together and can be undone as a whole.
+        /// Starts a new session (conversation-level). Every task created during this session gets grouped
+        /// together, so it can be undone as a whole.
         /// </summary>
         public static string BeginSession(string sessionTag = null)
         {
@@ -929,7 +939,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Ends the current session and saves all recorded changes.
+        /// Ends the current session and saves every change recorded during it.
         /// </summary>
         public static void EndSession()
         {
@@ -946,7 +956,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Undoes all changes made during a specific session. Returns detailed per-snapshot results.
+        /// Undoes every change made during a given session, returning per-snapshot detailed results.
         /// </summary>
         public static TaskUndoResult UndoSession(string sessionId)
         {
@@ -968,8 +978,8 @@ namespace UnitySkills
                 return result;
             }
 
-            // Undo whole tasks newest-first. Keeping task boundaries preserves operation order
-            // when the same object was modified, moved, and deleted across the session.
+            // Undo task by task, newest to oldest. Preserving task boundaries is what keeps operation order
+            // correct when the same object was modified, moved, and deleted at different points in the session.
             foreach (var task in sessionTasks)
             {
                 var taskResult = TransitionTask(task, _history.tasks, _history.undoneStack, "Undo Session");
@@ -987,7 +997,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Gets all sessions from history.
+        /// Gets every session in the history.
         /// </summary>
         public static List<SessionInfo> GetSessions()
         {
@@ -1014,7 +1024,7 @@ namespace UnitySkills
         #region Undo/Redo Snapshot Dispatch
 
         /// <summary>
-        /// Undoes a single snapshot and records the inverse operation in redoTask.
+        /// Undoes a single snapshot, recording its inverse operation into redoTask.
         /// </summary>
         private static SnapshotUndoResult UndoSnapshot(ObjectSnapshot snapshot, WorkflowTask redoTask)
         {
@@ -1070,7 +1080,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Redoes a single snapshot and records the inverse operation in newTask.
+        /// Redoes a single snapshot, recording its inverse operation into newTask.
         /// </summary>
         private static SnapshotUndoResult RedoSnapshot(ObjectSnapshot snapshot, WorkflowTask newTask)
         {
@@ -1130,7 +1140,7 @@ namespace UnitySkills
 
         private static bool UndoCreatedSnapshot(ObjectSnapshot snapshot, WorkflowTask redoTask)
         {
-            // Component creation undo
+            // Undo "create component"
             if (!string.IsNullOrEmpty(snapshot.componentTypeName) &&
                 !string.IsNullOrEmpty(snapshot.parentGameObjectId))
             {
@@ -1144,8 +1154,8 @@ namespace UnitySkills
                         if (comp != null && (comp.gameObject != go || !compType.IsInstanceOfType(comp)))
                             comp = null;
 
-                        // Legacy snapshots without an object identity can only fall back to type lookup.
-                        // For identified snapshots, failing is safer than deleting a different same-type component.
+                        // A legacy snapshot with no object identity can only fall back to a type-based lookup.
+                        // For a snapshot that does have an identity, failing is safer than deleting a different component of the same type.
                         if (comp == null && string.IsNullOrEmpty(snapshot.globalObjectId) && snapshot.objectInstanceId == 0)
                             comp = go.GetComponent(compType);
                         if (comp != null)
@@ -1174,7 +1184,7 @@ namespace UnitySkills
                 return false;
             }
 
-            // GameObject creation undo
+            // Undo "create GameObject"
             if (snapshot.typeName == "GameObject")
             {
                 var obj = TryResolveObject(snapshot.globalObjectId, snapshot.objectInstanceId);
@@ -1194,7 +1204,7 @@ namespace UnitySkills
                 return true;
             }
 
-            // Asset or folder creation undo
+            // Undo "create asset or folder"
             if (!string.IsNullOrEmpty(snapshot.assetPath))
             {
                 if (!WorkflowFileStore.TryGetSafeAssetFullPath(snapshot.assetPath, out string fullPath))
@@ -1220,7 +1230,7 @@ namespace UnitySkills
                 return false;
             }
 
-            // Generic object creation undo
+            // Undo "create generic object"
             if (!GlobalObjectId.TryParse(snapshot.globalObjectId, out GlobalObjectId genericGid))
                 return false;
 
@@ -1291,14 +1301,14 @@ namespace UnitySkills
                 return true;
             }
 
-            // Asset/folder branch: an asset/folder Created snapshot only reaches the redo stack via
-            // UndoDeletedSnapshot (a deletion was undone, restoring the asset). Reversing that undo
-            // means re-deleting the asset/folder with a fresh content-addressed backup and pushing a
-            // proper Deleted inverse, which is exactly UndoCreatedSnapshot's asset/folder branch.
-            // Delegating avoids the earlier bug where a restored file (no fileHash) was misclassified
-            // as a folder and deleted without backup, corrupting the next undo. The component and
-            // GameObject branches above are intentionally NOT self-inverse (destroy vs recreate) and
-            // are handled before reaching here.
+            // Asset/folder branch: a Created snapshot for an asset or folder can only have entered the redo
+            // stack via UndoDeletedSnapshot (a deletion was undone, restoring the asset). Reversing that
+            // undo means deleting that asset/folder again — with a fresh content-addressed backup — and
+            // pushing a correct Deleted inverse operation, which is exactly what UndoCreatedSnapshot's
+            // asset/folder branch does. Delegating to it sidesteps an earlier bug: a restored file (with no
+            // fileHash) was misjudged as a folder and deleted without a backup, corrupting the next undo.
+            // The component and GameObject branches above are deliberately not self-inverse (destroy vs.
+            // recreate), and are already handled before reaching this point.
             if (!string.IsNullOrEmpty(snapshot.assetPath))
             {
                 return UndoCreatedSnapshot(snapshot, newTask);
@@ -1396,7 +1406,7 @@ namespace UnitySkills
                             (string.IsNullOrEmpty(snapshot.fileHash) && snapshot.directoryEntries?.Count == 0);
 
             if (File.Exists(fullPath) || (isFolder && Directory.Exists(fullPath)))
-                return false; // Destination already exists
+                return false; // Target already exists
 
             if (!isFolder && !string.IsNullOrEmpty(snapshot.fileHash))
             {
@@ -1444,11 +1454,11 @@ namespace UnitySkills
 
         private static bool RedoDeletedSnapshot(ObjectSnapshot snapshot, WorkflowTask newTask)
         {
-            // Redo reverses the undo, it does not re-run the original operation. A Deleted snapshot
-            // only ever reaches the redo stack via UndoCreatedSnapshot (undoing a creation deletes
-            // the asset/folder and records a Deleted inverse). Reversing that undo means restoring
-            // the asset/folder, which is exactly what UndoDeletedSnapshot does, so the redo of a
-            // Deleted snapshot is identical to the undo of one.
+            // Redo reverses undo, it doesn't rerun the original operation. A Deleted snapshot can only have
+            // entered the redo stack via UndoCreatedSnapshot (undoing a creation = deleting that asset/
+            // folder and recording a Deleted inverse operation). Reversing that undo means restoring the
+            // asset/folder, which is exactly what UndoDeletedSnapshot does, so "redo a Deleted snapshot" and
+            // "undo a Deleted snapshot" are exactly the same thing.
             return UndoDeletedSnapshot(snapshot, newTask);
         }
 
@@ -1475,15 +1485,15 @@ namespace UnitySkills
 
         private static bool RedoMovedSnapshot(ObjectSnapshot snapshot, WorkflowTask newTask)
         {
-            // A Moved snapshot is a self-inverse: undoing it moves the asset back and records a
-            // snapshot with the two paths swapped. Reversing that undo is the same operation again,
-            // so redo replays the undo logic against the already-swapped snapshot on the redo stack.
+            // A Moved snapshot is self-inverse: undoing it just moves the asset back, and records a
+            // snapshot with the two paths swapped. Reversing that undo is the same operation again, so redo
+            // is just running the undo logic again on that already-swapped snapshot on the redo stack.
             return UndoMovedSnapshot(snapshot, newTask);
         }
 
         /// <summary>
-        /// Undoes a settings change: captures the current (post-change) value into the redo snapshot,
-        /// then restores the recorded old value via the setting restorer registry.
+        /// Undoes a setting change: first captures the current (post-change) value into the redo
+        /// snapshot, then restores the recorded old value via the setting restorer registry.
         /// </summary>
         private static bool UndoSettingSnapshot(ObjectSnapshot snapshot, WorkflowTask redoTask, out string error)
         {
@@ -1501,7 +1511,7 @@ namespace UnitySkills
                 return false;
             }
 
-            // Capture the current value (what the change set it to) so redo can re-apply it.
+            // Capture the current value (the one that change set it to), for reapplying on redo.
             string redoValueJson = WorkflowSettingRestorerRegistry.TryGetCurrentValue(snapshot.settingKey);
 
             if (!WorkflowSettingRestorerRegistry.TryRestore(snapshot.settingKey, snapshot.settingOldValueJson))
@@ -1523,8 +1533,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Redoes a settings change: re-applies the value captured when the change was undone,
-        /// capturing the pre-redo value into the new snapshot so a later undo remains reversible.
+        /// Redoes a setting change: reapplies the value captured at undo time,
+        /// while also capturing the pre-redo value into the new snapshot so a later undo is still reversible.
         /// </summary>
         private static bool RedoSettingSnapshot(ObjectSnapshot snapshot, WorkflowTask newTask, out string error)
         {
@@ -1542,7 +1552,7 @@ namespace UnitySkills
                 return false;
             }
 
-            // Capture the current (pre-redo, i.e. old) value so a subsequent undo can restore it.
+            // Capture the current value (pre-redo, i.e. the old value), for the subsequent undo to restore.
             string undoValueJson = WorkflowSettingRestorerRegistry.TryGetCurrentValue(snapshot.settingKey);
 
             if (snapshot.settingOldValueJson == null && undoValueJson == null)
@@ -1575,7 +1585,7 @@ namespace UnitySkills
 
         /// <summary>
         /// Captures transform and component data from a live GameObject into a new ObjectSnapshot,
-        /// copying base fields from the provided baseSnapshot.
+        /// copying its base fields from the given baseSnapshot.
         /// </summary>
         private static ObjectSnapshot CaptureGameObjectState(GameObject go, ObjectSnapshot baseSnapshot)
         {
@@ -1733,8 +1743,8 @@ namespace UnitySkills
                 }
             }
 
-            // References can point forward to children or components that did not exist during the
-            // first pass, so deserialize only after the whole hierarchy has been recreated.
+            // References may point forward to child objects or components that don't exist yet on the first
+            // pass, so deserialization must wait until the whole hierarchy has been rebuilt.
             foreach (var pair in restoredComponents)
             {
                 var componentData = pair.Key;
@@ -1810,12 +1820,12 @@ namespace UnitySkills
             return instanceId != 0 ? UnityObjectIdUtility.ObjectIdToObject(instanceId) : null;
         }
 
-        // Budgets for the CaptureObjectReferences walk. A full-depth SerializedProperty descent is
-        // unbounded on assets whose serialized data is a [SerializeReference] graph: VisualTreeAsset
-        // (every imported .uxml) makes iterator.Next(true) follow managed references forever, pinning
-        // the main thread at 100% CPU with no way out but killing the editor. The managed-reference
-        // dedup below is the actual cycle break; the node/time caps are backstops for any other
-        // pathological layout we have not seen yet.
+        // Budget cap for CaptureObjectReferences' traversal. For assets whose serialized data is a
+        // [SerializeReference] graph, a full-depth SerializedProperty descent is unbounded: a
+        // VisualTreeAsset (one per imported .uxml) would make iterator.Next(true) chase managed references
+        // forever, pinning the main thread at 100% CPU with no way out short of killing the editor.
+        // The managed-reference dedup below is the real cycle breaker; the node-count/time caps only exist
+        // as a backstop for other pathological structures we haven't seen yet.
         private const int MaxReferenceWalkNodes = 50000;
         private const int MaxReferenceWalkDepth = 32;
         private const int MaxReferenceWalkMilliseconds = 2000;
@@ -1832,9 +1842,10 @@ namespace UnitySkills
                 var serializedObject = new SerializedObject(obj);
                 var iterator = serializedObject.GetIterator();
                 var walkTimer = System.Diagnostics.Stopwatch.StartNew();
-                // Managed references form a graph, not a tree: the same instance can be reachable by
-                // many paths and can reference itself. Visiting each referenceId once turns that graph
-                // back into a finite walk. A repeat visit adds no restorable property path anyway.
+                // Managed references form a graph, not a tree: the same instance can be reached via
+                // multiple paths, and can even reference itself. Visiting each referenceId only once turns
+                // this graph back into a bounded traversal. Revisiting one wouldn't surface any new
+                // restorable property path anyway.
                 var visitedManagedRefs = new HashSet<long>();
                 int visitedNodes = 0;
                 bool truncated = false;
@@ -1884,9 +1895,9 @@ namespace UnitySkills
 
                 if (truncated)
                 {
-                    // Partial is still usable: undo restores object references by property path, so the
-                    // paths we did collect remain individually valid. Assets additionally carry a
-                    // content-addressed file backup, which is the real restore path for them.
+                    // A partial capture is still useful: undo restores object references by property path,
+                    // and the paths already collected each remain valid. Assets additionally carry a
+                    // content-addressed file backup, which is their real path to restoration.
                     SkillsLogger.LogVerbose(
                         $"Object reference snapshot for '{obj.name}' ({obj.GetType().Name}) stopped at " +
                         $"{visitedNodes} properties / {walkTimer.ElapsedMilliseconds}ms; captured {references.Count} references.");
@@ -1970,8 +1981,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Captures the current state of a modified object into targetTask, then restores
-        /// the snapshot data (via file store restore, legacy base64, or JSON overlay).
+        /// Captures a modified object's current state into targetTask, then restores the snapshot data
+        /// (via one of three paths: file-store restore, a legacy base64 blob, or a JSON overwrite).
         /// </summary>
         private static bool RestoreModifiedSnapshot(ObjectSnapshot snapshot, WorkflowTask targetTask,
             bool removeFromStore, string undoLabel)
@@ -1979,8 +1990,8 @@ namespace UnitySkills
             UnityEngine.Object obj = null;
             obj = TryResolveObject(snapshot.globalObjectId, snapshot.objectInstanceId);
 
-            // Legacy deletion snapshots were recorded as Modified. The object no longer resolves,
-            // but the stored bytes are sufficient to restore it and create a proper inverse.
+            // A legacy deletion snapshot got recorded as Modified. At this point the object no longer
+            // resolves, but the bytes stored are enough to restore it and produce the correct inverse operation.
             if (obj == null && !string.IsNullOrEmpty(snapshot.assetPath) &&
                 (!string.IsNullOrEmpty(snapshot.fileHash) || !string.IsNullOrEmpty(snapshot.assetBytesBase64)))
             {
@@ -2017,7 +2028,7 @@ namespace UnitySkills
 
             if (obj == null) return false;
 
-            // Capture current state for the target task (including file store backup)
+            // Capture the current state for the target task (including a file-store backup)
             string currentFileHash = "";
             string currentMetaHash = "";
             if (!string.IsNullOrEmpty(snapshot.assetPath))
@@ -2046,7 +2057,7 @@ namespace UnitySkills
                 metaFileHash = currentMetaHash
             });
 
-            // Legacy base64 backup takes priority if present (old history data)
+            // Prefer a legacy base64 backup when one exists (old history data)
             if (!string.IsNullOrEmpty(snapshot.assetBytesBase64) && !string.IsNullOrEmpty(snapshot.assetPath))
             {
                 if (!WorkflowFileStore.TryGetSafeAssetFullPath(snapshot.assetPath, out string fullPath))
@@ -2060,14 +2071,14 @@ namespace UnitySkills
                 return true;
             }
 
-            // Restore from content-addressed file store
+            // Restore from the content-addressed file store
             if (!string.IsNullOrEmpty(snapshot.fileHash) && !string.IsNullOrEmpty(snapshot.assetPath))
             {
                 return WorkflowFileStore.RestoreFile(snapshot.fileHash, snapshot.metaFileHash,
                     snapshot.assetPath, removeFromStore);
             }
 
-            // Fallback to JSON overlay for scene objects / assets without a file backup
+            // A scene object/asset with no file backup falls back to a JSON overwrite
             if (!string.IsNullOrEmpty(snapshot.originalJson))
             {
                 Undo.RecordObject(obj, undoLabel);
@@ -2083,8 +2094,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Recreates a GameObject from snapshot data (primitiveType, transform, components).
-        /// Registers the new object with Unity's Undo system.
+        /// Reconstructs a GameObject from snapshot data (primitiveType, transform, components),
+        /// and registers the new object with Unity's Undo system.
         /// </summary>
         private static GameObject RecreateGameObject(ObjectSnapshot snapshot)
         {
@@ -2115,7 +2126,7 @@ namespace UnitySkills
                     if (compType == null) compType = ComponentSkills.FindComponentType(compData.typeName);
                     if (compType == null) continue;
 
-                    // Skip if component already exists (e.g., MeshRenderer on primitives)
+                    // Skip if the component already exists (e.g. the MeshRenderer a primitive comes with)
                     var existing = newGo.GetComponent(compType);
                     if (existing != null)
                     {
@@ -2145,16 +2156,17 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Collects all file hashes referenced by the in-flight task plus every active and undone task.
+        /// Collects the task currently being recorded, plus every file hash referenced by all active tasks
+        /// and undone tasks.
         /// </summary>
         private static HashSet<string> CollectReferencedHashes()
         {
-            // Case-insensitive: store entries are enumerated upper-cased, so a snapshot hash that
-            // differs only in case still has to count as a reference.
+            // Case-insensitive: store entries are uppercased when enumerated, so a snapshot hash that
+            // differs only in case must also count as a reference.
             var referencedHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            // The task being recorded is not in _history yet — history is loaded lazily and both
-            // LoadHistory and EndTask reclaim before appending it — so it is protected from here.
+            // The task currently being recorded isn't in _history yet — history is lazily loaded, and both
+            // LoadHistory and EndTask reclaim before appending it — so it relies on this line for protection.
             AddTaskHashes(_currentTask, referencedHashes);
 
             if (_history == null) return referencedHashes;
@@ -2194,8 +2206,8 @@ namespace UnitySkills
         #region Auto-Cleanup
 
         /// <summary>
-        /// Trims workflow history and the content-addressed file store according to
-        /// WorkflowAutoCleanConfig settings. Called automatically at EndTask and after LoadHistory.
+        /// Trims the workflow history and the content-addressed file store according to
+        /// WorkflowAutoCleanConfig's settings. Called automatically after EndTask and LoadHistory.
         /// </summary>
         public static WorkflowTrimReport TrimHistoryIfNeeded(bool force = false)
         {
@@ -2222,7 +2234,7 @@ namespace UnitySkills
 
             int beforeCount = _history.tasks.Count + _history.undoneStack.Count;
 
-            // Remove tasks older than MaxTaskAgeDays
+            // Delete tasks older than MaxTaskAgeDays
             if (maxAgeDays > 0)
             {
                 long cutoff = now.AddDays(-maxAgeDays).ToUnixTimeSeconds();
@@ -2230,7 +2242,7 @@ namespace UnitySkills
                 _history.undoneStack.RemoveAll(t => t?.timestamp < cutoff);
             }
 
-            // Remove oldest tasks until under MaxTasks
+            // Delete oldest-first until the task count is below MaxTasks
             if (maxTasks > 0)
             {
                 while (_history.tasks.Count > maxTasks)
@@ -2239,7 +2251,7 @@ namespace UnitySkills
                     _history.undoneStack.RemoveAt(0);
             }
 
-            // Remove oldest tasks until estimated serialized size is under MaxHistoryMB
+            // Delete oldest-first until the estimated serialized size is below MaxHistoryMB
             if (maxHistoryBytes > 0)
             {
                 long currentBytes = EstimateHistorySizeBytes();
@@ -2256,13 +2268,13 @@ namespace UnitySkills
             int afterCount = _history.tasks.Count + _history.undoneStack.Count;
             report.removedTasks = beforeCount - afterCount;
 
-            // Reclaim unreferenced file store entries
+            // Reclaim unreferenced file-store entries
             var referencedHashes = CollectReferencedHashes();
             long beforeBytes = WorkflowFileStore.GetStoreSizeBytes();
             WorkflowFileStore.CollectGarbage(referencedHashes, out int reclaimedCount, out _);
             report.reclaimedFileEntries = reclaimedCount;
 
-            // Prune file store by age and total size
+            // Trim the file store by storage age and total size
             int storeMaxAgeDays = WorkflowAutoCleanConfig.StoreMaxAgeDays;
             long maxStoreBytes = WorkflowAutoCleanConfig.MaxStoreMB > 0
                 ? WorkflowAutoCleanConfig.MaxStoreMB * 1024L * 1024L
@@ -2300,7 +2312,7 @@ namespace UnitySkills
         private static long EstimateTaskSizeBytes(WorkflowTask task)
         {
             if (task?.snapshots == null) return 0;
-            long size = 64; // task metadata overhead
+            long size = 64; // Task metadata overhead
             foreach (var s in task.snapshots)
             {
                 if (s == null) continue;
@@ -2318,7 +2330,7 @@ namespace UnitySkills
                         (s.primitiveType?.Length ?? 0) +
                         (s.settingKey?.Length ?? 0) +
                         (s.settingOldValueJson?.Length ?? 0) +
-                        64; // snapshot overhead
+                        64; // Per-snapshot overhead
             }
             return size;
         }
@@ -2410,17 +2422,18 @@ namespace UnitySkills
         public static void ClearHistory()
         {
             _history = new WorkflowHistoryData();
-            // Blobs of the task still being recorded survive: it was never part of the history the
-            // user asked to clear. Everything else goes — the skill promises to empty the store, so
-            // the recent-write grace period does not apply — which also puts the store back in sync
-            // with the history and lifts recovery mode.
+            // The blob for the task still being recorded is preserved: it was never part of the history the
+            // user asked to clear in the first place.
+            // Everything else gets cleaned out — this skill promises to clear the file store, so the
+            // "recently written" grace period doesn't apply here — which also resynchronizes the file
+            // store with history and clears recovery mode.
             WorkflowFileStore.CollectGarbage(CollectReferencedHashes(), out _, out _, includeRecentWrites: true);
             _historyRecoveryMode = false;
             SaveHistory();
         }
 
         /// <summary>
-        /// Returns the on-disk size of the workflow history JSON file in bytes (0 if absent).
+        /// Returns the workflow history JSON file's on-disk size (bytes); returns 0 if the file doesn't exist.
         /// </summary>
         public static long GetHistoryFileSizeBytes()
         {

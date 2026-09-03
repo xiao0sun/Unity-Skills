@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -47,17 +47,17 @@ namespace UnitySkills
 
         /// <summary>
         /// Job kinds whose progress is driven by Unity's own main-thread event loop
-        /// (compilation daemon + domain reload, PackageManager async Request polling,
-        /// TestRunner callbacks, PlayMode state machine, BuildPipeline). <see cref="Wait"/>
-        /// runs on that same main thread, so spin-waiting on these kinds would block the
-        /// very loop they need in order to advance and would never observe progress.
+        /// (compile guard + domain reload, PackageManager async Request polling, TestRunner
+        /// callbacks, PlayMode state machine, BuildPipeline). <see cref="Wait"/> runs on that
+        /// same main thread, so busy-waiting for these kinds only blocks the very loop they
+        /// depend on to advance, and progress will never arrive.
         /// </summary>
         private static readonly HashSet<string> EngineDrivenJobKinds = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "compile", "package", "test", "playmode", "play_capture", "build_player", "playmode_step"
         };
 
-        /// <summary>Hard ceiling for <see cref="Wait"/>'s blocking loop; longer waits must poll instead.</summary>
+        /// <summary>Hard cap on the <see cref="Wait"/> blocking loop; callers needing to wait longer must switch to polling.</summary>
         internal const int MaxWaitTimeoutMs = 2000;
 
         static AsyncJobService()
@@ -399,10 +399,9 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Build the canonical progress-snapshot payload shared by
-        /// HTTP <c>GET /jobs/{id}/progress</c> and the <c>job_progress</c> skill.
-        /// Returns null when <paramref name="record"/> is null; otherwise returns
-        /// an anonymous object with <c>jobId/status/totalCount/offset/events/terminal</c>.
+        /// Builds the standard progress snapshot shared by HTTP <c>GET /jobs/{id}/progress</c>
+        /// and the <c>job_progress</c> skill. Returns null when <paramref name="record"/> is null,
+        /// otherwise an anonymous object with <c>jobId/status/totalCount/offset/events/terminal</c>.
         /// </summary>
         internal static object BuildProgressSnapshot(BatchJobRecord record, int offset)
         {
@@ -513,11 +512,12 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Blocks the calling (main) thread pumping <paramref name="jobId"/> until it reaches
-        /// a terminal state or <paramref name="timeoutMs"/> (clamped to <see cref="MaxWaitTimeoutMs"/>)
-        /// elapses. For <see cref="EngineDrivenJobKinds"/>, blocking cannot help the job progress
-        /// (it would just freeze the Editor for the full timeout), so this pumps once and returns
-        /// the current snapshot immediately with <paramref name="waitNotSupported"/> set.
+        /// Blocks the calling (main) thread, pumping <paramref name="jobId"/> until the job
+        /// reaches a terminal state or <paramref name="timeoutMs"/> (clamped to
+        /// <see cref="MaxWaitTimeoutMs"/>) elapses. For kinds in <see cref="EngineDrivenJobKinds"/>,
+        /// blocking does not help the job advance (it would only freeze the editor for the
+        /// full timeout), so this pumps exactly once and returns the current snapshot
+        /// immediately, setting <paramref name="waitNotSupported"/>.
         /// </summary>
         internal static BatchJobRecord Wait(string jobId, int timeoutMs, out bool waitNotSupported)
         {
@@ -632,9 +632,10 @@ namespace UnitySkills
 
         private static void SweepStaleRuntimes()
         {
-            // Purge runtime contexts whose jobs are already terminal or vanished from persistence.
-            // Normal completion paths call CleanupTestRuntime/CleanupSmokeRuntime; this sweep catches
-            // entries leaked when the test runner aborts or the Editor is forcibly killed mid-run.
+            // Clears runtime context for jobs that have reached a terminal state, or that have
+            // disappeared from persistence. The normal completion path calls
+            // CleanupTestRuntime/CleanupSmokeRuntime; this catches entries leaked by an
+            // interrupted test runner or a force-killed editor.
             if (TestRuntimeJobs.Count > 0)
             {
                 List<string> stale = null;
@@ -807,6 +808,34 @@ namespace UnitySkills
                         return;
                     }
 
+                    // Client.Remove only removes the direct dependency entry in manifest.json;
+                    // if some other installed package still depends on packageId, Unity's
+                    // resolver keeps it around, while the Remove request itself still reports
+                    // StatusCode.Success (see PackageManagerHelper.OnRemoveProgress) — that layer
+                    // carries no failure signal. So installed still being true does not mean the
+                    // removal failed: isDirectDependency is needed to tell apart "the manifest
+                    // entry was never removed at all" (a real failure) from "it was removed from
+                    // the manifest but retained as a transitive dependency" (expected; just tell
+                    // the caller why).
+                    if (PackageManagerHelper.InstalledPackages != null &&
+                        PackageManagerHelper.InstalledPackages.TryGetValue(packageId, out var retainedInfo) &&
+                        !retainedInfo.isDirectDependency)
+                    {
+                        var retainedBy = PackageManagerHelper.InstalledPackages.Values
+                            .Where(p => p.dependencies != null &&
+                                        p.dependencies.Any(d => string.Equals(d.name, packageId, StringComparison.OrdinalIgnoreCase)))
+                            .Select(p => p.name)
+                            .ToArray();
+                        var note = retainedBy.Length > 0
+                            ? $"Removed from manifest direct dependencies, but retained as a transitive dependency of {string.Join(", ", retainedBy)}."
+                            : "Removed from manifest direct dependencies, but retained as a transitive dependency of another installed package.";
+                        resultData["retainedTransitively"] = true;
+                        resultData["retainedByPackages"] = retainedBy;
+                        resultData["note"] = note;
+                        CompleteJob(job.jobId, $"Removed {packageId} from direct dependencies. {note}", resultData);
+                        return;
+                    }
+
                     break;
                 case "refresh":
                     CompleteJob(job.jobId, "Package list refreshed.", resultData);
@@ -891,6 +920,9 @@ namespace UnitySkills
                     return;
                 }
 
+                // 合并保留本地的跨域恢复实现：上游这一段自 base 起只做了注释润色，
+                // 未改动逻辑，而本地已重写为「宽限期重连 + PlayMode 绝不重启 +
+                // EditMode 重启兜底」，上游版本会与上方已合并的注释和守卫自相矛盾。
                 // EditMode tests: attempt to restart
                 try
                 {

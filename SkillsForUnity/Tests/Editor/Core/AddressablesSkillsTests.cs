@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -41,7 +41,11 @@ namespace UnitySkills.Tests.Core
                 installed["result"]?["configured"]?.Value<bool>() != true)
                 Assert.Ignore("Addressables 3.1.0 and configured settings are required.");
 
-            Assert.That(installed["result"]?["version"]?.ToString(), Is.EqualTo("3.1.0"));
+            // The endpoint expectations below are pinned to the Addressables version installed on CI. If a real project
+            // has a newer version installed, that's an environment mismatch, not a product defect — just skip it the way the configured guard above does.
+            var version = installed["result"]?["version"]?.ToString();
+            if (version != "3.1.0")
+                Assert.Ignore($"Addressables endpoint expectations are pinned to 3.1.0 (installed: {version}).");
 
             var groups = Success(Execute("addressables_group_list"));
             var defaultGroup = groups["groups"]?.Children<JObject>().Single(group => group["isDefault"]?.Value<bool>() == true);
@@ -83,6 +87,48 @@ namespace UnitySkills.Tests.Core
                                !path.EndsWith("link.xml", StringComparison.OrdinalIgnoreCase))
                 .ToArray();
             Assert.That(bundles, Is.Not.Empty, "Addressables build did not generate an asset bundle.");
+        }
+
+        /// <summary>
+        /// CreateGroup doesn't error on a name collision — it appends a counter to de-duplicate, so requesting the same name twice yields "X" and "X1".
+        /// But the skill echoes back the requested name both times, which hands the caller a name it can never resolve again on a later call:
+        /// both group_add_entry and group_delete look up the group by name, so they return TARGET_NOT_FOUND against a group that was just reported
+        /// as "created successfully".
+        /// </summary>
+        [Test]
+        public void GroupCreate_OnNameCollision_ReportsTheNameThatWasActuallyCreated()
+        {
+            var installed = Execute("addressables_check_installed");
+            if (installed["result"]?["installed"]?.Value<bool>() != true ||
+                installed["result"]?["configured"]?.Value<bool>() != true)
+                Assert.Ignore("Addressables with configured settings is required.");
+
+            var first = Success(Execute("addressables_group_create", new JObject { ["groupName"] = _groupName }));
+            Assert.That(first["groupName"]?.ToString(), Is.EqualTo(_groupName));
+            Assert.That(first["renamed"]?.Value<bool>(), Is.False);
+
+            var second = Success(Execute("addressables_group_create", new JObject { ["groupName"] = _groupName }));
+            var actualName = second["groupName"]?.ToString();
+            try
+            {
+                Assert.That(second["requestedName"]?.ToString(), Is.EqualTo(_groupName),
+                    "The requested name must stay visible so the caller can tell the two apart.");
+                Assert.That(actualName, Is.Not.EqualTo(_groupName),
+                    "Addressables renames on collision; echoing the request back is the bug under test.");
+                Assert.That(second["renamed"]?.Value<bool>(), Is.True);
+
+                // The whole point of reporting the real name is that only that name can actually be looked up.
+                var groups = Success(Execute("addressables_group_list"))["groups"]?.Children<JObject>()
+                    .Where(group => group["name"]?.ToString() == actualName)
+                    .ToArray();
+                Assert.That(groups?.Length, Is.EqualTo(1),
+                    $"'{actualName}' is not in addressables_group_list, so the reported name is still not the real one.");
+            }
+            finally
+            {
+                if (!string.IsNullOrEmpty(actualName) && actualName != _groupName)
+                    Execute("addressables_group_delete", new JObject { ["groupName"] = actualName });
+            }
         }
 
         private static JObject Execute(string skill, JObject args = null)

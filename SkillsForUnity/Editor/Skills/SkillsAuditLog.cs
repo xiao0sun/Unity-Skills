@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -11,22 +11,22 @@ using UnityEngine;
 namespace UnitySkills
 {
     /// <summary>
-    /// Append-only JSONL audit log for the Skill mode permission system.
+    /// An append-only JSONL audit log for the skill permission-mode system.
     ///
-    /// Events are written to <c>Library/UnitySkillsAudit.jsonl</c> (per-project, not in Git).
-    /// Writes are queued on the calling thread and flushed asynchronously so REST handlers
-    /// never block on disk I/O. Files roll over at 1MB; up to 3 historical files are kept
+    /// Events are written to <c>Library/UnitySkillsAudit.jsonl</c> (stored per-project, not committed to
+    /// Git). Writes queue on the calling thread and flush to disk asynchronously, so REST handlers never
+    /// block on disk I/O. The file rotates at 1MB, keeping up to 3 historical copies
     /// (<c>UnitySkillsAudit.1.jsonl</c> / <c>.2.jsonl</c> / <c>.3.jsonl</c>).
     ///
-    /// All three operating modes (Approval / Auto / Bypass) write to the same log; this is
-    /// the user's primary reverse-tracing tool for "did the AI ask before doing X?".
+    /// All three run modes (Approval / Auto / Bypass) write to the same log; this is the user's primary
+    /// means of retracing "did the AI ask before doing X?"
     /// </summary>
     public static class SkillsAuditLog
     {
         private const string LogFileName = "UnitySkillsAudit.jsonl";
         private const long MaxFileBytes = 1024L * 1024L; // 1MB
         private const int MaxRotatedFiles = 3;
-        private const int ReadTailMaxBytes = 256 * 1024; // /audit endpoint reads tail only
+        private const int ReadTailMaxBytes = 256 * 1024; // The /audit endpoint reads only the tail
 
         private static readonly ConcurrentQueue<string> _queue = new ConcurrentQueue<string>();
         private static readonly object _writeLock = new object();
@@ -35,7 +35,7 @@ namespace UnitySkills
         private static string _cachedPath;
 
         /// <summary>
-        /// Append an event. Non-blocking: the JSON line is queued and flushed on a thread-pool
+        /// Appends an event. Non-blocking: the JSON line is enqueued and flushed to disk by a thread-pool
         /// worker. Safe to call from any thread.
         /// </summary>
         public static void Append(string eventType, object data)
@@ -43,11 +43,11 @@ namespace UnitySkills
             if (string.IsNullOrEmpty(eventType)) return;
             try
             {
-                // Resolve+cache the path here (every current call site runs on the main thread —
-                // see SkillsHttpServer.cs HandlePermissionGrant comment) so the ThreadPool flush
-                // worker reuses the cached value instead of reading Application.dataPath off-thread,
-                // where it silently falls back to Path.GetTempPath() (see ResolveLibraryDir) and
-                // splits the session's audit trail across two files.
+                // Resolve and cache the path here (every current call site is on the main thread — see the
+                // HandlePermissionGrant comment in SkillsHttpServer.cs), so the ThreadPool flush worker can
+                // reuse the cached value instead of reading Application.dataPath off the main thread —
+                // which would silently fall back to Path.GetTempPath() (see ResolveLibraryDir),
+                // splitting this session's audit trail across two files.
                 GetLogPath();
                 var line = BuildLine(eventType, data);
                 _queue.Enqueue(line);
@@ -55,20 +55,20 @@ namespace UnitySkills
             }
             catch (Exception ex)
             {
-                // Audit log MUST NOT crash the caller. Best-effort, swallow.
+                // The audit log must never bring down the caller; best-effort, and swallow the exception.
                 SkillsLogger.LogWarning($"AuditLog enqueue failed: {ex.Message}");
             }
         }
 
         /// <summary>
-        /// Read up to <paramref name="limit"/> most-recent entries (newest first).
-        /// Reads tail only (last ~256KB) so the call is bounded regardless of file size.
-        /// Entries are returned as parsed JObjects; callers serialize as needed.
+        /// Reads up to the most recent <paramref name="limit"/> records (newest first).
+        /// Reads only the tail (roughly the last 256KB), so the time cost doesn't grow with file size.
+        /// Returns parsed JObjects; serialization is left to the caller.
         /// </summary>
         public static IList<object> ReadRecent(int limit)
         {
             if (limit <= 0) limit = 100;
-            // Flush pending entries so the read reflects everything that has been Append-ed.
+            // Flush pending items to disk first, so the read includes every record that's already been Appended.
             FlushSync();
 
             var path = GetLogPath();
@@ -85,7 +85,7 @@ namespace UnitySkills
                     fs.Seek(start, SeekOrigin.Begin);
                     using (var reader = new StreamReader(fs, new UTF8Encoding(false)))
                     {
-                        // Discard partial first line if we started mid-line.
+                        // Discard the possibly-truncated first line when starting mid-line.
                         if (start > 0) reader.ReadLine();
                         tail = reader.ReadToEnd();
                     }
@@ -103,7 +103,7 @@ namespace UnitySkills
                     }
                     catch
                     {
-                        // Skip malformed lines rather than failing the whole read.
+                        // Skip malformed lines; a single bad line shouldn't fail the whole read.
                     }
                 }
             }
@@ -114,7 +114,7 @@ namespace UnitySkills
             return results;
         }
 
-        /// <summary>Resolve the audit log absolute path (cached after first call).</summary>
+        /// <summary>Resolves the audit log's absolute path (cached after the first call).</summary>
         public static string GetLogPath()
         {
             if (_cachedPath != null) return _cachedPath;
@@ -124,13 +124,13 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Delete a single entry from the primary log identified by the (ts, type) pair
-        /// (which together are effectively unique — ts is millisecond-precision UTC).
-        /// Rotated history files are intentionally untouched; only the primary file is
-        /// rewritten so we don't accidentally bloat I/O or risk corrupting older logs.
-        /// Returns the number of lines actually removed (0 if not found, typically 1).
-        /// Writes an <c>audit_deleted</c> tracer event after the deletion so the act of
-        /// deleting is itself audited — critical for keeping the log as a trust anchor.
+        /// Deletes a single record from the primary log by the (ts, type) pair (the combination is
+        /// effectively unique — ts is millisecond-precision UTC).
+        /// Deliberately leaves rotated history files untouched and only rewrites the primary file, to
+        /// avoid amplifying I/O or corrupting old logs.
+        /// Returns the number of lines actually deleted (0 if not found, usually 1).
+        /// Writes an <c>audit_deleted</c> tracer event after deleting, so the deletion itself is also
+        /// audited — this is the key to the log serving as a trust anchor.
         /// </summary>
         public static int DeleteEntry(string ts, string type)
         {
@@ -140,7 +140,7 @@ namespace UnitySkills
             {
                 Newtonsoft.Json.Linq.JObject obj;
                 try { obj = Newtonsoft.Json.Linq.JObject.Parse(line); }
-                catch { return true; } // keep unparseable lines as-is
+                catch { return true; } // Keep unparseable lines as-is
                 var lineTs = obj["ts"]?.ToString();
                 var lineType = obj["type"]?.ToString();
                 bool match = string.Equals(lineTs, ts, StringComparison.Ordinal)
@@ -153,9 +153,10 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Wipe the primary log AND every rotated copy. Returns total bytes removed
-        /// (approximate, for the toast). Records an <c>audit_cleared</c> tracer event
-        /// in the now-empty log so the wipe itself leaves a footprint.
+        /// Clears the primary log and every rotated copy. Returns the total bytes deleted (an
+        /// approximation, for toast display).
+        /// Afterward writes an <c>audit_cleared</c> tracer event into the now-empty log, so the clear
+        /// action itself leaves a trace.
         /// </summary>
         public static long ClearAll()
         {
@@ -193,15 +194,15 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Internal: drain the queue synchronously on the calling thread.
-        /// Used by <see cref="ReadRecent"/> and tests to guarantee write visibility.
+        /// Internal: synchronously drains the queue on the calling thread.
+        /// Used by <see cref="ReadRecent"/> and by tests, to guarantee writes are visible.
         /// </summary>
         internal static void FlushSync()
         {
             FlushPending();
         }
 
-        /// <summary>Internal: wipe the on-disk log (and rotated copies). Tests only.</summary>
+        /// <summary>Internal: clears the on-disk log and rotated copies; test-only use.</summary>
         internal static void ResetForTests()
         {
             FlushPending();
@@ -216,7 +217,7 @@ namespace UnitySkills
             catch { /* ignore */ }
         }
 
-        // ===== internals =====
+        // ===== Internal implementation =====
 
         private static string BuildLine(string eventType, object data)
         {
@@ -227,7 +228,7 @@ namespace UnitySkills
             };
             if (data != null)
             {
-                // Flatten the data object as top-level fields so the log stays grep-friendly.
+                // Flatten the data object into top-level fields, keeping the log grep-friendly.
                 var token = Newtonsoft.Json.Linq.JToken.FromObject(data, JsonSerializer.Create(SkillsCommon.JsonSettings));
                 if (token is Newtonsoft.Json.Linq.JObject obj)
                 {
@@ -247,7 +248,7 @@ namespace UnitySkills
 
         private static void ScheduleFlush()
         {
-            // Coalesce many appends into a single flush task.
+            // Coalesce multiple appends into a single flush task.
             if (Interlocked.CompareExchange(ref _flushScheduled, 1, 0) != 0) return;
             Task.Run(() =>
             {
@@ -263,10 +264,10 @@ namespace UnitySkills
             {
                 try
                 {
-                    // ??= writes the resolved dir back to _cachedDir (not just a local var) so a
-                    // worker-thread resolution here — e.g. if Append's main-thread pre-warm above
-                    // was somehow bypassed — is reused by every later call instead of silently
-                    // re-resolving (and potentially falling back to a different temp dir) each time.
+                    // ??= writes the resolved result back into _cachedDir (not just a local variable), so
+                    // that even if Append's main-thread warmup gets bypassed and resolution happens here on
+                    // a worker thread, later calls can reuse the same result instead of silently
+                    // re-resolving every time (and possibly falling back to a different temp directory).
                     var dir = _cachedDir ??= ResolveLibraryDir();
                     if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
                     var path = _cachedPath ?? Path.Combine(dir, LogFileName);
@@ -290,9 +291,9 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Read the primary log line-by-line, keep only the lines for which <paramref name="keep"/>
-        /// returns true, and atomically rewrite the file (temp + replace). Returns the number
-        /// of lines that were removed. Locked against concurrent flushes via <c>_writeLock</c>.
+        /// Reads the primary log line by line, keeping only lines for which <paramref name="keep"/>
+        /// returns true, and atomically rewrites the file (temp file + replace).
+        /// Returns the number of lines deleted. Mutually exclusive with concurrent flushes via <c>_writeLock</c>.
         /// </summary>
         private static int RewritePrimary(Func<string, bool> keep)
         {
@@ -319,15 +320,15 @@ namespace UnitySkills
                         }
                     }
 
-                    // File.Replace(tmp, path, null) is the actual atomic swap (no backup file,
-                    // since path is a JSONL log we already keep rotated copies of): there's no
-                    // window where `path` is missing, unlike the previous Delete-then-Move pair
-                    // where a crash between the two calls would drop the primary log entirely.
-                    // File.Replace requires the destination to exist; RewritePrimary already
-                    // early-returns above when it doesn't, so this holds except for the
-                    // vanishingly rare case of `path` being removed out-of-band between that
-                    // check and here (both happen under _writeLock, so not by our own code) —
-                    // fall back to a plain move rather than throwing away the rewritten content.
+                    // File.Replace(tmp, path, null) is the true atomic swap (leaves no backup file, since
+                    // path is an existing JSONL log with its own rotated copies): there's no window where
+                    // `path` is missing, unlike a Delete-then-Move, where a crash between the two calls
+                    // would wipe out the primary log entirely.
+                    // File.Replace requires the destination to already exist; RewritePrimary already returns
+                    // early above when it doesn't, so this precondition holds, unless `path` was removed
+                    // externally between that check and here (both are inside _writeLock, so it wouldn't be
+                    // this code doing it) — in that extremely rare case, fall back to a plain move rather
+                    // than discarding the already-rewritten content.
                     try
                     {
                         File.Replace(tmp, path, null);
@@ -354,7 +355,7 @@ namespace UnitySkills
                 var fi = new FileInfo(path);
                 if (!fi.Exists || fi.Length < MaxFileBytes) return;
 
-                // Shift .2 -> .3, .1 -> .2, primary -> .1
+                // Move in order: .2 -> .3, .1 -> .2, primary file -> .1
                 for (int i = MaxRotatedFiles; i >= 1; i--)
                 {
                     var src = i == 1 ? path : RotatedPath(i - 1);
@@ -382,8 +383,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Returns <c>&lt;project&gt;/Library</c>. Falls back to <c>Application.persistentDataPath</c>
-        /// when accessed before the Unity Editor is ready (e.g. early static init on a worker thread).
+        /// Returns <c>&lt;project&gt;/Library</c>. Falls back to <c>Application.persistentDataPath</c> when
+        /// accessed before the Unity editor is ready (e.g. early static init on a worker thread).
         /// </summary>
         private static string ResolveLibraryDir()
         {

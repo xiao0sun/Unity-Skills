@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
 using System.Linq;
@@ -9,8 +9,8 @@ using UnitySkills.Internal;
 namespace UnitySkills
 {
     /// <summary>
-    /// Smart Agentic Skills for advanced scene querying, layout, and auto-binding.
-    /// Designed to give AI "reasoning" and "practical design" capabilities.
+    /// Agent-facing smart skills: advanced scene queries, layout, and auto-wiring.
+    /// The goal is to give AI "reasoning" and "hands-on design" capability.
     /// </summary>
     public static class SmartSkills
     {
@@ -29,19 +29,23 @@ namespace UnitySkills
         };
 
         // ==================================================================================
-        // 1. Smart Query ("The SQL for Unity Scene")
+        // 1. Smart query ("Unity scene-flavored SQL")
         // ==================================================================================
 
         [UnitySkill("smart_scene_query", "Query objects by component property (params: componentName, propertyName, op, value). e.g. componentName='Light', propertyName='intensity', op='>', value='10'",
             Category = SkillCategory.Smart, Operation = SkillOperation.Query,
             Tags = new[] { "query", "component", "property", "filter", "search" },
             Outputs = new[] { "count", "query", "results" },
+            // Both would be rejected by the Validate.Required call below; since neither has a CLR default value, the schema used to mark them as optional,
+            // and an empty-body dry-run was also judged valid. What's declared here is the parameter name (not a semantic "component" marker),
+            // because that's the actual form this skill accepts, and both really are required -- there's no "either/or".
+            RequiresInput = new[] { "componentName", "propertyName" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object SmartSceneQuery(
             string componentName = null,
             string propertyName = null,
-            string op = "==",       // ==, !=, >, <, >=, <=, contains
+            string op = "==",       // values: ==, !=, >, <, >=, <=, contains
             string value = null,
             int limit = 50,
             string query = null)
@@ -98,7 +102,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // 2. Smart Layout ("The Automated Designer")
+        // 2. Smart layout ("automated designer")
         // ==================================================================================
 
         [UnitySkill("smart_scene_layout", "Organize selected objects into a layout (Linear, Grid, Circle, Arc). Requires objects selected in Hierarchy first.", TracksWorkflow = true,
@@ -107,31 +111,41 @@ namespace UnitySkills
             Outputs = new[] { "layout", "count", "spacing" },
             RequiresInput = new[] { "selection" })]
         public static object SmartSceneLayout(
-            string layoutType = "Linear",   // Linear, Grid, Circle, Arc
-            string axis = "X",              // X, Y, Z for Linear; ignored for Circle
-            float spacing = 2.0f,           // Distance between items (or radius for Circle)
-            int columns = 3,                // For Grid layout
-            float arcAngle = 180f,          // For Arc layout (degrees)
-            bool lookAtCenter = false)      // For Circle/Arc: rotate to face center
+            string layoutType = "Linear",   // values: Linear, Grid, Circle, Arc
+            string axis = "X",              // Linear uses X/Y/Z; ignored under Circle
+            float spacing = 2.0f,           // spacing between elements (radius under Circle)
+            int columns = 3,                // only used by Grid layout
+            float arcAngle = 180f,          // only used by Arc layout (in degrees)
+            bool lookAtCenter = false)      // for Circle/Arc: rotate to face the center
         {
             var selected = Selection.gameObjects.OrderBy(g => g.transform.GetSiblingIndex()).ToList();
-            if (selected.Count == 0) 
+            if (selected.Count == 0)
                 return new { success = false, error = "No GameObjects selected. Select objects in Hierarchy first." };
 
-            // Workflow 支持
+            // Both word lists are validated before anything gets moved. An unknown layoutType wouldn't match any switch branch,
+            // which would leave every object stuck at newPos = startPos -- i.e. the whole selection collapses onto the first object's position, and still reports success.
+            var layout = layoutType?.ToLower();
+            if (layout != "linear" && layout != "grid" && layout != "circle" && layout != "arc")
+                return SkillParamUtil.InvalidValueError(layoutType, "layoutType",
+                    new[] { "Linear", "Grid", "Circle", "Arc" });
+
+            if (!TryParseAxis(axis, out var axisVec))
+                return SkillParamUtil.InvalidValueError(axis, "axis",
+                    new[] { "X", "Y", "Z", "-X", "-Y", "-Z" });
+
+            // Workflow support
             foreach (var go in selected)
                 WorkflowManager.SnapshotObject(go.transform);
 
             Undo.RecordObjects(selected.Select(g => g.transform).ToArray(), "Smart Layout");
 
             var startPos = selected[0].transform.position;
-            Vector3 axisVec = ParseAxis(axis);
 
             for (int i = 0; i < selected.Count; i++)
             {
                 Vector3 newPos = startPos;
                 
-                switch (layoutType.ToLower())
+                switch (layout)
                 {
                     case "linear":
                         newPos = startPos + axisVec * (i * spacing);
@@ -140,7 +154,7 @@ namespace UnitySkills
                     case "grid":
                         int row = i / columns;
                         int col = i % columns;
-                        // Grid on XZ plane by default
+                        // Grid defaults to laying out on the XZ plane
                         newPos = startPos + new Vector3(col * spacing, 0, -row * spacing); 
                         break;
 
@@ -161,7 +175,7 @@ namespace UnitySkills
                 
                 selected[i].transform.position = newPos;
                 
-                if (lookAtCenter && (layoutType.ToLower() == "circle" || layoutType.ToLower() == "arc"))
+                if (lookAtCenter && (layout == "circle" || layout == "arc"))
                 {
                     selected[i].transform.LookAt(startPos);
                 }
@@ -171,7 +185,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // 3. Smart Binder ("The Auto-Wiring Engineer")
+        // 3. Smart wiring ("auto-wiring engineer")
         // ==================================================================================
 
         [UnitySkill("smart_reference_bind", "Auto-fill a List/Array field with objects matching tag or name pattern", TracksWorkflow = true,
@@ -180,16 +194,16 @@ namespace UnitySkills
             Outputs = new[] { "boundCount", "field", "appendMode" },
             RequiresInput = new[] { "gameObject", "component" })]
         public static object SmartReferenceBind(
-            string targetName,          // Target GameObject name
-            string componentName,       // Component on target
-            string fieldName,           // Field to fill
-            string sourceTag = null,    // Find by tag
-            string sourceName = null,   // Find by name contains
-            bool appendMode = false)    // If true, append to existing; if false, replace
+            string targetName,          // name of the target GameObject
+            string componentName,       // component on the target
+            string fieldName,           // the field to populate
+            string sourceTag = null,    // find by tag
+            string sourceName = null,   // find by name containing this substring
+            bool appendMode = false)    // true appends to existing elements, false replaces entirely
         {
             if (string.IsNullOrEmpty(fieldName)) return new { error = "fieldName is required" };
 
-            // 1. Find Target
+            // 1. Find the target object
             var targetGo = GameObjectFinder.Find(name: targetName);
             if (targetGo == null) 
                 return new { success = false, error = $"Target '{targetName}' not found" };
@@ -198,7 +212,7 @@ namespace UnitySkills
             if (comp == null) 
                 return new { success = false, error = $"Component '{componentName}' not found on target" };
 
-            // 2. Find Member (field, then Unity naming conventions, then property)
+            // 2. Find the member (field first, then Unity naming-convention variants, finally property)
             var type = comp.GetType();
             var field = type.GetField(fieldName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (field == null)
@@ -216,7 +230,7 @@ namespace UnitySkills
             if (field == null && propFallback == null)
                 return new { success = false, error = $"Field '{fieldName}' not found on {componentName}" };
 
-            // 3. Find Source Objects
+            // 3. Find the source objects
             var sources = new List<GameObject>();
             if (!string.IsNullOrEmpty(sourceTag))
             {
@@ -232,7 +246,7 @@ namespace UnitySkills
             if (sources.Count == 0) 
                 return new { success = false, error = "No source objects found matching criteria" };
 
-            // 4. Validate field type
+            // 4. Validate the field type
             var fieldType = field != null ? field.FieldType : propFallback.PropertyType;
             bool isList = fieldType.IsGenericType && fieldType.GetGenericTypeDefinition() == typeof(List<>);
             bool isArray = fieldType.IsArray;
@@ -240,15 +254,28 @@ namespace UnitySkills
             if (!isList && !isArray)
                 return new { success = false, error = $"Field '{fieldName}' is not a List<> or Array type" };
 
-            WorkflowManager.SnapshotObject(comp);
-            Undo.RecordObject(comp, "Smart Bind");
-
             var elementType = isArray ? fieldType.GetElementType() : fieldType.GetGenericArguments()[0];
 
-            // Convert GameObjects to ElementType
+            // sourceTag/sourceName both resolve to GameObjects, and the loop below can only convert them into GameObject or
+            // Component elements (via GetComponent). Any element type that's neither of those (Material, ScriptableObject,
+            // a plain interface...) can never match any source object, so every item gets silently dropped and the field gets overwritten with an empty array/list --
+            // success:true, boundCount:0, no error. So this rejects before any write happens, instead of clearing a field the caller never asked to clear.
+            if (elementType != typeof(GameObject) && !typeof(Component).IsAssignableFrom(elementType))
+            {
+                return new
+                {
+                    success = false,
+                    error = $"Field '{fieldName}' has element type '{elementType.Name}', which is neither GameObject nor a Component — sourceTag/sourceName resolve to GameObjects, so this field can never be bound this way.",
+                    errorCode = SkillParamUtil.SemanticInvalidCode,
+                    parameter = "fieldName",
+                };
+            }
+
+            WorkflowManager.SnapshotObject(comp);
+            Undo.RecordObject(comp, "Smart Bind");
             var convertedList = new ArrayList();
             
-            // Append mode: start with existing items
+            // append mode: start from the existing elements
             if (appendMode)
             {
                 var existing = (field != null ? field.GetValue(comp) : propFallback.GetValue(comp)) as IEnumerable;
@@ -292,7 +319,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Helpers
+        // Helper methods
         // ==================================================================================
 
         private static System.Type GetTypeByName(string name)
@@ -302,7 +329,7 @@ namespace UnitySkills
             // Fast path: common Unity types (static dictionary)
             if (CommonUnityTypes.TryGetValue(name, out var t)) return t;
 
-            // Slow path: reflection
+            // Slow path: reflection lookup
             return SkillsCommon.GetAllLoadedTypes()
                 .FirstOrDefault(type => type.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase));
         }
@@ -360,27 +387,31 @@ namespace UnitySkills
             return false;
         }
 
-        private static Vector3 ParseAxis(string axis)
+        /// <summary>
+        /// Converts an axis token into a direction vector. An invalid value returns false, rather than silently defaulting to Vector3.right --
+        /// the latter would make a typo look like a deliberately chosen +X layout.
+        /// </summary>
+        private static bool TryParseAxis(string axis, out Vector3 direction)
         {
-            switch (axis?.ToUpper())
+            switch (axis?.Trim().ToUpperInvariant())
             {
-                case "X": return Vector3.right;
-                case "Y": return Vector3.up;
-                case "Z": return Vector3.forward;
-                case "-X": return Vector3.left;
-                case "-Y": return Vector3.down;
-                case "-Z": return Vector3.back;
+                case "X": direction = Vector3.right; return true;
+                case "Y": direction = Vector3.up; return true;
+                case "Z": direction = Vector3.forward; return true;
+                case "-X": direction = Vector3.left; return true;
+                case "-Y": direction = Vector3.down; return true;
+                case "-Z": direction = Vector3.back; return true;
+                default: direction = Vector3.right; return false;
             }
-            return Vector3.right;
         }
-        
+
+        // Round-trippable and locale-independent. The F2/F1-style formatting this replaces would round the reported value into a number that no longer equals the actual stored value when read back,
+        // and it also follows the editor's locale -- on a machine where the decimal separator is a comma it would output "(1,5, 0, 0)", which can't be parsed back as a vector at all.
         private static string FormatValue(object val)
         {
-            if (val is float f) return f.ToString("F2");
-            if (val is double d) return d.ToString("F2");
-            if (val is Vector3 v3) return $"({v3.x:F1}, {v3.y:F1}, {v3.z:F1})";
-            if (val is Color c) return $"RGBA({c.r:F2}, {c.g:F2}, {c.b:F2}, {c.a:F2})";
-            return val?.ToString() ?? "null";
+            if (val is Vector3 v3) return SkillParamUtil.FormatVector3(v3);
+            if (val is Color c) return $"RGBA{SkillParamUtil.FormatColor(c)}";
+            return SkillParamUtil.FormatScalarR(val);
         }
 
         [UnitySkill("smart_scene_query_spatial", "Find objects within a sphere/box region, optionally filtered by component",
@@ -448,7 +479,11 @@ namespace UnitySkills
         {
             var selected = Selection.gameObjects.OrderBy(g => g.transform.GetSiblingIndex()).ToList();
             if (selected.Count < 3) return new { error = "Need at least 3 selected objects" };
-            Vector3 axisVec = ParseAxis(axis);
+            // An invalid axis used to be silently treated as +X, so objects were laid out along an axis the caller never specified,
+            // while the response still echoed back the very axis it had passed in.
+            if (!TryParseAxis(axis, out var axisVec))
+                return SkillParamUtil.InvalidValueError(axis, "axis",
+                    new[] { "X", "Y", "Z", "-X", "-Y", "-Z" });
             foreach (var go in selected) WorkflowManager.SnapshotObject(go.transform);
             Undo.RecordObjects(selected.Select(g => g.transform).ToArray(), "Smart Distribute");
             float startVal = Vector3.Dot(selected[0].transform.position, axisVec);

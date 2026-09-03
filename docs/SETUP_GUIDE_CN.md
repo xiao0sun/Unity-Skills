@@ -76,6 +76,8 @@ scripts/agent_config.json   # Agent 配置
 references/                 # Unity 开发参考文档
 ```
 
+> **升级自动同步**：包版本变化后，下次编辑器加载时会把你已安装过的每个工具刷新到新版本，不用再点一次 Install。只更新已存在的安装；从未装过的工具不会被自动装上。覆盖方式与手动 Install 完全一致，因此对已安装副本的本地修改会被替换。可在 ⚙ 设置抽屉的 **AI 工具** 区关闭。
+
 > **Codex 说明**：Antigravity 和 Codex 工作区共享 `.agents/skills/`，装一次即两边可用。Codex 自动扫描发现 skills，无需在 `AGENTS.md` 中声明。
 
 > **按 scope 卸载（v1.9.0+）**：每个 Agent 卡片的"卸载"按钮按当前安装状态智能形变 —— 未安装为灰态；仅一处装则按钮自带 scope 标签直接卸载该 scope；两处都装则显示 `Uninstall ▾` 下拉，分别选择 Project / Global。允许只移除一个 scope 的 skill，不动另一个。
@@ -93,6 +95,7 @@ references/                 # Unity 开发参考文档
 | Codex | `.agents/skills/`（与 Antigravity 共享） | `~/.agents/skills/` |
 | Cursor | `.cursor/skills/` | `~/.cursor/skills/` |
 | OpenCode | `.opencode/skills/` | `~/.config/opencode/skills/` |
+| Kimi Code | `.kimi-code/skills/` | `~/.kimi-code/skills/`（或 `$KIMI_CODE_HOME/skills/`） |
 
 ### 支持的 AI 工具
 
@@ -105,6 +108,7 @@ references/                 # Unity 开发参考文档
 | **Codex** | ✅ | `$skill` 显式调用 + 隐式意图识别；自动扫描 `.agents/skills/` |
 | **Cursor** | ✅ | 自动扫描 `.cursor/skills/` 和 `.agents/skills/`；支持 `/skill-name` 显式触发；可在 设置 → Rules 查看已加载技能 |
 | **OpenCode** | ✅ | 原生扫描工作区 `.opencode/skills/` 和全局 `~/.config/opencode/skills/` |
+| **Kimi Code** | ✅ | 原生扫描项目级 `.kimi-code/skills/` 和用户级 `~/.kimi-code/skills/`（跟随 `$KIMI_CODE_HOME`）；支持 `/skill:unity-skills` 显式触发；同时扫描 `.agents/skills/` |
 
 > ⚠️ **通用兼容性**：UnitySkills 遵循开放的 Skill 标准。**任何能读取 markdown 文件并发送 HTTP 请求的 AI 工具**都可以使用 UnitySkills — 不限于上述列表。只需将 `unity-skills~/` 目录内容复制到你的工具的 skill 或 prompt 位置，确保工具能访问 `http://localhost:8090` 即可。
 

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -33,7 +33,14 @@ namespace UnitySkills
                 return new { error = $"Build target '{buildTarget}' is not supported by this Unity installation. Install its platform module first." };
 
             if (!TryResolveScenes(scenes, out var resolvedScenes, out var scenesError))
-                return new { error = scenesError };
+                // TryResolveScenes only returns an empty resolvedScenes for the single case of
+                // "no scenes to build"; once scenes are resolved (non-empty), a subsequent per-scene
+                // validation failure still leaves that non-empty list intact. That's enough to distinguish
+                // the two failure branches without parsing scenesError's text.
+                // The empty-list message ("...has no enabled scenes") looks, to SkillErrorClassifier's
+                // MissingOnTargetPattern, like "GameObject has no Rigidbody", and would be misclassified as
+                // TARGET_NOT_FOUND, pointing the caller at gameobject_find/scene_get_hierarchy -- meaningless for a build-settings problem. Declaring errorCode/suggestedFixes explicitly skips that heuristic.
+                return resolvedScenes.Length == 0 ? (object)NoScenesConfigured() : new { error = scenesError };
             if (!TryResolveOutputPath(outputPath, buildTarget, overwrite, out var resolvedOutput, out var outputError))
                 return new { error = outputError };
             if (!ValidateDirtyScenes(resolvedScenes, out var dirtyError))
@@ -235,6 +242,21 @@ namespace UnitySkills
             error = null;
             return true;
         }
+
+        private static object NoScenesConfigured() => new
+        {
+            error = "No scenes were provided and Build Settings has no enabled scenes.",
+            errorCode = SkillErrorCode.SemanticInvalid.ToWireString(),
+            retryStrategy = SkillErrorResponse.RetryFixAndRetry,
+            suggestedFixes = new[]
+            {
+                new
+                {
+                    action = "fix_param",
+                    reason = "Add and enable scenes in File > Build Settings, or pass the scenes parameter with explicit Assets/*.unity paths."
+                }
+            }
+        };
 
         private static string DefaultRelativeOutput(BuildTarget target)
         {

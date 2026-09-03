@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 using NUnit.Framework;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -69,7 +69,6 @@ namespace UnitySkills.Tests.Core
         [Test]
         public void SceneHealthCheck_DetectsMissingInfrastructure()
         {
-            // Start with empty scene (no default objects)
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             GameObjectFinder.InvalidateCache();
 
@@ -78,7 +77,6 @@ namespace UnitySkills.Tests.Core
 
             Assert.IsTrue(json["success"]?.Value<bool>() ?? false);
             Assert.IsNotNull(json["findings"]);
-            // Empty scene should report missing camera at minimum
             var findings = json["findings"] as JArray;
             Assert.IsTrue(findings?.Count > 0);
         }
@@ -97,7 +95,6 @@ namespace UnitySkills.Tests.Core
         [Test]
         public void SceneFindHotspots_DetectsDeepHierarchy()
         {
-            // Create a deep hierarchy
             var root = new GameObject("DeepRoot");
             var current = root;
             for (int i = 0; i < 10; i++)
@@ -148,7 +145,6 @@ namespace UnitySkills.Tests.Core
         [Test]
         public void SceneContractValidate_DefaultContract_ReportsMissingRoots()
         {
-            // Empty scene should be missing default contract roots
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             GameObjectFinder.InvalidateCache();
 
@@ -176,8 +172,7 @@ namespace UnitySkills.Tests.Core
         [Test]
         public void BuildSuggestedNextSkills_FiltersInvalidSkillReferences()
         {
-            // scene_analyze calls BuildSuggestedNextSkills internally
-            // All returned skills should be valid registered skills
+            // BuildSuggestedNextSkills can't be called directly; covered indirectly via scene_analyze.
             var result = PerceptionSkills.SceneAnalyze();
             var json = ToJObject(result);
 

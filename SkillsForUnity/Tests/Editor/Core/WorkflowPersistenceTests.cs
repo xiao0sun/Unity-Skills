@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using Newtonsoft.Json.Linq;
@@ -50,8 +50,8 @@ namespace UnitySkills.Tests.Core
             WorkflowManager.ResetStateForTests();
             WorkflowManager.OverrideHistoryFilePathForTests = null;
             WorkflowFileStore.OverrideStoreRootForTests = null;
-            // Do not delete the active scene's asset folder while Unity Test Framework is
-            // finalizing its Undo state; keep a valid target scene through teardown.
+            // While Unity Test Framework is winding down Undo state, the asset folder holding the currently
+            // active scene can't be deleted; there must always be a valid target scene throughout teardown.
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             if (AssetDatabase.IsValidFolder(AssetRoot)) AssetDatabase.DeleteAsset(AssetRoot);
             AssetDatabase.Refresh();
@@ -404,6 +404,9 @@ namespace UnitySkills.Tests.Core
             AssertSchemaParameterRequired(schema, "batch_preview_set_property", "propertyName");
             AssertSchemaParameterRequired(schema, "batch_preview_replace_material", "materialPath");
             AssertSchemaParameterRequired(schema, "workflow_plan", "skillsJson");
+            // Was previously published as required:false, while the method body rejects both "omitted" and
+            // "empty string" — the schema and actual behavior contradict each other on this skill's only parameter.
+            AssertSchemaParameterRequired(schema, "addressables_group_create", "groupName");
 
             var dryRun = JObject.Parse(SkillRouter.DryRun("batch_preview_set_property", "{}"));
             Assert.That(dryRun["valid"]?.Value<bool>(), Is.False);

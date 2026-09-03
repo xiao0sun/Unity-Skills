@@ -1,6 +1,192 @@
-﻿# Changelog
+# Changelog
 
 All notable changes to **UnitySkills** will be documented in this file.
+
+## [2.8.0] - 2026-08-30
+
+> **JSON 本地化解耦 + 多 Tab 窗口与 Tab 可见性配置 + Token 级别过滤** —— 本版三大核心升级：(1) 将原 `Localization.cs` 内庞大的硬编码多语言字典解耦迁移为独立的外部 JSON 资源体系（`Locales/en.json`、`zh-CN.json`、`ru.json`，1086 词条 100% 对齐），显著缩减代码体积与编译内存开销，并新增 CI 本地化检查工具；(2) UnitySkills 窗口全面升级多 Tab 架构，新增 Tab 可见性配置（`TabVisibilitySettings`）与 Unity CLI Tab 集成；(3) 新增 Skills Token Level（Compact / Normal / Verbose）档位与 UI 滑块组件，支持快速调节与过滤技能载荷，优化 AI 上下文消耗；(4) package.json 显式声明 `com.unity.test-framework` 依赖，修复无头 CI 环境测试程序集编译。
+
+### Added
+
+- **JSON 多语言本地化体系与 CI 校验** — 新增 `SkillsForUnity/Editor/Locales/` 目录（`en.json`, `zh-CN.json`, `ru.json`，各 1086 词条完整对齐），重构 `Localization.cs` 为轻量化 JSON 运行时加载器；新增 `.github/scripts/check_locales.py` CI 检查工具与 `SkillsLocalizationTests` 自动化测试。
+- **UnitySkills 窗口多 Tab 架构与 Tab 可见性设置** — 新增 `TabVisibilitySettings` 配置与持久化机制，支持自定义控制各功能 Tab（Unity CLI、Settings 等）的展示与隐藏；新增 `UnityCliTabController` 与 `UnityCliTab.uxml` 面板集成；新增 `UnitySkillsWindowTabTests` 单元测试。
+- **Skills Token Level 载荷过滤机制** — 新增 `SkillsTokenLevel` 枚举与 `TokenLevelSliderWidget` 滑块控件，支持按 Token 预算过滤技能元数据与 schema 输出；新增 `SkillsTokenLevelTests` 测试用例。
+
+### Changed
+
+- **`Localization.cs` 架构精简** — 移除近 3,800 行硬编码字典，改由 JSON 驱动，大幅降低编辑器内存占用与启动编译耗时。
+- **UI 控制器体验重构** — 优化 `SettingsDrawerController`、`SkillsTabController`、`PendingApprovalBannerController`、`AIConfigTabController` 与 `UnityCliWindow` 的交互与状态同步。
+- **版本号更新** — `SkillsLogger.Version` / `package.json` / Python helper `__version__` / `agent.md` 同步提升到 `2.8.0`。受支持版本表（.github/SECURITY.md）同步到 2.8.x。
+
+### Fixed
+
+- **测试程序集依赖缺失** — 在 `package.json` 中补齐 `"com.unity.test-framework": "1.1.33"` 依赖，修复无头模式与纯 UPM 导入下的单元测试编译与运行问题。
+
+## [2.7.1] - 2026-08-29
+
+> **QFramework 支持 + 全仓注释英化** —— 本版两件事：(1) 新增对 [QFramework](https://github.com/liangxiegame/QFramework)（凉鞋的 Unity 框架，MIT）的双轨支持——20 个 REST 技能（`qframework` 模块）与一套源码锚定的架构设计指导（`qframework-design` advisory 模块，8 份中文文档）。QFramework 没有 UPM 包，只能以 unitypackage 或单文件形式装进 `Assets/`，因此检测完全走反射锚类型：未安装时零编译期影响、不报错，除 `qframework_get_status` 外统一返回 `MISSING_PACKAGE`；技能总数 785 → **805**，分类 53 → 54，模块文档 80 → 82（54 REST + 28 advisory）。(2) 把仓库源码注释的语言从中文切换为英文（144 个文件、约 5,420 行），并同步 `CONTRIBUTING.md` 与 `agent.md` 的注释语言规范。全部改动经无头编译（0 error / 41 既有 warning）与 641 项 EditMode 测试（0 失败）验证。
+
+### Added
+
+- **QFramework REST 模块（20 个技能）** — 架构层代码生成（Architecture / System / Model / Command / Utility / Query，含 batch 变体，同名文件拒绝覆盖）、ViewController 绑定代码生成、UIKit 面板代码生成、UIKit 项目设置读写、ResKit 的 AssetBundle 标记（幂等封装，含 batch）与标记列表、ResKit 构建选项（SimulationMode / append-hash / auto-generate-class）、AssetBundle 构建与清理、架构实现类扫描（`IArchitecture` / `ISystem` / `IModel` / `ICommand` / `IQuery` / `IController`）、QFramework 内置 API 文档特性查询、LocaleKit 编辑器语言与语言定义配置。
+- **`qframework-design` advisory 模块（8 份中文文档）** — 四层架构职责与通用规则、CQRS 与 BindableProperty、事件工具三选一与两套 IOC 容器辨析、CodeGenKit + UIKit 工作流、ResKit 资源方案、ActionKit + SingletonKit + AudioKit、数据结构类 Kit。每条规则锚定 QFramework 源码或官方 Doc.md 行号，并标注了官方教程尚未同步的破坏性变更（`RegisterSystem` / `RegisterModel` / `RegisterUtility` 自 2026-08-12 起返回注册实例而非 void）。
+- **`SkillCategory.QFramework` 与 60 条三语技能描述词条** — 新分类登记后 `GET /skills/schema?category=QFramework` 自动生效。
+
+### Changed
+
+- **源码注释语言切换为英文** — 144 个文件约 5,420 行中文注释译为英文，仅保留 7 行确有必要的中文（逐字引用中文界面文案、上游第三方中文提示串、中文关键词映射表键名）。字符串字面量中的中文属产品输出，未改动；受字体图集扫描的 `Editor/UI/**` 与 `Localization.cs` 非 ASCII 字符净减 1392、新增 0，满足"只减不增"约束。
+- **注释语言规范入册** — `.github/CONTRIBUTING.md` 的 C# 与 Python 两条 Code Style 条款改为英文注释并写明例外；`agent.md` 新增「注释语言」一节，说明该规范只约束注释、不涉及字符串字面量，并记录字体图集扫描的例外。
+- **13 处硬编码中文 API 响应文案改为英文** — 覆盖 Cinemachine 缺包与 Splines 版本提示、包安装/移除的瞬时不可用提示、Timeline 路径语义校验提示、测试脚本创建提示；与同一响应对象里既有的英文字段保持一致。三语 `L(en, zh, ru)` 本地化变体、中文意图映射字典与错误分类器关键词属功能数据，未改动。
+- **版本号更新** — `SkillsLogger.Version` / `package.json` / Python helper `__version__` / `agent.md` 同步提升到 `2.7.1`。
+
+### Fixed
+
+- **`MODE_RESTRICTED` 的 Dialog 通道 hint 中英混杂并泄露内部代号** — 发给 AI 调用方的提示原文夹带中文与内部设计代号「v1.9 方案 B」，已改写为与相邻 Panel 通道一致的纯英文表述。
+- **`.github/CONTRIBUTING.md` 功能模块计数漂移** — 该处长期写作 55，与其余全部锚点的 54 不一致，已修正。
+- **`skills/cinemachine/SKILL.md` 引用的错误文案失准** — 文档举例引用的缺包提示仍是旧的中文原文，已同步为现行英文文案。
+
+## [2.7.0] - 2026-08-23
+
+> **载荷 v2 与三档 Surface Profile + 全 785 技能真机彻查修复** —— 本版分三部分：(1) 交互载荷体系升级（裸 `/skills` 默认精简目录、`?wire=v2` 紧凑格式、新增会话常量端点 `/skills/meta`、三档 Surface Profile 场景免打扰）；(2) 对抗复审修复轮（枚举静默、面板部分写入、档位绕行等 3 个 P0 + 8 个 P1）；(3) 对全部 785 个技能（含 Cinemachine/YooAsset/Netcode/XR/HybridCLR/ProBuilder/ShaderGraph 等可选包）逐一真机实测后统一修复约 40 个"声称成功但无效果 / 静默无操作 / 误导性错误"类缺陷。新增技能 `light_get_properties`，技能总数 784 → **785**。发布前最后一轮把此前只能验证"缺包/未配置时优雅报错"的两组可选包技能升级为真装真测：DOTween Pro 1.0.381（21 技能）与已初始化的 Addressables 4.0.1（8 技能）在活编辑器逐技能实测并修复所有新发现缺陷；785 技能全量冒烟 0 失败，双版本（6000.3 / 2022.3）EditMode 全量回归 0 失败。
+
+### Added
+
+- **`GET /skills/meta` 会话常量端点** — 把跨响应恒定的 envelope 常量（defaults、categories、reservedBodyParameters 等）抽到一个逐字节稳定、三档 Surface Profile 下完全相同的独立端点，减少每次目录/schema 响应的重复负载。
+- **`?wire=v2` 紧凑响应格式** — 用 true-only 的 `flags` 数组替代 6 个恒常布尔字段、`riskLevel` 仅在非 low 时出现、`supportsDryRun` 仅在 false 时出现、省略 null 值、附带自描述 `defaults` 块。full 目录 675KB → 487KB（-28%），scoped -52~59%。合法请求的 v1 响应逐字节不变。
+- **三档 Surface Profile（full / guide / noSceneAuthoring）** — EditorPrefs 持久化的技能可见面控制，`SURFACE_EXCLUDED` 错误码不可被 Bypass / Allowlist / 一次性授权绕过；面板设置页新增三语下拉。
+- **`light_get_properties`** — `light_get_info` 的只读别名，输出含颜色 alpha 通道；灯光属性首次可通过 `light_*` 命名读取（此前仅 `light_set_*`）。
+- **`camera_set_properties` 的 `bgA`、`light_set_properties` 的 `a`（背景色 / 灯光色 alpha 通道）** — 成功响应新增 `applied` / `skipped` 数组，逐参数回报实际生效项。
+- **`component_set_property` 支持 JSON 对象形式的向量/颜色值**（`{"x":1,"y":2,"z":3}` / `{"r":1,"g":0,"b":0,"a":1}`），与逗号分隔字符串并存。
+- **载荷契约与 Surface Profile 的 CI 红线测试** — 新增约 190 条 EditMode 测试（载荷字节预算、v1/v2 等价、档位隐藏集、枚举拒绝、元数据行为级断言等），双版本（Unity 6000.3 / 2022.3）全绿。
+- **DOTween Pro 真机批次的 50 条 EditMode 回归（14 个测试方法，全部不需要装 DOTween）** — 索引权威序（用 BoxCollider 立同型夹具，断言"回报的序号即 `GetComponents` 中的位置"）、越域数值与省略载荷经 router 的真实拒答码、`unsupported` 反馈（用形状与 1.0.381 一致的替身 settings 对象，含"有容量字段"的对照组）、枚举词表与可写字段名、生成脚本的 using 与死字段、以及 `HasColor` 相对 `HasProperty` 的类型判别力（拿 stock shader 的 float 属性验证，不需要造 shader 资产也不依赖控制台断言）。
+- **dryRun 预览新增 `longRunning` 字段** — 预演响应标注该操作预计是否长耗时，便于调用方决定是否走异步 job 路径。
+- **内置 CJK 字体图集预烤 13 个当前未引用字形（预留）** — 为后续新增中文界面文案预留字形余量，降低新增文案触发面板掉字的概率。
+- **AI 工具安装自动更新（`SkillInstallSyncService`）** — 包版本变化后的首次编辑器加载自动把**已安装**的 AI 工具 SKILL.md 副本刷新到新版本，无需再到面板手动点安装：版本门记录存 `Library/UnitySkills/install_sync.json`（项目级，双开不互踩），仅同步检测为已安装的目标、从不自动新装（12 个目标 = 6 工具 × 项目/全局），复用 SkillInstaller 既有检测与安装逻辑，覆盖语义与手动安装一致（本地修改会被替换，文档已注明），单目标失败跳过不中断且不写记录留待下次重试，batchmode 跳过、零弹窗。设置抽屉新增"AI 工具"组开关（默认开，三语文案经字体图集字形核验），新增 `SkillInstallSyncTests` 18 条用例。同步完成/跳过/失败的 Console 日志文案跟随面板语言（英/中/俄），文案内联在服务内而不进 `Localization.cs`——Console 走 Unity 内置字体，不占用面板字体图集。
+- **Addressables 模块文档（`skills/addressables/SKILL.md`）** — 8 个 REST 技能（group CRUD / entry / profile / build）此前全仓零文档；现补齐端点定义、Guardrails（group_create 撞名自动改名须用返回的 `groupName`、add_entry 是移动非复制、build 同步阻塞主线程、全模块不入 workflow 撤销、缺包与缺 settings 两类前置错误）与主索引条目。模块文档 79 → **80**（53 REST + 27 advisory），相关计数与"55 个 `*Skills.cs` / 53 个 `SkillCategory`"口径说明已同步 agent.md / README / 根 SKILL.md（8,185 B，红线 8,192 内）。
+
+### Changed
+
+- **裸 `GET /skills` 默认返回精简目录（brief）** — 从默认返回完整 manifest 改为精简目录，完整版通过 `?full=1` 获取。避免 agent 无意拉取约 675KB 载荷打爆上下文窗口。
+- **`/health` 响应形状变更** — 新增 `surfaceProfile` / `surfaceProfileHint`；`guideMode` 语义收窄为 profile 别名；移除 `guideModeHint`。
+- **`job_status` / `job_wait` 默认不再内联 `details`（作业全量结果）** — 改为返回 `resultAvailable` + `resultHint` 指向该 kind 的专属结果技能；传 `includeDetails=true` 恢复旧行为。轮询期间单次响应从数十 KB 降至约 0.5 KB。
+- **`POST /skills/batch` 参数严格化** — body 顶层未知键、query 未知键（含 `?runAsync`）从静默忽略改为返回 `UNKNOWN_PARAM`；body 级 `dryRun` / `mode` 现在真正生效（此前被静默忽略、导致以为在预演却实际执行）；`continueOnError` 接受字符串 `"true"`/`"false"`，其他类型返回 `TYPE_MISMATCH`。
+- **`?category=` / `?operation=` 非法值返回 `SEMANTIC_INVALID` + 合法值清单** — 此前静默返回空结果集，无法与"该分类确实为空"区分；非法值也不再铸造缓存条目。
+- **技能元数据真实性清扫（约 60 个技能）** — 修正 `mutatesScene` / `mutatesAssets` / `tracksWorkflow` / `riskLevel` 声明使其与实现的实际行为一致（含全部 `X_batch` 批量变体、材质/导入器/UI Toolkit 写盘技能、event_* / undo 系 / navmesh_bake 等）。这会影响 `?wire=v2` 的 `flags` 输出与 noSceneAuthoring 档的隐藏集合，并修正链式事务回滚的可靠性上报。
+- **`GET /skills/recommend` 排序意图对齐** — 纯读意图给只读技能加权、纯写意图降权、示例（Sample）分类在无关键词时降权、未安装可选包降权；每项调整在结果 `matchedOn` 中可审计。
+- **裸 `?full` / `?brief` / `?summary`（不带 `=1`）现等效 `=1`；`?category=`、`?operation=`、`?summary=`、`?brief=`、`?includeSchema=`、`?readonly=` 等全部已识别的过滤/开关键传空值现统一返回 400 + `validValues`** — 此前裸标志与空值参数的处理不一致，容易被误判为已生效或已匹配到某个分类。
+- **`RequiresInput` 组校验覆盖面扩大** — 约 121 个技能在收到空 body 时的错误码由 `TARGET_NOT_FOUND`（纠错建议 `find_and_retry`）改为 `SEMANTIC_INVALID`（`fix_and_retry`）：缺参数属于语义错误而非"目标未找到"，纠错建议随之从"换目标重试"变为"补齐参数重试"。
+- **约 40 处"假成功 / 静默无操作"契约收紧（真机彻查修复，行为变更）** — 大量此前"参数非法或前置不满足却返回 success:true"的技能改为返回结构化错误。涉及：枚举/范围零校验（`camera_set_culling_mask` 非法层名、`urp_set_asset_settings` 的 msaaSampleCount、`physics_set_layer_collision` 越界层号与负半径、`texture_set_platform_settings` 非法平台、`ui_add_mask`/`ui_distribute_selected`/`postprocess_set_depth_of_field`/`postprocess_set_tonemapping`/`shader_create_urp` 非法枚举等）；存在性校验（`animator_set_parameter`/`animator_play` 不存在的参数/状态、`asset_duplicate`/`cinemachine_set_targets` 找不到目标时不再静默清空或伪造成功）；只读资产写入（`model_set_*` 对 Packages/ 下资产不再编造成功）；类型不兼容（`smart_reference_bind` 不再静默清空不兼容的数组字段）。
+- **12 个"需要参数却不声明 `RequiresInput`"的技能改为前置拒绝空 body（行为变更）** — `batch_replace_material`（materialPath）、`batch_set_render_layer`（layer）、`behavior_blackboard_list`（graphAssetPath 或 GameObject 定位符）、`decal_get_info`、`find_objects_by_name`（nameContains 或 name）、`netcode_get_network_object_info`、`netcode_list_network_prefabs`（listPath）、`script_find_in_file`（pattern）、`shader_find`（searchName）、`smart_scene_query`（componentName + propertyName）、`yooasset_get_build_settings`（packageName）、`yooasset_runtime_get_validation_result`（jobId）。这些参数都是"无 CLR 默认值的引用类型"，`IsParameterRequired` 一律判为可选，于是 schema 标 `required:false`、dryRun 对空 body 回 `valid:true`，失败只在执行之后才出现；现在改为 `MISSING_PARAM` / `SEMANTIC_INVALID` 前置拒绝。其中两个真正"或组"的技能用 `A|B` 令牌并同步登记组映射（`nameContains|name`、`gameObject|graphAssetPath`），令牌里只写技能真实接受的参数名，不会误拒合法的单侧写法。
+- **`prefab_set_property` 的写入失败文案区分"类型不支持"与"值无法解析"** — 旧文案一律是 `Failed to set value ...`（未分类 `SKILL_ERROR` + `abort`，读起来像是值写错了）。现按序列化类型是否被支持分别返回 `Unsupported serialized property type ...`（附支持类型清单并指向 `assetReferencePath`）或 `Invalid value ...`，两者都是 `SEMANTIC_INVALID` + `fix_and_retry`；解析器抛出的异常也收敛为同一条值错误而非裸异常。
+- **DOTween Pro 系数值 setter 的域校验、必填语义与 `applied` 回显（行为变更，真机 DOTween Pro 1.0.381 实测）** — 此前 `dotween_pro_set_duration` 收 `-1`、`dotween_pro_set_loops` 收 `-7`（DOTween 只认 `-1`=无限）、`dotween_pro_stagger_animations` 收负 `baseDelay` 都照写不误，响应还是裸 `{"success":true}`，调用方无从察觉。现在：`duration > 0`、`loops` 仅接受 `-1` 或 `>= 1`、`baseDelay`/`staggerDelay`/`delay` 不接受负值，一律 `SEMANTIC_INVALID` + `fix_and_retry` + `validValues`；三个 setter 的成功响应改为带 `applied` 数组并回显从组件读回的实际值（对齐 `camera_set_properties` / `light_set_properties` 的模式）。同时修掉三处"省略即静默改写"：`duration` 与 `loops` 改为可空并分别登记 `RequiresInput` 的 `duration` / `loops|loopType` 令牌（省略 `duration` 曾因 C# 默认值把动画悄悄重置为 1 秒，只想改 `loopType` 时 `loops` 会被重置为 1，两者现在 schema 即标必填、dryRun 就拒），`dotween_pro_set_animation_field` 的 `fieldValue` 改为必填（省略曾把目标字段清空还报成功，显式传 `""` 仍可主动清空）。
+- **DOTween Pro 的枚举错误统一为 `SEMANTIC_INVALID` + `validValues`，且不再有"静默忽略"的枚举写入（行为变更）** — `dotween_pro_set_ease` 的坏 ease 名、`dotween_pro_set_loops` 的坏 loopType、`dotween_pro_set_animation_field` 的未知 fieldName 此前都落在未分类 `SKILL_ERROR` + `abort`（同类错误在 `dotween_settings_configure` 却是 `SEMANTIC_INVALID` + `fix_and_retry`），现三者统一，`validValues` 由安装版本的 `DG.Tweening.Ease` / `LoopType` / DOTweenAnimation 公有字段反射得出（滤掉 `Unset` 与 `INTERNAL_*`：前者是"沿用工程默认"、后者是自定义曲线路径自己写的标记），未知字段与不可转换的值分别归咎 `fieldName` / `fieldValue` 而不再都怪 `fieldName`。`dotween_pro_add_animation` / `_batch_add_animation` / `_stagger_animations` 的 `ease`、`loopType` 之前是 fire-and-forget（拼错就留在默认值上却仍报 success），现在与 `animationType` 一样在加组件之前校验，批量版一次拒绝整个调用而不是逐项报 N 份同样的错误；`dotween_pro_set_ease` 传了无法解析的 `easeCurveJson` 时也不再退回去写 `OutQuad` 并报成功。
+
+### Maintenance
+
+- **全代码注释中文化清扫** — 166 个 `.cs` 的注释按"仅必要保留、译为中文"清扫：删除纯叙事/复述性注释约 200 行，翻译保留全部约束/陷阱/契约类注释与 XML 文档；`Editor/UI/**` 与 `Localization.cs` 因被 `CollectUiCharacters` 字体图集扫描而保持英文（非 ASCII 字符只减不增，机器校验 ADDED=0）；`.py` 注释按用户决定保持英文；生成给用户项目的模板代码注释（Netcode/UIToolkit 字符串字面量内）不属本仓库注释，未动。每个改动文件均通过"剥注释后与基线逐行比对"验证非注释层零差异。
+- **全部脚本统一 UTF-8 BOM 编码 + `Producer:Betsy` 尾注** — 171 个脚本（`.cs` 用 `// Producer:Betsy`，`.py` 用 `# Producer:Betsy`）全量核齐；注意 `.py` 带 BOM 后 `python3 file.py` 不受影响，但 shebang 直接执行（`./file.py`）不再可用，CI 均为显式 `python3` 调用不受影响。
+- **贡献与安全元文件对齐当前流程** — CONTRIBUTING.md 重写：所有 PR 以 `beta` 为 base、贡献者在自己 fork 上 dispatch 编译矩阵（含许可证 Secret 说明与三个免许可证静态检查）、真机检验降级为可选、代码规范补线程模型/UI Toolkit/公共辅助层硬约束；SECURITY.md 受支持版本表更新为 `2.7.x`；bug_report.yml 增加 UnitySkills 版本/安装来源/AI 工具/操作模式字段。维护者命令：`/skillcount` 并入 `/skillcheck`（含去重计数口径与根 SKILL.md 8,192 B 红线机器校验），`/updateversion` 新增 minor/major 更迭时同步 SECURITY.md 的条件锚点规则。
+- **双 README 中段瘦身，深度细节下沉 `docs/OPERATING_MODES(_CN).md`** — 核心特性/治理层/操作模式/IDE 表/一键配置各节原地压缩（README.md 26.6KB→22.9KB、README_CN.md 24.9KB→21.3KB），横向对比表保留正文；双轨审批、审计浏览器、卸载按钮形变、安装器落盘清单等完整说明迁入新建的双语 Operating Modes & Governance 文档，README 各节留摘要与链接。致谢以上、安装演示与 UPM 安装区块、项目结构以下未动，中英镜像。后续微调：核心特性 ⚡ 条目改为 UnityCLI 绑定冷启动介绍、权限条目与操作模式标题去掉 `(v1.9.0+)` 版本尾注、`<summary>` 内的 `<h2>/<h3>` 改为 `<b>`（块级标题会把折叠箭头挤到单独一行，与标题脱开）。
+
+### Fixed
+
+- **`decal_set_properties` 无 URP stub 的参数表与真实现对齐** — 无 URP 工程中该端点此前只暴露 4 参签名（真实现 15 参），补齐文档参数表后 CI 清洁工程全矩阵文档一致性红；stub 声明必须与 URP 分支逐字一致（同规则此前已注明于 `decal_get_info`）。
+- **CI 汇总的许可证到期检查修正** — `StopDate` 在 `.ulf` 里是 `<StopDate Value="..."/>` 子元素而非 `<License>` 属性，旧解析恒报"未找到 StopDate"误导用户；现按元素解析（含正则兜底），Personal 许可证无固定到期时间时给出如实的 ℹ️ 提示而非 ❓ 告警。
+- **Prefab Transform 覆盖的写回 / 回滚 / 属性设置全部真正生效** — `prefab_apply` / `prefab_apply_overrides` / `prefab_revert_overrides` 此前对 Transform 覆盖返回成功却不落盘（Unity 原生覆盖比较缓存在无头服务器环境不填充）；改为直接在 source ↔ instance 间复制发生真实差异的属性值并显式保存，已用磁盘 YAML 逐字节验证。`prefab_get_overrides` 的 `propertyOverrides` 从恒定虚值改为真实差异计数，`hasOverrides` 不再永真。
+- **材质关键字 / 渲染队列写入持久化** — `material_set_keyword` / `material_set_render_queue` 此前在 URP Lit 材质上返回成功但不写盘（缺少 SetDirty + SaveAssets）；现真正持久化到 `.mat`。
+- **批量 / 复制类技能支持带参目标方法** — `event_add_listener_batch` / `event_copy_listeners` / `scriptableobject_set_batch` 此前硬编码"无参方法"假设，对最常见的 `SetActive(bool)` 等带参目标静默失败却报 `added:0` 的成功；现复用单项版的完整签名解析，逐项失败计入 `failCount`。
+- **ProBuilder 几何操作真正生效** — `probuilder_weld_vertices`（补 RemoveDegenerateTriangles + 重建网格）、`probuilder_extrude_edges`（manifold 边零结果时报错而非虚报计数）、`probuilder_detach_faces`（deleteSourceFaces 分支）。
+- **控制台陈旧捕获缓冲** — `console_get_stats` / `console_export` 在 `console_stop_capture` 后永久卡在上次捕获快照，直到下次 clear/start_capture 才自愈；现 stop 后立即回到直读模式。
+- **只读查询技能崩溃 / 裸异常收敛** — `light_get_lightmap_settings`（默认项目无 Lighting Settings 时崩溃）、`timeline_add_clip`（SignalTrack 裸 NullReferenceException）、`shader_create`（缺 savePath 时泄漏内部事务层异常）、`physics_create_material`（目标文件夹不存在时裸 ArgumentException）等改为结构化错误。
+- **错误码分类修正** — `build_player`（无场景配置误报 `TARGET_NOT_FOUND` 并指向 gameobject 查找）、ShaderGraph 资产内部标识符错误误指场景查找、`material_set_int` 等"属性不存在"误分类为 `TARGET_NOT_FOUND`，均改为语义正确的 `SEMANTIC_INVALID` 并指向恰当的读取技能。
+- **`script_move` 目标文件夹自动创建真正生效** — 此前用 `System.IO.Directory.CreateDirectory` 裸建目标目录，AssetDatabase 无从得知，随后 `MoveAsset` 必报 `Could not find parent directory GUID:0000...`，还留下无 .meta 的孤儿目录且原样重试永不自愈（纠错建议又指向源路径，把调用方引去反复校验本来就正确的 `scriptPath`）；改为复用 `EnsureAssetFolderExists` 逐段 `AssetDatabase.CreateFolder` 即时注册。`newFolder` 同步登记 `RequiresInput`（schema `required` 由 false 修正为 true），文档语义从"必须已存在"对齐为"缺失时自动创建"。
+- **错误分类器不再被调用方输入中的 "package" 子串劫持** — `SkillErrorClassifier` 判定缺包此前对整条消息做 `Contains("package")`，而错误消息普遍会插值调用方提供的标识符：jobId（如 `DefaultPackage_validation_1`）或 `Packages/` 下的资产路径都会把普通查找失败改判成 `MISSING_PACKAGE` + `install_and_retry`（包明明已装却被指去 `package_install`）；改为词边界锚定"package 紧邻 not-found 短语"的正则，并新增正反向回归测试（`SkillErrorClassifierTests`）锁定。
+- **未知参数 `dryRun` / `dry_run` 的纠错建议直指 `?mode=dryRun`** — schema 的 `supportsDryRun` 描述的是路由级预演通道（`POST /skill/<name>?mode=dryRun`），不是 body 参数；agent 循该标志传 body `dryRun` 时此前只收到无用的模糊匹配建议，现在 `UNKNOWN_PARAM` 的 `suggestedFixes` 明确给出正确调用方式。
+- **`AddressablesSkillsTests` 版本前置从硬断言改为 Ignore 跳过** — 端点集成期望钉在 CI 安装的 Addressables 3.1.0 上，此前在装有其他版本（如 4.0.1）的真机项目上跑全量 EditMode 会误报失败；现与"未配置则跳过"的守卫一致，版本不匹配时跳过。CI 行为不变。
+- **全量文档一致性审计修复（785 技能三方交叉验证后的全部命中）** — (1) 全仓唯一幽灵引用 `scene_open` 修正为 `scene_load`（unity-cli 文档）；(2) 五个 auto-forbidden 技能（`editor_execute_menu`、`package_install_cinemachine`/`_splines`、`script_rename`/`script_move`）不再被文档引向注定返回 `MODE_FORBIDDEN` 的 grant 流程，统一改为"仅 Bypass/Allowlist 可用"，并顺带修正 package/script/dotween 模块同段的"可 grant 桶"自相矛盾（script 模块 7 个写型技能实际全部 forbid）；(3) 两处 Mode 标反（`editor_execute_menu` 非 SemiAuto、`gameobject_find` 非 FullAuto）；(4) 主索引 Mode 星标 4 处修正（project/debug/test 补 `*`、behavior 去 `*`）；(5) 9 个 NeverInSemi 技能补模块文档标注（含 `asset_import_batch`、`dotween_pro_remove_animation`、primetween 两个生成器）。
+- **`gameobject_find` / `asset_find` 的 Outputs 元数据对齐实际返回** — 前者声明的 `list` 是幽灵键（实际 `objects`），batch `$ref: "$0.list[...]"` 真实执行必炸且 dryRun 的 $ref 路径校验拦不住；后者的 `assetPath` 不存在（实际 `count/totalFound/assets`）。均只改元数据不改返回键。随后新增的 Outputs 契约测试又系统性挖出 5 条同族残留并一并修正：`asset_get_info`（`assetPath`→`path`）、`asset_import`（删幽灵 `assetPath`）、`asset_import_batch` / `asset_delete_batch`（改为 batch 信封 `totalItems/successCount/failCount/results`，v2.7 信封化的漏网）、`urp_set_asset_settings`（删幽灵 `settings`，stub 与实现两处）。
+- **新增红线测试 `OutputsReturnContractTests`** — 断言每个技能 `Outputs` 声明的键真实存在于方法体成功路径的返回形状中（任意嵌套层级；`entityId` 系 router 注入豁免；batch 取 BatchExecutor 信封 ∪ 逐项键；跨文件 helper 按类作用域跟进；`#if/#else` 双分支取并集）。785 技能全部可解析、豁免表为空；变异测试验证 785/785 合成幽灵键全部可捕获——补上了既有一致性测试"Outputs 只查非空"的盲区。
+- **参数文档与实现对齐** — 17 个被 `RequiresInput` 提升为硬必填的参数文档从 No 改 Yes（event_* 六技能、`batch_preview_*` 两技能）；material 14 技能补漏列的 `instanceId`、cinemachine 9 技能补定位参、decal 7 技能从零补齐参数表、event 4 个散文式条目转参数表；Skills Overview 补 21 行；`asset_create_folder_batch` 首次入文档（此前全仓零提及）。
+- **`cinemachine_set_lens` 的 `mode` 死参数实装为真实的投影 ModeOverride 写入** — 该参数此前签名接受但方法体从不读取，传什么都不生效。现写入 `LensSettings.ModeOverride`（合法值 None / Orthographic / Perspective / Physical，大小写不敏感，词表由枚举反射得出），非法值在快照与任何写入之前整体拒绝 `SEMANTIC_INVALID` + `validValues`，省略则不动（向后兼容）。CM2/CM3 共用同一路径（版本差异封装在既有 `CinemachineAdapter` 分支）；真机 CM 3.1.3 全路径验证 + 新增 3 条 EditMode 用例。因 `LensSettings.ModeOverride` 为 CM 2.6 引入，`CINEMACHINE_2` 的 versionDefines 由 `[2.0,3.0)` 收紧为 `[2.6,3.0)`（CM 2.0–2.5 下模块整体编译排除而非编译报错）。
+- **`component_list` 的 enabled 字段真实反映非 Behaviour 组件状态**（Renderer / Collider / Collider2D），不再一律填 `true`。
+- **`gameobject_set_tag_batch` 未定义标签拒绝、`gameobject_find` 未定义标签不再抛未处理异常**。
+- **`package_remove` 传递依赖不再误报失败** — 移除仍被其它包传递依赖的包时，返回带 `retainedTransitively` 说明的成功结果而非裸 `failed`；`package_check` 新增 `isDirectDependency`。
+- **YooAsset / Netcode 运行时诊断** — `yooasset_runtime_validate_package` 空包前置校验、`yooasset_build_bundles` 错误契约对齐、8 个 report 技能的 `reportPath` schema `required` 修正、`save_collector_config` 的 `fixed_` 字段改名；`netcode_check_setup` 场景对象计数修正、`netcode_get_transport_info` 新增 `protocol` 字段。
+- **`workflow_delete_task` 从已撤销栈真正移除任务**，`workflow_redo_task` 不再复活已删除任务。
+- **`/skills/meta` 与 skill-not-found 纠错建议不再泄露被隔离技能名** — 两处输出现按当前 Surface Profile 过滤，guide / noSceneAuthoring 档下被排除的技能不会再出现在建议列表里。
+- **`POST /skills/batch` 的 query 与 body 各自独立解析 `mode` / `dryRun`** — 此前 query 指定 `mode` 时会连带吞掉 body 里的 `dryRun`；现逐键独立解析并在响应里回显各自生效值。
+- **`?operation=` 恢复接受 `[Flags]` 逗号组合与数字字面量** — 修复此前误把合法组合值当非法输入拒绝的 200→400 回归。
+- **`?mode=plan` 对被档位排除的技能返回 `SURFACE_EXCLUDED` 授权块** — 与执行路径的排除行为对齐，不再让排除技能在 plan 阶段表现得"可执行"。
+- **`guide` 档对 `batch` / `workflow` 执行路径强制表面排除** — 补上"先 dryRun 预览、再走 token、最终 execute"链路上的排除检查，关闭此前可绕开 guide 档限制的路径。
+- **`ModelSkills` 写保护检查移到参数校验通过之后执行** — 避免非法参数先触发一次 VCS checkout 才被拒绝。
+- **材质 / 脚本共 5 个批量技能的 `Outputs` 补齐 `failCount`** — 与其它批量技能的失败计数字段对齐。
+- **`PropertyNotOnTarget` 错误分类修正** — 来自 `GraphicsSettings` / ShaderGraph 的属性缺失提示不再被误指向材质技能。
+- **`primetween_get_config` 的 `defaultUpdateType` 现输出真实配置值** — PrimeTween 新版把 `UpdateType` 从枚举改成了 struct，该字段此前被序列化为空对象 `{}`；现解包到内部枚举字段，输出 `Default` / `Update` / `LateUpdate` / `FixedUpdate` 等真实值名（enum-like struct 通用解包，已在 8090 真机验证）。
+- **非 full 档下 6 个"载荷决定写入"技能的 dryRun / plan 预览新增 `payloadGated` 提示** — `batch_execute` / `batch_retry_failed` / `workflow_undo_task` / `workflow_redo_task` / `workflow_revert_task` / `workflow_session_undo` 的授权预览此前只按技能元数据判定，恒报 `allowed:true`，而执行期会按载荷分类返回 `SURFACE_EXCLUDED`；现在预览额外带 `payloadGated` / `payloadGatedCategories` / `payloadGateHint` 三个字段说明"该判定未看载荷"。`full` 档零变化（字段不出现），预览也不改判 `allowed`（无载荷时无法精确判定）。
+- **16 个材质技能的 `RequiresInput` 令牌 `gameObject|materialPath` 改为 `gameObject|path`** — 这些技能（`material_set_color` / `_emission` / `_texture` / `_float` / `_int` / `_vector` / `_keyword` / `_render_queue` / `_shader` / `_texture_offset` / `_texture_scale` / `_gi_flags`、两个颜色批量版、`material_get_properties` / `_keywords`）并不接受名为 `materialPath` 的参数（材质资产路径走两用的 `path`），照令牌字面发 `materialPath` 只会得到 `UNKNOWN_PARAM`；同时清理了 `RequiresInput` 组映射里 2 个任何技能都不接受的候选参数名（该组的 `materialPath`、`assetPath` 组的 `path`）。校验行为不变（交集机制此前已把它们过滤掉）。
+- **`addressables_group_create` 重名时回报真实落盘名** — Unity `CreateGroup` 遇重名自动改名（`TestGroup` → `TestGroup1`）而不是报错，技能却回显调用方入参，于是紧接着的 `addressables_group_add_entry` / `_delete` 拿这个名字一律 `TARGET_NOT_FOUND`——"创建成功"的组按报回来的名字找不到。现从返回的 group 对象读真实 `Name`，并新增 `requestedName` / `renamed` 字段（改名时另附 `note`）；`groupName` 的 schema `required` 同步修正为 `true`（此前标 `false`，而运行时缺省与空串都拒绝）。
+- **Addressables 组 / 配置查找失败的纠错建议指向 Addressables 自己的读取技能** — `Group not found` 落在通用 `TARGET_NOT_FOUND` 分支上，被建议 `gameobject_find` / `scene_get_hierarchy`（去场景里找一个只存在于 settings 资产里的名字）；`Profile not found` 更巧——"profile" 含子串 "file"，命中资产分支被建议 `asset_find`。现分别改为 `addressables_group_list` / `addressables_profile_get`；"装了包但没有 settings 资产"的错误也从 `asset_find` 改为指向 `addressables_check_installed`。
+- **`yooasset_runtime_get_validation_result` 未知 jobId 的指引改为如实描述** — 旧建议是 `job_list` + "ids do not survive a domain reload"，两点都不成立：运行时校验作业存在 YooAsset 模块自己的字典里（`job_list` / `job_status` 永远看不到），且经 EditorPrefs（`UnitySkills_YooAsset_RuntimeValidationJobs_v1`）跨域重载持久化并恢复。现文案说明存储位置与生命周期，响应直接带上 `knownJobIds`（该私有存储没有列表端点），建议改为"用 knownJobIds 里的 id 重试"或"用 `yooasset_runtime_validate_package` 重新起一次"。
+- **`prefab_set_property` 现在能写 Quaternion（`localRotation` 等）** — `SetSerializedPropertyValue` 缺 `SerializedPropertyType.Quaternion` 分支，prefab 上最常见的旋转写入一律落到 default 分支，回 `Failed to set value ... (type: Quaternion)`。现接受 3 分量（欧拉角）或 4 分量（x,y,z,w），与同文件 Vector 分支共用一套解析；已用 prefab 夹具验证 `m_LocalRotation` 真正落盘。
+- **`prefab_set_property` 的 `RequiresInput` 令牌 `prefabAsset` 改为 `prefabPath`** — 与本版早先修的 16 个材质技能同型：`prefabAsset` 是全代码库唯一一处出现，该技能并不接受这个键（资产路径走 `prefabPath`），也没有任何技能输出它，因此该令牌既不校验也不参与链式推导，照字面发只会得到 `UNKNOWN_PARAM`。改名后 `prefabPath` 的 schema `required` 变为 `true`（与运行时一致），并与 `prefab_create` 的 `prefabPath` 输出接上链。
+- **`light_get_lightmap_settings` 在没有 Lighting Settings 资产的工程上不再失败** — 本版早先加的 `settings == null` 判断永远等不到执行：`Lightmapping.lightingSettings` 的 getter 本身就抛异常，而不是返回 null。现同时兜住"返回 null"与"抛异常"两种形态，一律回报 Unity 内置默认值（`hasLightingSettings:false`）。
+- **冒烟测试的"预期夹具缺失"白名单扩到 5 个 netcode 只读查询** — `test_smoke_skills` 此前只认 `cinemachine_*`，干净工程上 `netcode_get_manager_info` / `netcode_get_status` / `netcode_get_transport_info`（场景无 NetworkManager）与 `netcode_get_spawn_manager_info` / `netcode_get_scene_manager_info`（仅 PlayMode 可读）这 5 个的正常拒答被计为 failed，把真正的失败埋在噪声里。白名单按"技能名 + 特定错误短语"双条件匹配（不是按名字无脑跳过）：同一技能的其它错误、以及任何异常路径，仍照旧计为失败。
+- **`dotween_pro_list_animations` 全场景枚举回报的 `animationIndex` 与所有消费端对齐** — 无 target 的全场景分支用 `FindHelper.FindAll`（顺序不保证）分组后发号，而每个 `dotween_pro_set_* / _remove_animation` 都按 `gameObject.GetComponents(type)[animationIndex]` 取组件；同一 GameObject 挂多个 DOTweenAnimation 时两者错位——真机复现为列表报 [Fade 0.3, Scale 0.6, Fade 0.4] 而 `GetComponents` 顺序是 [Scale 0.6, Fade 0.3, Fade 0.4]，于是"先列表再改"会静默改到另一个组件（两次调用都报成功）。现全场景分支也按 GameObject 分组并以 `GetComponents` 顺序（消费端唯一权威序）赋号。
+- **`dotween_settings_configure` 不再把本版本不存在的字段当成"已消化"** — 广告里的 `tweenersCapacity` / `sequencesCapacity` 在 DOTween Pro 1.0.381 的 `DOTweenSettings` 上根本不存在（该版本的容量是运行时 `DOTween.SetTweensCapacity` 调用），而两处写入都被裸 `if (SetFieldByName(...))` 包着、false 分支什么也不做，响应回 `success:true, modified:[]`，与"已接受、无需改动"无法区分。现按字段是否存在分流：不存在的参数进响应的 `unsupported` 数组（含参数名、目标字段名与原因），4 个枚举/布尔参数同样处理（它们的 `f != null && IsEnum` 守卫同样是静默的），非法枚举值改为带 `validValues` 的 `SEMANTIC_INVALID`，容量 `<= 0` 直接拒绝（`dotween_settings_validate` 本来就把它报成 issue，写进去等于让本包在下一次读取时判自己非法）。
+- **`dotween_generate_sequence_script` 生成的类不再带 CS0414 死字段** — 每一步的时长都被烤成字面量（`methodCall.Replace("duration", ...)`），于是 `[SerializeField] private float duration` 无人引用，本包刚写出的文件就带一条警告。现只在生成的代码真的读该字段时才发出它：与顶层 `duration` 相同的步骤读字段（默认配方因此保留 Inspector 上的可调旋钮），只有确实不同的步骤才烤字面量。
+- **DOTween 运行时脚本生成对 `CanvasGroup` 不再发 `using UnityEngine.UI;`** — `CanvasGroup` 是 `UnityEngine.CanvasGroup`（UIModule，始终存在），却与 `Graphic` / `Image` 共用一条硬编码的 using；在没有 com.unity.ugui 的工程里，生成出来的文件会因为一个自己根本不引用的命名空间直接 CS0246。现按 targetKind 精确判定（只有真正位于 `UnityEngine.UI` 的目标才发）。
+- **`optimize_find_duplicate_materials` 不再对隐藏 / Decal 材质打原生 console error** — 颜色读取用 `mat.HasProperty` 当守卫，而它对*任意类型*的同名属性都答 true，于是 `GetColor` 照读不误，引擎打出原生 "doesn't have a color property" 错误；该错误是引擎日志而非异常，外面的 `try/catch` 一个也拦不住，一个只读分析于是逐个材质刷红控制台。改用 `Material.HasColor`（按类型判定，已核对 2022.3 与 6000.3 的 shipped `UnityEngine.CoreModule`，非仅凭文档）。
+- **版本号更新** — `SkillsLogger.Version` / `package.json` / Python helper `__version__` / `agent.md` 同步提升到 `2.7.0`；README×2 的"当前版本"标记随本版移除（README 不再承载版本锚点，`check_project_version.py` 与 `/updateversion` 锚点表同步收窄为 5 常规 + 1 条件锚点）。
+
+### Docs
+
+- **`references/SKILL_FULL.md` 的 `/skills/recommend` 体积说明改准并补 `topN`** — 原文写"~2-5 KB"，实测 `topN=10&includeSchema=true` 约 11–12 KB（与根 `SKILL.md` 的 4–14 KB 区间一致）；补上 `topN` 的默认值 `10`、钳制范围 `1–50` 及其作为体积旋钮的用法。
+
+## [2.6.2] - 2026-08-21
+
+> **接入面扩展：Kimi Code 内建支持** —— AI 配置面板新增第 6 个一键安装工具 Kimi Code，并补上其 REST 流量的 agent 识别。安装路径取自 [Kimi Code CLI 官方 Skills 文档](https://www.kimi.com/code/docs/kimi-code-cli/customization/skills.html)，沿用与其余 5 个工具完全一致的模板复制路径，无新增 skill，技能总数仍为 784。
+
+### Added
+
+- **Kimi Code 内建支持（AI 配置面板第 6 个工具）** — 面板 AI Config 标签页新增 Kimi Code 卡片，支持项目级 `.kimi-code/skills/unity-skills/` 与用户级 `$KIMI_CODE_HOME/skills/unity-skills/`（未设置该变量时为 `~/.kimi-code/skills/unity-skills/`）两种安装位置。沿用与 Claude Code / Codex / Antigravity / Cursor / OpenCode 完全相同的 `SkillInstaller.InstallSkill` 路径，不另写写入逻辑。Kimi Code CLI 的 skill 发现是纯目录约定（作用域目录下的子目录含 `SKILL.md` 即为一个 skill），无需在 `config.toml` 注册任何内容，因此安装/卸载全程不读写用户的 Kimi 配置文件，冲突面仅限 `unity-skills/` 这一个专属目录名。
+- **`KIMI_CODE_HOME` 环境变量支持** — 用户级安装根目录跟随该变量迁移，与 Kimi Code CLI「隔离数据根时一并隔离 Kimi 专属 Skills」的语义一致；变量未设置或编辑器未继承到时回落官方默认值 `~/.kimi-code`。同时兼容被引号包裹而未被 shell 展开的前导 `~/` 写法，避免在项目旁生成字面量 `~` 目录。
+
+### Changed
+
+- **Kimi 流量不再在审计日志里归为 `Unknown`** — `_agentKeywords` 登记 `("kimi", "KimiCode")`。此前 `"kimi"` 不含表中任何现有关键字，Kimi Code 直接用内建 fetch 或 curl 打 REST 的流量（不经 Python helper 发 `X-Agent-Id`）会落到 `Unknown(...)`，与其它 5 个工具不对等。一键安装写入的 `agent_config.json` 同样使用 `KimiCode` 作为 agentId，两条识别路径口径统一。
+- **安装位置选用 Kimi 专属目录而非共享 `.agents/skills`** — Kimi Code CLI 按 Project > User > Extra > Built-in 四档扫描，其中也包含 Codex / Antigravity 共用的 `.agents/skills`。为使各工具的安装状态与卸载互不干扰，卡片只写 `.kimi-code/`；已有的 Codex 全局安装（`~/.agents/skills/`）仍会被 Kimi Code 顺带发现，属额外收益而非冲突。
+- **版本号更新** — `SkillsLogger.Version` / `package.json` / Python helper `__version__` / `agent.md` / README 当前版本标记同步提升到 `2.6.2`。
+
+### Docs
+
+- **README / README_CN / SETUP_GUIDE 双语同步** — 原生支持的 IDE 数量由 5 提升到 6，工具支持表、一键安装步骤与手动安装路径表均补充 Kimi Code 条目（含 `$KIMI_CODE_HOME` 说明与 `/skill:unity-skills` 显式触发方式）。
+
+## [2.6.1] - 2026-08-20
+
+> **Unity CLI beta5 advisory/protocol 适配** —— 官方 Unity CLI 从 `1.0.0-beta.3` 走到 `1.0.0-beta.5`，`build` 语义、退出码分类、NDJSON 终态帧和 Linux glibc 要求均发生变化。本次只对齐 advisory 文档协议与 CLI 探测失败分类，`cli_config.json` schema 保持 `1`，不新增 feature key，旧配置照常读取。
+
+### Added
+
+- **CLI 探测失败原因分类** — `UnityCliService` 新增 `not_found` / `not_executable` / `launch_failed` / `incompatible_system` 四个诊断常量。旧 glibc Linux（Ubuntu 20.04 及更早、Debian 11、RHEL/CentOS 8、Amazon Linux 2）上 CLI 启动失败会被识别为系统兼容性问题，不再一律显示成"未安装"而误导用户去重装。仅供运行时/UI 诊断，不写入 `cli_config.json`。
+- **`UnityCliServiceTests` 测试套件** — 覆盖无配置文件、`enabled: false`、`cliRun`/`cliBuild` 缺失默认关闭三条授权边界，以及探测失败分类的文件缺失、glibc 报错、通用失败三条路径（后两条用临时脚本模拟，不依赖本机是否安装 Unity CLI）。
+- **`build` 三种构建路径文档** — Unity 6 Build Profile（`--profile`）、beta4+ 内置桌面构建（`--target` + `--output-path`，桌面目标可省 `--execute-method`）、自定义 C# 构建方法（Android/iOS/WebGL 必需，且优先级最高）。`cliBuild` 继续默认关闭。
+- **官方退出码表与 signal 诊断规则** — 补齐 `0`/`1`/`2`/`3`/`4`/`6`/`7`/`130`/`143` 完整语义（`6` 终态、`7` 可有限重试），并要求区分业务失败（`TEST_FAILED`/`BUILD_FAILED`）、Editor 崩溃（beta5+ 的 `SIGSEGV`/`SIGILL`/`SIGTRAP`/`SIGFPE`/`SIGBUS`）与 CLI 自身失败。
+- **自动化推荐环境变量** — `UNITY_NON_INTERACTIVE=1` / `UNITY_FORMAT=json` / `UNITY_NO_PAGER=1` / `UNITY_NO_CRASH_REPORT=1`，仅作 advisory 建议，不在插件代码中强制注入。
+- **Linux 兼容性章节与能力分支说明** — 明确 beta3 / beta4+ / beta5+ 的能力差异，不设置全局硬性最低 CLI 版本，仍停留在 beta3 的用户不受影响。
+
+### Changed
+
+- **Editor 存活探测顺序纳入 `editors running` 与 lockfile** — 冷启动判断改为：项目自身 `cli_config.json` 授权 → registry PID → `<cliPath> editors running --format json --non-interactive` 交叉确认 → `Library/UnityLockfile`；四项都未显示活跃 Editor 才允许冷启动。`unity status` 明确降级为补充证据，空表不代表 Editor 已关闭。
+- **退出码 `6` 不再描述为测试失败专用** — 改为官方通用语义"主要操作失败"，涵盖测试失败、构建失败和 Editor 异常退出；要求结合 JSON envelope、`errors[].code` 与 stderr 综合判断，不能只看单一退出码或 XML。
+- **NDJSON 结果解析约定** — beta4+ 以最后一个 `type=result` 帧为最终状态，进度帧和 stderr 日志行都不算结果；旧版本无终态帧时回退到退出码加 stderr。
+- **`--version` 探测消除管道死锁风险** — 改为先启动 stdout/stderr 异步读取再 `WaitForExit`，避免子进程输出填满管道缓冲区后卡死 8 秒超时。
+- **registry heartbeat fallback 分支补齐 CLI 绑定字段** — 服务器先发心跳、后走 `Register` 的时序下，注册表条目此前会丢失 `cliBound` / `cliPath`；现与 `Register` 一致写入。该字段仍只用于存活发现，绝不作为授权凭据。
+- **`unity-cli` advisory 新增禁止项** — `projects exec` / `projects clean`、`editors prune` / `editors verify`、`command --detach` / `eval --detach` / `job`、`skill install` / `skill refresh`、`shell --protocol ndjson`，以及 CLI 自更新，均明确列为不得使用：它们跨项目操作、修改全局 Editor 安装集，或绕开 UnitySkills 自己的 advisory 与 feature gate。
+- **版本号更新** — `SkillsLogger.Version` / `package.json` / Python helper `__version__` / `agent.md` / README 当前版本标记同步提升到 `2.6.1`。
+
+### Fixed
+
+- **CLI 探测在 Mono 上把"文件不存在"误判为"启动失败"** — 原实现按异常 `Message` 子串匹配（`"cannot find the file"` / `"access is denied"`），而 Unity 的 Mono 实际抛出的是 `Win32Exception`，措辞为 `"Cannot find the specified file"` / `"Access denied"`，两者都匹配不上，导致任一不存在的候选路径都会把 `error` 污染成 `launch_failed`，进而在面板上掩盖真正的"未检测到 CLI"。现改为按 `NativeErrorCode`（2/3 → 不存在，5/13 → 不可执行）判断，并保留措辞匹配作为未知 errno 的兜底。
 
 ## [2.6.0] - 2026-08-16
 

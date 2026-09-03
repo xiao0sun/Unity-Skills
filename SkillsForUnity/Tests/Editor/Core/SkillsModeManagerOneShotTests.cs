@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Reflection;
 using NUnit.Framework;
 using UnityEditor;
@@ -6,14 +6,12 @@ using UnityEditor;
 namespace UnitySkills.Tests.Core
 {
     /// <summary>
-    /// Focused coverage for the one-shot grant-bypass token hardening added alongside the P0 fix
-    /// pass. SkillRouter.Execute's four parameter-validation early-returns sit between
-    /// TryGrantAndReturnArgs (which sets the ThreadStatic token) and CheckAccess (which consumes
-    /// it), so any early exit that skips ClearOneShotBypass would leak the token into an unrelated
-    /// request on the same thread. A hard 30s deadline is the second line of defense against that.
+    /// Dedicated coverage for the hardening of the one-shot grant-bypass token. SkillRouter.Execute has
+    /// four early-return parameter validation points, positioned right between TryGrantAndReturnArgs
+    /// (which writes the ThreadStatic token) and CheckAccess (which consumes it); if any one of those early exits misses ClearOneShotBypass, the token leaks into another unrelated request on the same thread.
+    /// The hard 30-second deadline is the second line of defense against exactly this.
     ///
-    /// Complements SkillsModeManagerTests.cs (not modified here) rather than duplicating its
-    /// existing grant/allowlist/migration coverage.
+    /// This fixture complements SkillsModeManagerTests.cs and doesn't duplicate the grant/allowlist/migration coverage it already has.
     /// </summary>
     [TestFixture]
     public class SkillsModeManagerOneShotTests
@@ -62,7 +60,7 @@ namespace UnitySkills.Tests.Core
             SkillsAuditLog.ResetForTests();
         }
 
-        /// <summary>Minimal SkillInfo — only the fields CheckAccess / IsForbiddenInSemi read.</summary>
+        /// <summary>A minimal SkillInfo: only fills the fields CheckAccess / IsForbiddenInSemi read.</summary>
         private static SkillRouter.SkillInfo MakeSkill(string name, SkillMode mode = SkillMode.FullAuto)
         {
             return new SkillRouter.SkillInfo
@@ -87,8 +85,8 @@ namespace UnitySkills.Tests.Core
             var (outcome, _, _) = SkillsModeManager.TryGrantAndReturnArgs(skillName, token, "{}");
             Assert.AreEqual(GrantOutcome.Granted, outcome);
 
-            // Simulate a caller (e.g. SkillRouter.Execute hitting a validation early-return
-            // between the grant and CheckAccess) unconditionally clearing the pending one-shot.
+            // Simulates a caller unconditionally clearing the pending one-shot token between the
+            // grant and CheckAccess (e.g. SkillRouter.Execute hitting an early-return parameter validation).
             SkillsModeManager.ClearOneShotBypass();
 
             Assert.AreEqual(SkillsModeManager.AccessResult.NeedsGrant,
@@ -107,9 +105,8 @@ namespace UnitySkills.Tests.Core
             var (outcome, _, _) = SkillsModeManager.TryGrantAndReturnArgs(skillName, token, "{}");
             Assert.AreEqual(GrantOutcome.Granted, outcome);
 
-            // SkillsModeManager has no injectable clock, and the deadline is a ThreadStatic field
-            // — push it into the past via reflection on this same thread rather than sleeping 30+
-            // real seconds in a unit test.
+            // SkillsModeManager has no injectable clock, and the deadline is a ThreadStatic field -- push it into the past via reflection on the same thread, rather than actually
+            // sleeping 30-odd seconds in a unit test.
             var deadlineField = typeof(SkillsModeManager).GetField("_oneShotDeadlineUtc",
                 BindingFlags.NonPublic | BindingFlags.Static);
             Assert.IsNotNull(deadlineField, "_oneShotDeadlineUtc field must exist for expiry simulation");
@@ -133,14 +130,13 @@ namespace UnitySkills.Tests.Core
             var (outcome, _, _) = SkillsModeManager.TryGrantAndReturnArgs(skillName, token, "{}");
             Assert.AreEqual(GrantOutcome.Granted, outcome);
 
-            // A CheckAccess for a different skill name must not consume the pending one-shot.
+            // Checking permission under a different skill name must not consume the pending one-shot token.
             Assert.AreEqual(SkillsModeManager.AccessResult.NeedsGrant,
                 SkillsModeManager.CheckAccess(MakeSkill("unrelated_skill")));
 
-            // The original skill's one-shot grant is still intact...
+            // The original skill's one-shot grant is still valid, and gets consumed right after this call.
             Assert.AreEqual(SkillsModeManager.AccessResult.Allowed,
                 SkillsModeManager.CheckAccess(MakeSkill(skillName)));
-            // ...and is now consumed.
             Assert.AreEqual(SkillsModeManager.AccessResult.NeedsGrant,
                 SkillsModeManager.CheckAccess(MakeSkill(skillName)));
         }

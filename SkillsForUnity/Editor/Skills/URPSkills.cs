@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -10,7 +10,7 @@ using UnityEngine.Rendering.Universal;
 namespace UnitySkills
 {
     /// <summary>
-    /// URP-specific asset and renderer feature skills.
+    /// URP-specific asset and Renderer Feature skills.
     /// </summary>
     public static class URPSkills
     {
@@ -26,7 +26,7 @@ namespace UnitySkills
         [UnitySkill("urp_set_asset_settings", "Modify key settings on a URP asset",
             Category = SkillCategory.URP, Operation = SkillOperation.Modify,
             Tags = new[] { "urp", "asset", "settings", "modify" },
-            Outputs = new[] { "asset", "settings" })]
+            Outputs = new[] { "asset" })]
         public static object URPSetAssetSettings(string assetPath = null, bool? supportsHDR = null, int? msaaSampleCount = null,
             float? renderScale = null, bool? supportsMainLightShadows = null, bool? supportsAdditionalLightShadows = null,
             bool? supportsCameraDepthTexture = null, bool? supportsCameraOpaqueTexture = null, float? shadowDistance = null) => RenderPipelineSkillsCommon.NoURP();
@@ -92,7 +92,7 @@ namespace UnitySkills
         [UnitySkill("urp_set_asset_settings", "Modify key settings on a URP asset",
             Category = SkillCategory.URP, Operation = SkillOperation.Modify,
             Tags = new[] { "urp", "asset", "settings", "modify" },
-            Outputs = new[] { "asset", "settings" },
+            Outputs = new[] { "asset" },
             TracksWorkflow = true,
             MutatesAssets = true,
             RequiresPackages = new[] { "com.unity.render-pipelines.universal" })]
@@ -109,6 +109,31 @@ namespace UnitySkills
         {
             var asset = LoadAssetOrError(assetPath, out var error);
             if (error != null) return error;
+
+            // All values are validated before touching the SerializedObject. The three properties
+            // below do have public C# setters that clamp/reject
+            // (UniversalRenderPipelineAsset.msaaSampleCount just casts straight to the
+            // MsaaQuality enum with no range check at all; .renderScale and .shadowDistance clamp
+            // to [minRenderScale, maxRenderScale] and [0, +inf) respectively), but this skill
+            // writes the underlying serialized fields directly through SerializedObject
+            // (m_MSAA/m_RenderScale/m_ShadowDistance), bypassing every setter: msaaSampleCount=3
+            // would be accepted and echoed back as-is (URP only supports 1/2/4/8 samples), and a
+            // negative renderScale or shadowDistance would likewise be written as-is.
+            if (msaaSampleCount.HasValue)
+            {
+                var msaa = msaaSampleCount.Value;
+                if (msaa != 1 && msaa != 2 && msaa != 4 && msaa != 8)
+                    return SkillParamUtil.InvalidValueError(msaa.ToString(), "msaaSampleCount", new[] { "1", "2", "4", "8" });
+            }
+            if (renderScale.HasValue)
+            {
+                var scale = renderScale.Value;
+                if (scale < UniversalRenderPipeline.minRenderScale || scale > UniversalRenderPipeline.maxRenderScale)
+                    return SkillParamUtil.InvalidValueError(SkillParamUtil.FormatFloatR(scale), "renderScale",
+                        new[] { $"{SkillParamUtil.FormatFloatR(UniversalRenderPipeline.minRenderScale)}-{SkillParamUtil.FormatFloatR(UniversalRenderPipeline.maxRenderScale)}" });
+            }
+            if (shadowDistance.HasValue && shadowDistance.Value < 0f)
+                return SkillParamUtil.InvalidValueError(SkillParamUtil.FormatFloatR(shadowDistance.Value), "shadowDistance", new[] { ">= 0" });
 
             WorkflowManager.SnapshotObject(asset);
             Undo.RegisterCompleteObjectUndo(asset, "Modify URP Asset Settings");

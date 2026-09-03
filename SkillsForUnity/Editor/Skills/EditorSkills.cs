@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using UnityEditorInternal;
 using System;
@@ -8,7 +8,7 @@ using System.Linq;
 namespace UnitySkills
 {
     /// <summary>
-    /// Editor control skills - play mode, selection, tools.
+    /// Editor control skills: play mode, selection, tools.
     /// </summary>
     [InitializeOnLoad]
     public static class EditorSkills
@@ -124,10 +124,11 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Advances one <see cref="PlaymodeStepJobKind"/> job per Editor tick. Each <see cref="EditorApplication.Step"/>
-        /// call is confirmed by observing <see cref="Time.frameCount"/> advance past the value recorded when that
-        /// step was issued before the next one is issued - back-to-back Step() calls within the same tick are not
-        /// guaranteed to land, so this never issues a new one until the previous one is confirmed.
+        /// Advances one <see cref="PlaymodeStepJobKind"/> job per editor tick. Each call to
+        /// <see cref="EditorApplication.Step"/> must first observe <see cref="Time.frameCount"/>
+        /// pass the value recorded when it was issued, confirming the step actually landed, before
+        /// issuing the next one — calling Step() repeatedly within the same tick is not guaranteed
+        /// to take effect every time.
         /// </summary>
         private static void ProcessPlaymodeStepJob(string jobId, EditorApplication.CallbackFunction handler)
         {
@@ -171,7 +172,7 @@ namespace UnitySkills
                 return;
             }
 
-            // Frame count advanced past the value recorded at issue time - the previous Step() landed.
+            // The frame count has passed the value recorded when issued, meaning the last Step() call took effect.
             if (framesIssued >= framesRequested)
             {
                 job.resultData["framesCompleted"] = framesIssued;
@@ -208,9 +209,11 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// The step job is advanced by a dynamically-subscribed <see cref="EditorApplication.update"/> handler
-        /// (see <see cref="EditorPlaymodeStep"/>), which does not survive a domain reload. Fail any job left
-        /// "running" from before a reload so callers polling job_status get a terminal state instead of hanging.
+        /// <summary>
+        /// Step jobs are advanced by a dynamically subscribed <see cref="EditorApplication.update"/> handler
+        /// (see <see cref="EditorPlaymodeStep"/>), and that subscription doesn't survive a domain reload. So any
+        /// job left running before the reload is unconditionally marked as failed, giving callers polling
+        /// job_status a terminal state instead of an indefinite hang.
         /// </summary>
         private static void RecoverStalePlaymodeStepJobs()
         {
@@ -309,7 +312,8 @@ namespace UnitySkills
         [UnitySkill("editor_undo", "Undo the last action (single step). For multiple undo steps use history_undo(steps=N). For workflow-level undo use workflow_undo_task.",
             Category = SkillCategory.Editor, Operation = SkillOperation.Execute,
             Tags = new[] { "undo", "revert", "history" },
-            Outputs = new[] { "message" })]
+            Outputs = new[] { "message" },
+            MutatesScene = true)]
         public static object EditorUndo()
         {
             Undo.FlushUndoRecordObjects();
@@ -322,7 +326,8 @@ namespace UnitySkills
         [UnitySkill("editor_redo", "Redo the last undone action (single step). For multiple redo steps use history_redo(steps=N).",
             Category = SkillCategory.Editor, Operation = SkillOperation.Execute,
             Tags = new[] { "redo", "restore", "history" },
-            Outputs = new[] { "message" })]
+            Outputs = new[] { "message" },
+            MutatesScene = true)]
         public static object EditorRedo()
         {
             Undo.FlushUndoRecordObjects();
@@ -365,7 +370,14 @@ namespace UnitySkills
         [UnitySkill("editor_execute_menu", "Execute a Unity menu item",
             Category = SkillCategory.Editor, Operation = SkillOperation.Execute,
             Tags = new[] { "menu", "command", "action" },
-            Outputs = new[] { "executed" })]
+            Outputs = new[] { "executed" },
+            // This skill can execute any menu item — including GameObject/Create and Edit/Delete —
+            // so even though it never touches a GameObject itself, it must declare that it can mutate
+            // the Hierarchy. Same reasoning for the reload flag: "Assets/Reimport All" and "Assets/Refresh"
+            // are both menu items, and the transactional batch preflight relies on this flag to reject
+            // calls that would wipe the undo stack via a domain reload, breaking the rollback guarantee.
+            MutatesScene = true,
+            MayTriggerReload = true)]
         public static object EditorExecuteMenu(string menuPath)
         {
             var result = EditorApplication.ExecuteMenuItem(menuPath);
@@ -410,7 +422,7 @@ namespace UnitySkills
             Mode = SkillMode.SemiAuto)]
         public static object EditorGetContext(bool includeComponents = false, bool includeChildren = false)
         {
-            // 1. Hierarchy 选中的 GameObjects
+            // 1. GameObjects selected in the Hierarchy
             var selectedGameObjects = Selection.gameObjects.Select(go =>
             {
                 var info = new System.Collections.Generic.Dictionary<string, object>
@@ -445,7 +457,7 @@ namespace UnitySkills
                 return info;
             }).ToArray();
 
-            // 2. Project 窗口选中的资源 (通过 GUID)
+            // 2. Assets selected in the Project window (via GUID)
             var selectedAssets = Selection.assetGUIDs.Select(guid =>
             {
                 var path = AssetDatabase.GUIDToAssetPath(guid);
@@ -459,10 +471,10 @@ namespace UnitySkills
                 };
             }).ToArray();
 
-            // 3. 当前活动场景
+            // 3. The current active scene
             var activeScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
 
-            // 4. 焦点窗口
+            // 4. The focused window
             var focusedWindow = EditorWindow.focusedWindow;
 
             return new

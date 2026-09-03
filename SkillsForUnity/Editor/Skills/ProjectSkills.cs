@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using UnityEditor.Build;
 using UnityEngine.Rendering;
@@ -9,14 +9,13 @@ using System.Collections.Generic;
 namespace UnitySkills
 {
     /// <summary>
-    /// Project information and configuration skills - detect render pipeline, project settings, etc.
+    /// Project info and configuration skills: detect render pipeline, read/write project settings, etc.
     /// </summary>
     public static class ProjectSkills
     {
         /// <summary>
-        /// Registers a restorer for the project Tags list so project_add_tag is reversible via
-        /// workflow undo/redo (undo removes the added tag by restoring the prior tag set).
-        /// Runs on domain load.
+        /// Registers a restorer for the project's Tags list, so project_add_tag can be rolled back via workflow undo/redo
+        /// (undo removes the newly added entry by restoring the previous tag set). Runs on domain load.
         /// </summary>
         [InitializeOnLoadMethod]
         private static void RegisterSettingRestorers()
@@ -63,9 +62,7 @@ namespace UnitySkills
             return true;
         }
 
-        /// <summary>
-        /// Enum representing different render pipelines
-        /// </summary>
+        /// <summary>Render pipeline type.</summary>
         public enum RenderPipelineType
         {
             BuiltIn,
@@ -74,9 +71,7 @@ namespace UnitySkills
             Custom
         }
 
-        /// <summary>
-        /// Detects the current render pipeline used in the project
-        /// </summary>
+        /// <summary>Detects the render pipeline currently used by the project.</summary>
         public static RenderPipelineType DetectRenderPipeline()
         {
             var currentRP = GraphicsSettings.currentRenderPipeline;
@@ -95,9 +90,7 @@ namespace UnitySkills
             return RenderPipelineType.Custom;
         }
 
-        /// <summary>
-        /// Gets the recommended default shader for the current render pipeline
-        /// </summary>
+        /// <summary>Gets the recommended default shader for the current render pipeline.</summary>
         public static string GetDefaultShaderName()
         {
             var pipeline = DetectRenderPipeline();
@@ -111,9 +104,7 @@ namespace UnitySkills
             };
         }
 
-        /// <summary>
-        /// Gets the recommended unlit shader for the current render pipeline
-        /// </summary>
+        /// <summary>Gets the recommended unlit shader for the current render pipeline.</summary>
         public static string GetUnlitShaderName()
         {
             var pipeline = DetectRenderPipeline();
@@ -127,9 +118,7 @@ namespace UnitySkills
             };
         }
 
-        /// <summary>
-        /// Gets the correct color property name for the current render pipeline
-        /// </summary>
+        /// <summary>Gets the correct color property name for the current render pipeline.</summary>
         public static string GetColorPropertyName()
         {
             var pipeline = DetectRenderPipeline();
@@ -143,9 +132,7 @@ namespace UnitySkills
             };
         }
 
-        /// <summary>
-        /// Gets the correct main texture property name for the current render pipeline
-        /// </summary>
+        /// <summary>Gets the correct main-texture property name for the current render pipeline.</summary>
         public static string GetMainTexturePropertyName()
         {
             var pipeline = DetectRenderPipeline();

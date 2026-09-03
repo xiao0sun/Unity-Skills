@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System;
 using System.IO;
@@ -15,12 +15,14 @@ using YooAsset.Editor;
 namespace UnitySkills
 {
     /// <summary>
-    /// YooAsset Editor-side skills — build pipeline orchestration, Collector configuration,
-    /// and build-report analysis. Requires com.tuyoogame.yooasset (2.3.15+).
+    /// YooAsset editor-side skills — build pipeline orchestration, Collector configuration, and
+    /// build report analysis.
+    /// Requires com.tuyoogame.yooasset (2.3.15+).
     ///
-    /// `yooasset_check_installed` works WITHOUT the package via reflection; every other skill
-    /// returns a NoYooAsset() hint when the package is missing. All API calls anchor to YooAsset
-    /// 2.3.18 Editor source — see yooasset-design advisory module for the design contract.
+    /// `yooasset_check_installed` uses reflection, so it works even without the package
+    /// installed; every other skill uniformly returns the NoYooAsset() notice when the package is missing.
+    /// Every API call is written against the YooAsset 2.3.18 Editor source — see the
+    /// yooasset-design guidance module for the design contract.
     /// </summary>
     public static class YooAssetSkills
     {
@@ -176,7 +178,7 @@ namespace UnitySkills
 #endif
 
         // ==================================================================================
-        // A. Environment (1 skill) — works WITHOUT the YOO_ASSET define (pure reflection)
+        // A. Environment detection (1 skill) — doesn't depend on the YOO_ASSET macro, implemented purely via reflection
         // ==================================================================================
 
         [UnitySkill("yooasset_check_installed",
@@ -240,8 +242,9 @@ namespace UnitySkills
             "Build YooAsset bundles via ScriptableBuildPipeline or RawFileBuildPipeline. Writes bundles to BuildOutputRoot/<PackageName>/<Version>.",
             Category = SkillCategory.YooAsset, Operation = SkillOperation.Execute,
             Tags = new[] { "yooasset", "build", "bundles", "pipeline" },
-            Outputs = new[] { "success", "outputDirectory", "packageVersion", "errorInfo", "failedTask" },
+            Outputs = new[] { "success", "outputDirectory", "packageVersion", "errorInfo", "failedTask", "error", "errorCode", "details", "reportPath" },
             MutatesAssets = true, RiskLevel = "medium", SupportsDryRun = false,
+            LongRunning = true,
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
         public static object BuildBundles(
             string packageName,
@@ -362,9 +365,34 @@ namespace UnitySkills
                 return new { success = false, error = ex.Message, exceptionType = ex.GetType().Name };
             }
 
+            if (!result.Success)
+            {
+                // The router only recognizes a result as an error when it carries a literal
+                // non-null "error" field (see SkillResultHelper.TryGetError) — success:false alone
+                // is invisible to it. Without "error"/"errorCode" here, this would be let through
+                // as an ordinary (non-error) response, leaving the caller with nothing but a raw
+                // C# stack trace inside errorInfo and no branchable errorCode, inconsistent with
+                // every other skill's failure contract.
+                return new
+                {
+                    success = false,
+                    error = string.IsNullOrEmpty(result.ErrorInfo) ? $"YooAsset build failed for '{packageName}' (task: {result.FailedTask})." : result.ErrorInfo,
+                    errorCode = SkillErrorCode.SkillError.ToWireString(),
+                    packageName,
+                    packageVersion = version,
+                    pipeline = eBp.ToString(),
+                    buildTarget = target.ToString(),
+                    outputDirectory = result.OutputPackageDirectory,
+                    failedTask = result.FailedTask,
+                    details = result.ErrorInfo,
+                    errorInfo = result.ErrorInfo,
+                    reportPath = (string)null
+                };
+            }
+
             return new
             {
-                success = result.Success,
+                success = true,
                 packageName,
                 packageVersion = version,
                 pipeline = eBp.ToString(),
@@ -372,7 +400,7 @@ namespace UnitySkills
                 outputDirectory = result.OutputPackageDirectory,
                 errorInfo = result.ErrorInfo,
                 failedTask = result.FailedTask,
-                reportPath = result.Success ? Path.Combine(result.OutputPackageDirectory, $"{packageName}_{version}.report") : null
+                reportPath = Path.Combine(result.OutputPackageDirectory, $"{packageName}_{version}.report")
             };
 #endif
         }
@@ -439,6 +467,10 @@ namespace UnitySkills
             Category = SkillCategory.YooAsset, Operation = SkillOperation.Query,
             Tags = new[] { "yooasset", "build", "settings", "query" },
             Outputs = new[] { "packageName", "pipeline", "compression", "fileNameStyle" },
+            // This gets rejected below ("packageName is required."), but to the schema
+            // generator's eyes, a reference-type parameter with no CLR default value always
+            // counts as optional.
+            RequiresInput = new[] { "packageName" },
             ReadOnly = true,
             RequiresPackages = new[] { "com.tuyoogame.yooasset" },
             Mode = SkillMode.SemiAuto)]
@@ -760,6 +792,34 @@ namespace UnitySkills
             return NoYooAsset();
 #else
             if (string.IsNullOrEmpty(packageName)) return new { error = "packageName is required." };
+
+            // When a package has no group/collector at all, EditorSimulateModeHelper.SimulateBuild
+            // (called when this job advances to InitializeYooAssets inside
+            // ProcessRuntimeValidationJob) crashes deep inside YooAsset's own collector-build
+            // code, surfacing externally only as stage:failed, progress:15, and an opaque
+            // TargetInvocationException; and because it fails inside RuntimeValidationJobs
+            // rather than the generic job library (see yooasset_runtime_get_validation_result),
+            // job_status/job_list won't show anything for about a second. Blocking an "empty
+            // package" before any job is created turns this crash into an upfront, actionable error.
+            var collectorSetting = AssetBundleCollectorSettingData.Setting;
+            var collectorPkg = collectorSetting?.Packages?.FirstOrDefault(p => p.PackageName == packageName);
+            if (collectorPkg == null)
+            {
+                return new
+                {
+                    error = $"No collector package named '{packageName}' is configured. Use yooasset_list_collector_packages to see available packages, or yooasset_create_collector_package to create one.",
+                    errorCode = SkillErrorCode.SemanticInvalid.ToWireString()
+                };
+            }
+            if (collectorPkg.Groups == null || collectorPkg.Groups.Count == 0 || collectorPkg.Groups.Sum(g => g.Collectors?.Count ?? 0) == 0)
+            {
+                return new
+                {
+                    error = $"Collector package '{packageName}' has no groups/collectors configured, so there is nothing to build or validate. Add a group and collector first (yooasset_create_collector_group, then yooasset_add_collector) and retry.",
+                    errorCode = SkillErrorCode.SemanticInvalid.ToWireString()
+                };
+            }
+
             var job = new RuntimeValidationJob
             {
                 JobId = Guid.NewGuid().ToString("N").Substring(0, 8),
@@ -796,6 +856,8 @@ namespace UnitySkills
             Category = SkillCategory.YooAsset, Operation = SkillOperation.Query,
             Tags = new[] { "yooasset", "runtime", "playmode", "validation", "result" },
             Outputs = new[] { "jobId", "status", "stage", "result" },
+            // This gets rejected below ("jobId is required."); the signature alone gives the schema no way to flag this.
+            RequiresInput = new[] { "jobId" },
             ReadOnly = true,
             RequiresPackages = new[] { "com.tuyoogame.yooasset" },
             Mode = SkillMode.SemiAuto)]
@@ -806,7 +868,7 @@ namespace UnitySkills
 #else
             if (string.IsNullOrEmpty(jobId)) return new { error = "jobId is required." };
             if (!RuntimeValidationJobs.TryGetValue(jobId, out var job))
-                return new { error = $"Runtime validation job '{jobId}' not found." };
+                return UnknownRuntimeValidationJob(jobId);
             return new
             {
                 jobId = job.JobId,
@@ -818,6 +880,58 @@ namespace UnitySkills
                 result = job.Result
             };
 #endif
+        }
+
+        /// <summary>
+        /// The response for <c>yooasset_runtime_get_validation_result</c> when it hits an unknown
+        /// jobId, already wrapped per the router's first-layer error contract
+        /// (<c>SkillResultHelper.TryGetErrorContext</c>).
+        ///
+        /// <para>If left to <see cref="SkillErrorClassifier"/>, a bare "…job 'x' not found" text
+        /// would hit the TARGET_NOT_FOUND job branch, giving back <c>job_list</c> and claiming
+        /// "the id doesn't survive a domain reload" — both wrong here. Runtime validation jobs
+        /// live in this module's own <c>RuntimeValidationJobs</c> dictionary; <c>job_list</c>/
+        /// <c>job_status</c> (AsyncJobService's store) can never see them; and they really do
+        /// survive a domain reload — every change is persisted to EditorPrefs
+        /// (<c>UnitySkills_YooAsset_RuntimeValidationJobs_v1</c>) and restored after a reload.
+        /// So the caller would be pointed at a table that could never hold this id, for a
+        /// lifecycle rule that doesn't even apply here.</para>
+        ///
+        /// <para>Surviving ids are listed directly in the response rather than through a separate
+        /// skill: this private store has no listing endpoint, and enumerating the exact
+        /// dictionary the caller was already asking about is cheaper than pointing them somewhere
+        /// that can't give an answer.</para>
+        /// </summary>
+        private static object UnknownRuntimeValidationJob(string jobId)
+        {
+            var known = RuntimeValidationJobs.Keys.OrderBy(id => id, StringComparer.Ordinal).ToArray();
+            return new
+            {
+                error = $"Runtime validation job '{jobId}' not found. These jobs are kept in YooAsset's own " +
+                        "runtime-validation store (persisted to EditorPrefs and restored across domain reloads), " +
+                        "not in the generic async job table — job_list / job_status never see them. " +
+                        (known.Length > 0
+                            ? $"Currently tracked ids: {string.Join(", ", known)}."
+                            : "No runtime validation jobs are tracked right now, so this id was either already " +
+                              "removed by yooasset_runtime_cleanup or never created; a lost jobId cannot be recovered."),
+                knownJobIds = known,
+                relatedSkills = new[] { "yooasset_runtime_validate_package", "yooasset_runtime_cleanup" },
+                suggestedFixes = new[]
+                {
+                    new
+                    {
+                        action = "fix_param",
+                        skill = "yooasset_runtime_get_validation_result",
+                        reason = "knownJobIds in this response is the complete list of runtime validation jobs this project still tracks — retry with one of those ids."
+                    },
+                    new
+                    {
+                        action = "retry",
+                        skill = "yooasset_runtime_validate_package",
+                        reason = "When knownJobIds is empty the job is unrecoverable (cleaned up or never created); start a new validation run and keep the jobId it returns."
+                    }
+                }
+            };
         }
 
         [UnitySkill("yooasset_runtime_cleanup",
@@ -1121,7 +1235,7 @@ namespace UnitySkills
             "Persist the AssetBundleCollectorSetting ScriptableObject to disk; optionally run FixFile() first to repair dangling rule names.",
             Category = SkillCategory.YooAsset, Operation = SkillOperation.Modify,
             Tags = new[] { "yooasset", "collector", "save", "persist" },
-            Outputs = new[] { "saved", "fixed", "isDirty" },
+            Outputs = new[] { "saved", "fixesApplied", "isDirty" },
             MutatesAssets = true, RiskLevel = "low",
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
         public static object SaveCollectorConfig(bool fixErrors = true)
@@ -1139,7 +1253,12 @@ namespace UnitySkills
             return new
             {
                 saved = true,
-                fixed_ = fixedApplied,
+                // "fixed" is a C# reserved word, so the field could only be declared as "fixed_",
+                // and the escaping underscore leaked straight into the JSON wire format.
+                // The Outputs array above already (incorrectly) advertised it externally without
+                // the underscore, as "fixed", so this rename doesn't just fix a weird name — it
+                // also fixes the inconsistency between the docs and the actual output.
+                fixesApplied = fixedApplied,
                 isDirty = AssetBundleCollectorSettingData.IsDirty
             };
 #endif
@@ -1386,6 +1505,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "report", "build", "analyze" },
             Outputs = new[] { "summary", "bundleCount", "assetCount", "independAssetCount" },
             ReadOnly = true,
+            RequiresInput = new[] { "reportPath" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" },
             Mode = SkillMode.SemiAuto)]
         public static object LoadBuildReport(string reportPath)
@@ -1451,6 +1571,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "report", "bundle", "list", "analyze" },
             Outputs = new[] { "total", "returned", "items" },
             ReadOnly = true,
+            RequiresInput = new[] { "reportPath" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" },
             Mode = SkillMode.SemiAuto)]
         public static object ListReportBundles(
@@ -1521,6 +1642,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "report", "bundle", "detail", "dependency" },
             Outputs = new[] { "bundleName", "fileSize", "dependBundles", "referenceBundles", "bundleContents" },
             ReadOnly = true,
+            RequiresInput = new[] { "reportPath", "bundleName" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" },
             Mode = SkillMode.SemiAuto)]
         public static object GetBundleDetail(string reportPath, string bundleName)
@@ -1567,6 +1689,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "report", "asset", "list", "analyze" },
             Outputs = new[] { "total", "returned", "items" },
             ReadOnly = true,
+            RequiresInput = new[] { "reportPath" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" },
             Mode = SkillMode.SemiAuto)]
         public static object ListReportAssets(
@@ -1629,6 +1752,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "report", "asset", "detail", "dependency" },
             Outputs = new[] { "assetPath", "mainBundleName", "dependAssets", "dependBundles" },
             ReadOnly = true,
+            RequiresInput = new[] { "reportPath" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" },
             Mode = SkillMode.SemiAuto)]
         public static object GetAssetDetail(string reportPath, string assetPath = null, string address = null)
@@ -1667,6 +1791,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "report", "graph", "dependency", "analyze" },
             Outputs = new[] { "nodes", "edges" },
             ReadOnly = true,
+            RequiresInput = new[] { "reportPath" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" },
             Mode = SkillMode.SemiAuto)]
         public static object GetDependencyGraph(string reportPath, string rootBundle = null, string rootAssetPath = null, int maxNodes = 200)
@@ -1724,6 +1849,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "report", "compare", "diff", "analyze" },
             Outputs = new[] { "bundleDiff", "assetDiff" },
             ReadOnly = true,
+            RequiresInput = new[] { "oldReportPath", "newReportPath" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" },
             Mode = SkillMode.SemiAuto)]
         public static object CompareBuildReports(string oldReportPath, string newReportPath, int limit = 100)
@@ -1771,6 +1897,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "report", "independent", "orphan", "cleanup" },
             Outputs = new[] { "total", "returned", "items" },
             ReadOnly = true,
+            RequiresInput = new[] { "reportPath" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" },
             Mode = SkillMode.SemiAuto)]
         public static object ListIndependAssets(string reportPath, int limit = 100, int offset = 0)
@@ -1985,7 +2112,17 @@ namespace UnitySkills
                 }
                 catch (Exception ex)
                 {
-                    FailRuntimeValidationJob(job, ex.Message, ex.GetType().Name);
+                    // When YooAsset's own build/collector code fails inside a reflection call,
+                    // this surfaces as a System.Reflection.TargetInvocationException, whose
+                    // Message is just the generic "Exception has been thrown by the target of an
+                    // invocation." — the real reason is in InnerException.
+                    // Unwrapping one layer here lets FailRuntimeValidationJob's error text (the
+                    // only place a job's failure reason is visible, since job_status/job_list
+                    // can't see these jobs at all) say something the caller can act on.
+                    var innermost = ex;
+                    while (innermost.InnerException != null)
+                        innermost = innermost.InnerException;
+                    FailRuntimeValidationJob(job, innermost.Message, innermost.GetType().Name);
                 }
             }
 
@@ -2004,8 +2141,8 @@ namespace UnitySkills
                 job.Progress = 5;
                 if (!EditorApplication.isPlaying)
                 {
-                    // If we already tried to start Play Mode in a previous domain reload and it
-                    // clearly did not happen, fail instead of looping forever.
+                    // If a previous domain reload already attempted to enter Play Mode and
+                    // evidently didn't, fail outright rather than looping forever.
                     if (job.StartedPlayMode)
                     {
                         FailRuntimeValidationJob(job, "Play Mode did not start after restore; aborting validation.", "PlayModeStartFailed");

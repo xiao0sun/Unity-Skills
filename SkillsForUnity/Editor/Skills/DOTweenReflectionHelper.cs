@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -8,18 +8,16 @@ using UnityEngine;
 namespace UnitySkills
 {
     /// <summary>
-    /// Reflection helper for DOTween / DOTween Pro. All field access on
-    /// DOTweenAnimation goes through this class so the project compiles
-    /// cleanly without a compile-time reference to DOTween.
+    /// Reflection helper for DOTween / DOTween Pro. Every field access on DOTweenAnimation goes
+    /// through this class, so the project compiles cleanly even without referencing DOTween.
     ///
-    /// Field naming in DOTween Pro has historically been stable but not
-    /// source-public — candidate arrays are used for the high-frequency
-    /// fields so minor renames across versions are tolerated.
+    /// DOTween Pro's field naming has historically been stable but is not a public contract, so
+    /// high-traffic fields use a candidate-name array to tolerate small renames across versions.
     /// </summary>
     internal static class DOTweenReflectionHelper
     {
         // ==================================================================================
-        // Type Lookup
+        // Type lookup
         // ==================================================================================
 
         public const string DOTweenTypeName = "DG.Tweening.DOTween";
@@ -46,7 +44,7 @@ namespace UnitySkills
         };
 
         // ==================================================================================
-        // High-frequency Field Name Candidates
+        // Candidate names for high-traffic fields
         // ==================================================================================
 
         public static readonly string[] DurationFieldCandidates = { "duration" };
@@ -71,8 +69,8 @@ namespace UnitySkills
         public static readonly string[] EndValueRectCandidates = { "endValueRect" };
 
         /// <summary>
-        /// Field names that MUST be modified via dedicated skills (set_duration,
-        /// set_ease, set_loops). The generic set_animation_field rejects these.
+        /// Field names that can only be modified via dedicated skills (set_duration, set_ease,
+        /// set_loops); the generic set_animation_field rejects them.
         /// </summary>
         public static readonly HashSet<string> ReservedByDedicatedSkills =
             new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -82,7 +80,7 @@ namespace UnitySkills
             };
 
         // ==================================================================================
-        // Field Access (reflection)
+        // Field access (reflection)
         // ==================================================================================
 
         private const BindingFlags InstanceFlags =
@@ -134,6 +132,35 @@ namespace UnitySkills
             return field?.GetValue(instance);
         }
 
+        /// <summary>
+        /// The field names <c>dotween_pro_set_animation_field</c> can actually write, used for the
+        /// <c>validValues</c> list when an unknown field is rejected. Only public instance fields are considered (DOTweenAnimation only serializes those), and the ones owned by dedicated skills
+        /// are excluded, so every listed name is genuinely usable by the caller.
+        /// </summary>
+        public static string[] SettableFieldNames(Type owner)
+        {
+            if (owner == null) return Array.Empty<string>();
+            return owner.GetFields(BindingFlags.Public | BindingFlags.Instance)
+                .Where(f => !f.IsInitOnly && !f.IsLiteral)
+                .Select(f => f.Name)
+                .Where(name => !ReservedByDedicatedSkills.Contains(name))
+                .OrderBy(name => name, StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        /// <summary>
+        /// Formats a single field's output identically to <see cref="DumpAllFields"/> -- so the
+        /// written value echoed back by a setter matches, byte for byte, what
+        /// <c>dotween_pro_get_animation</c> reports for the same field.
+        /// </summary>
+        public static object DumpFieldValue(object instance, string fieldName)
+        {
+            var field = ResolveField(instance?.GetType(), fieldName);
+            if (field == null) return null;
+            try { return StringifyForPayload(field.GetValue(instance)); }
+            catch { return null; }
+        }
+
         public static Dictionary<string, object> DumpAllFields(object instance)
         {
             var result = new Dictionary<string, object>();
@@ -153,34 +180,82 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Ease & Loop Parsing (enum-by-name with curve fallback)
+        // Ease and Loop resolution (resolve enum by name, curve as fallback)
         // ==================================================================================
 
-        public static bool TrySetEase(object animInstance, string easeName, string easeCurveJson)
+        /// <summary>
+        /// The value names an enum field accepts from the caller, and also the list handed back as <c>validValues</c> on rejection.
+        ///
+        /// <para>Two kinds of values are filtered out because passing them by name is never correct. DOTween's <c>Ease</c> declares
+        /// <c>Unset</c> and <c>INTERNAL_Zero</c> / <c>INTERNAL_Custom</c>: <c>Unset</c> means "use the project
+        /// default" (this setter can't express that -- it only writes a concrete value), while <c>INTERNAL_Custom</c> is
+        /// a marker <see cref="TrySetEaseCurve"/> writes on the caller's behalf -- reporting just this name
+        /// without supplying a curve would yield a custom-ease animation with no curve.</para>
+        /// </summary>
+        public static string[] EnumNames(Type enumType)
         {
-            if (animInstance == null) return false;
+            if (enumType == null || !enumType.IsEnum) return Array.Empty<string>();
+            return Enum.GetNames(enumType)
+                .Where(name => !name.StartsWith("INTERNAL_", StringComparison.Ordinal) &&
+                               !string.Equals(name, "Unset", StringComparison.Ordinal))
+                .ToArray();
+        }
 
-            if (!string.IsNullOrEmpty(easeCurveJson))
+        /// <summary>Gets <see cref="EnumNames"/> for the field located by candidate names.</summary>
+        public static string[] EnumNamesForField(Type owner, string[] candidates)
+        {
+            var field = ResolveField(owner, candidates);
+            return field == null ? Array.Empty<string>() : EnumNames(field.FieldType);
+        }
+
+        /// <summary>
+        /// Determines whether an enum field accepts <paramref name="name"/>. The criterion draws
+        /// from the same word list <see cref="EnumNamesForField"/> publishes, so "accepted" and
+        /// "listed as valid" never disagree; and unlike <c>Enum.TryParse</c>, a bare integer
+        /// literal (e.g. "999") is rejected rather than being written in as an undefined enum member.
+        /// </summary>
+        public static bool EnumFieldAccepts(Type owner, string[] candidates, string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return false;
+            var trimmed = name.Trim();
+            return EnumNamesForField(owner, candidates)
+                .Any(candidate => string.Equals(candidate, trimmed, StringComparison.OrdinalIgnoreCase));
+        }
+
+        /// <summary>
+        /// Parses the <c>easeCurveJson</c> parameter. Deliberately exposed separately from <see cref="TrySetEaseCurve"/>, so the caller can reject a curve it can't parse before touching the component:
+        /// if the two were merged into one entry point, a parse failure would fall through to the set-ease-by-name branch, apply OutQuad, and report success --
+        /// a silent wrong value rather than a rejection.
+        /// </summary>
+        public static bool TryParseEaseCurve(string easeCurveJson, out AnimationCurve curve)
+        {
+            curve = string.IsNullOrEmpty(easeCurveJson) ? null : ParseAnimationCurve(easeCurveJson);
+            return curve != null;
+        }
+
+        /// <summary>
+        /// Writes a custom curve, and flips the ease enum to DOTween's <c>INTERNAL_Custom</c> marker --
+        /// the curve only takes effect because of that marker. If either step fails, returns false, rather than letting the caller report a curve that would
+        /// actually be ignored at runtime.
+        /// </summary>
+        public static bool TrySetEaseCurve(object animInstance, AnimationCurve curve)
+        {
+            if (animInstance == null || curve == null) return false;
+            if (!SetFieldByCandidates(animInstance, EaseCurveFieldCandidates, curve)) return false;
+
+            var easeField = ResolveField(animInstance.GetType(), EaseFieldCandidates);
+            if (easeField == null || !easeField.FieldType.IsEnum) return false;
+            try
             {
-                var curve = ParseAnimationCurve(easeCurveJson);
-                if (curve != null)
-                {
-                    SetFieldByCandidates(animInstance, EaseCurveFieldCandidates, curve);
-                    var easeField = ResolveField(animInstance.GetType(), EaseFieldCandidates);
-                    if (easeField != null && easeField.FieldType.IsEnum)
-                    {
-                        try
-                        {
-                            var customValue = Enum.Parse(easeField.FieldType, "INTERNAL_Custom", ignoreCase: true);
-                            easeField.SetValue(animInstance, customValue);
-                            return true;
-                        }
-                        catch { /* INTERNAL_Custom may not exist on very old versions */ }
-                    }
-                }
+                easeField.SetValue(animInstance, Enum.Parse(easeField.FieldType, "INTERNAL_Custom", ignoreCase: true));
+                return true;
             }
+            catch { return false; /* INTERNAL_Custom may not exist on very old versions */ }
+        }
 
-            if (string.IsNullOrEmpty(easeName)) return false;
+        public static bool TrySetEase(object animInstance, string easeName)
+        {
+            if (animInstance == null || string.IsNullOrEmpty(easeName)) return false;
 
             var field = ResolveField(animInstance.GetType(), EaseFieldCandidates);
             if (field == null || !field.FieldType.IsEnum) return false;
@@ -223,7 +298,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // animationType → endValue routing
+        // animationType -> endValue field routing
         // ==================================================================================
 
         private static readonly HashSet<string> _vec3AnimTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -260,8 +335,8 @@ namespace UnitySkills
         };
 
         /// <summary>
-        /// Routes a string end-value into the correct endValueXxx field based on animationType.
-        /// Returns (success, error).
+        /// Routes a string-form end value to the corresponding endValueXxx field, based on
+        /// animationType. Returns (whether it succeeded, error message).
         /// </summary>
         public static (bool ok, string error) ApplyEndValue(
             object animInstance,
@@ -338,7 +413,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Value Conversion
+        // Value conversion
         // ==================================================================================
 
         public static object ConvertValue(object value, Type targetType)

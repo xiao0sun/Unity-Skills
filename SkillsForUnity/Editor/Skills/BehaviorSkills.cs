@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
@@ -15,17 +15,17 @@ namespace UnitySkills
     /// <summary>
     /// Reflection bridge for the optional Unity Behavior package (com.unity.behavior).
     ///
-    /// The package is not a declared dependency of com.besty.unity-skills, so every type,
-    /// member, and method here is resolved by name at runtime — there is no compile-time
-    /// reference to any Unity.Behavior type. Type lookups are cached; every member lookup
-    /// is null-checked and surfaces a structured API-mismatch error instead of throwing.
+    /// This package isn't a declared dependency of com.besty.unity-skills, so every type, member, and
+    /// method here is resolved by name at runtime, with no compile-time reference to any Unity.Behavior
+    /// type. Type lookups are cached; every member lookup does a null check, and reports a structured
+    /// API-mismatch error rather than throwing when something is missing.
     ///
-    /// All member names below were read from com.unity.behavior 1.0.16 sources
-    /// (needle-mirror/com.unity.behavior) and cross-checked against the published
-    /// Scripting API for the public surface:
+    /// The member names below were taken from the com.unity.behavior 1.0.16 source
+    /// (needle-mirror/com.unity.behavior); the public parts were cross-checked against the published
+    /// Scripting API:
     /// https://docs.unity3d.com/Packages/com.unity.behavior@1.0/api/Unity.Behavior.html
-    /// Where a member is internal (BehaviorAuthoringGraph, GraphAsset, BlackboardAsset)
-    /// the source file is named in the comment on the candidate list.
+    /// For members that are internal (BehaviorAuthoringGraph, GraphAsset, BlackboardAsset), the source
+    /// file they came from is noted in the comment at the candidate list.
     /// </summary>
     internal static class BehaviorReflectionHelper
     {
@@ -40,13 +40,13 @@ namespace UnitySkills
         // ==================================================================================
 
         /// <summary>
-        /// Short name -> candidate fully-qualified names, probed in order. Multiple
-        /// candidates exist so a namespace move within the 1.x line still resolves.
+        /// Short name -> candidate fully-qualified names, probed in order. Multiple candidates are listed
+        /// so resolution still works across a namespace migration within the 1.x line.
         /// </summary>
         private static readonly Dictionary<string, string[]> TypeCandidates =
             new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
             {
-                // Runtime surface — public, documented in the Scripting API.
+                // Runtime part — public, documented in the Scripting API.
                 ["BehaviorGraphAgent"] = new[] { "Unity.Behavior.BehaviorGraphAgent" },
                 ["BehaviorGraph"] = new[] { "Unity.Behavior.BehaviorGraph" },
                 ["BlackboardReference"] = new[] { "Unity.Behavior.BlackboardReference" },
@@ -54,14 +54,14 @@ namespace UnitySkills
                 ["BlackboardVariable"] = new[] { "Unity.Behavior.BlackboardVariable" },
                 ["RuntimeBlackboardAsset"] = new[] { "Unity.Behavior.RuntimeBlackboardAsset" },
 
-                // Authoring surface — internal types, source: Authoring/Asset/*.cs and
-                // Tools/Graph/Asset/*.cs. Assembly.GetType resolves internal types fine.
+                // Editing (authoring) part — internal types, source located under Authoring/Asset/*.cs and
+                // Tools/Graph/Asset/*.cs; Assembly.GetType resolves internal types just fine.
                 ["BehaviorAuthoringGraph"] = new[] { "Unity.Behavior.BehaviorAuthoringGraph" },
                 ["BehaviorBlackboardAuthoringAsset"] = new[] { "Unity.Behavior.BehaviorBlackboardAuthoringAsset" },
                 ["GraphAsset"] = new[] { "Unity.Behavior.GraphFramework.GraphAsset" },
                 ["BlackboardAsset"] = new[] { "Unity.Behavior.GraphFramework.BlackboardAsset" },
 
-                // Public models used by the authoring assets.
+                // Public model types used by authoring assets.
                 ["VariableModel"] = new[] { "Unity.Behavior.GraphFramework.VariableModel" },
                 ["NodeModel"] = new[] { "Unity.Behavior.GraphFramework.NodeModel" }
             };
@@ -95,10 +95,10 @@ namespace UnitySkills
         public static Type BlackboardVariableType => Resolve("BlackboardVariable");
         public static Type VariableModelType => Resolve("VariableModel");
 
-        /// <summary>The package is considered usable once the agent component and the runtime graph type resolve.</summary>
+        /// <summary>The package is considered available once both the agent component and runtime graph types resolve.</summary>
         public static bool IsInstalled => AgentType != null && GraphType != null;
 
-        /// <summary>Installed package version, or null when the package manager has not seen it.</summary>
+        /// <summary>The installed package version; returns null if the package manager has never seen this package.</summary>
         public static string InstalledVersion
         {
             get
@@ -108,7 +108,7 @@ namespace UnitySkills
             }
         }
 
-        /// <summary>Uniform structured response returned by every skill when the package is missing.</summary>
+        /// <summary>The structured response every skill returns uniformly when the package is missing.</summary>
         public static object NotInstalled() => new
         {
             error = "Unity Behavior package (com.unity.behavior) is not installed. " +
@@ -125,7 +125,7 @@ namespace UnitySkills
             docs = DocsUrl
         };
 
-        /// <summary>Structured response for a resolved package whose members no longer match this integration.</summary>
+        /// <summary>The structured response when the package resolves but its member layout no longer matches this integration.</summary>
         public static object ApiMismatch(string detail) => new
         {
             error = $"Unity Behavior API mismatch: {detail}",
@@ -146,11 +146,11 @@ namespace UnitySkills
         public static void ClearCache() => ResolvedTypes.Clear();
 
         // ==================================================================================
-        // Member access — every lookup reports a structured error instead of throwing
+        // Member access — every failed lookup returns a structured error, never throws
         // ==================================================================================
 
         /// <summary>
-        /// Read the first member (property, then field) whose name matches one of the candidates.
+        /// Looks up candidate names in order and reads the first matching member (properties first, then fields).
         /// Returns false with a descriptive error when none of the candidates exist.
         /// </summary>
         public static bool TryGetMember(object target, out object value, out string error, params string[] names)
@@ -202,7 +202,7 @@ namespace UnitySkills
             return false;
         }
 
-        /// <summary>Read a member, returning null when it is absent. For descriptive output only.</summary>
+        /// <summary>Reads a member, returning null if it doesn't exist. Used only for descriptive output.</summary>
         public static object GetMemberOrNull(object target, params string[] names)
         {
             return TryGetMember(target, out var value, out _, names) ? value : null;
@@ -256,7 +256,7 @@ namespace UnitySkills
             return false;
         }
 
-        /// <summary>Invoke a parameterless-or-simple instance method by name, tolerating its absence.</summary>
+        /// <summary>Calls a parameterless or simple-parameter instance method by name; no error if the method doesn't exist.</summary>
         public static bool TryInvoke(object target, string methodName, object[] args, out object result, out string error)
         {
             result = null;
@@ -319,9 +319,9 @@ namespace UnitySkills
         // ==================================================================================
 
         /// <summary>
-        /// Locate behavior graph assets. The primary filter is the authoring asset type
-        /// (the main asset of a "Behavior Graph" .asset file); the runtime type is probed
-        /// as a fallback in case the type index only knows the baked sub-asset.
+        /// Locates behavior graph assets. The primary filter uses the authoring asset type (the main asset
+        /// of a "Behavior Graph" .asset file); falls back to the runtime type for cases where the type
+        /// index only recognizes the baked sub-asset.
         /// </summary>
         public static string[] FindGraphAssetPaths(string folder)
         {
@@ -345,7 +345,7 @@ namespace UnitySkills
                     paths.Add(path);
                 }
 
-                // The authoring filter is authoritative when it produces hits.
+                // Once the authoring filter has a hit, it takes priority.
                 if (paths.Count > 0) break;
             }
 
@@ -353,7 +353,7 @@ namespace UnitySkills
             return paths.ToArray();
         }
 
-        /// <summary>Load the authoring graph (main asset) at a path, or report why it is not one.</summary>
+        /// <summary>Loads the authoring graph (main asset) at the given path; explains why if it isn't one.</summary>
         public static bool TryLoadAuthoringGraph(string assetPath, out UnityEngine.Object graph, out object error)
         {
             graph = null;
@@ -396,8 +396,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Find the baked runtime BehaviorGraph stored as a sub-asset of a behavior graph file.
-        /// BehaviorGraphAgent.Graph requires this type, not the authoring asset.
+        /// Gets the baked runtime BehaviorGraph stored as a sub-asset inside the behavior graph file.
+        /// BehaviorGraphAgent.Graph needs this type, not the authoring asset.
         /// </summary>
         public static bool TryLoadRuntimeGraph(string assetPath, out UnityEngine.Object runtimeGraph, out object error)
         {
@@ -434,21 +434,21 @@ namespace UnitySkills
             return true;
         }
 
-        /// <summary>The authoring blackboard asset that holds the design-time variable list.</summary>
+        /// <summary>Gets the authoring blackboard asset holding the design-time variable list.</summary>
         public static bool TryGetAuthoringBlackboard(UnityEngine.Object authoringGraph, out object blackboard, out object error)
         {
             blackboard = null;
             error = null;
 
             // GraphAsset.Blackboard is a public field (Tools/Graph/Asset/GraphAsset.cs);
-            // MainBlackboardAuthoringAsset is the BehaviorAuthoringGraph-level accessor.
+            // MainBlackboardAuthoringAsset is the accessor at the BehaviorAuthoringGraph layer.
             if (!TryGetMember(authoringGraph, out var value, out var memberError, "Blackboard", "MainBlackboardAuthoringAsset"))
             {
                 error = ApiMismatch(memberError);
                 return false;
             }
 
-            // Unity's == overload also catches destroyed / missing-reference assets.
+            // Unity's overloaded == also recognizes destroyed / reference-lost assets.
             var isMissing = value == null || (value is UnityEngine.Object unityObject && unityObject == null);
             if (isMissing)
             {
@@ -464,13 +464,13 @@ namespace UnitySkills
             return true;
         }
 
-        /// <summary>Enumerate authoring VariableModel entries from a BlackboardAsset.</summary>
+        /// <summary>Enumerates the authoring VariableModel entries in a BlackboardAsset.</summary>
         public static bool TryGetAuthoringVariables(object blackboardAsset, out IList variables, out object error)
         {
             variables = null;
             error = null;
 
-            // BlackboardAsset.Variables is List<VariableModel> (Tools/Graph/Asset/BlackboardAsset.cs).
+            // BlackboardAsset.Variables is typed List<VariableModel> (Tools/Graph/Asset/BlackboardAsset.cs).
             if (!TryGetMember(blackboardAsset, out var value, out var memberError, "Variables"))
             {
                 error = ApiMismatch(memberError);
@@ -487,12 +487,11 @@ namespace UnitySkills
             return true;
         }
 
-        /// <summary>Enumerate runtime BlackboardVariable entries reachable from a BehaviorGraph.</summary>
+        /// <summary>Enumerates the runtime BlackboardVariable entries reachable from a BehaviorGraph.</summary>
         public static IList GetRuntimeVariables(object behaviorGraph)
         {
             if (behaviorGraph == null) return null;
 
-            // BehaviorGraph.BlackboardReference -> BlackboardReference.Blackboard -> Blackboard.Variables
             var reference = GetMemberOrNull(behaviorGraph, "BlackboardReference");
             if (reference == null) return null;
 
@@ -506,7 +505,7 @@ namespace UnitySkills
         // Description helpers
         // ==================================================================================
 
-        /// <summary>Describe an authoring VariableModel (name / type / default value / flags).</summary>
+        /// <summary>Describes an authoring VariableModel (name / type / default value / flags).</summary>
         public static object DescribeAuthoringVariable(object variableModel)
         {
             if (variableModel == null) return null;
@@ -525,7 +524,7 @@ namespace UnitySkills
             };
         }
 
-        /// <summary>Describe a runtime BlackboardVariable (name / type / current value).</summary>
+        /// <summary>Describes a runtime BlackboardVariable (name / type / current value).</summary>
         public static object DescribeRuntimeVariable(object blackboardVariable, string source)
         {
             if (blackboardVariable == null) return null;
@@ -542,7 +541,7 @@ namespace UnitySkills
             };
         }
 
-        /// <summary>Resolve the declared CLR type of a named variable, checking overrides then the graph blackboard.</summary>
+        /// <summary>Resolves the CLR type declared for a given variable name: checks the override first, then the graph's blackboard.</summary>
         public static Type FindVariableType(IEnumerable candidates, string variableName)
         {
             if (candidates == null || string.IsNullOrEmpty(variableName)) return null;
@@ -572,7 +571,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Value conversion — covers the blackboard types agents realistically drive
+        // Value conversion — covers the blackboard types an agent actually drives at runtime
         // ==================================================================================
 
         public static bool TryConvertValue(object raw, Type targetType, out object converted, out string error)
@@ -692,7 +691,7 @@ namespace UnitySkills
             return false;
         }
 
-        /// <summary>Accept [1,2,3], {"x":1,"y":2}, {"r":1,"g":0}, "1,2,3", or a bare number.</summary>
+        /// <summary>Accepts [1,2,3], {"x":1,"y":2}, {"r":1,"g":0}, "1,2,3", or a bare number.</summary>
         private static bool TryReadComponents(object raw, out float[] parts, out string error)
         {
             parts = Array.Empty<float>();
@@ -768,7 +767,7 @@ namespace UnitySkills
             return true;
         }
 
-        /// <summary>Resolve a UnityEngine.Object variable from an asset path, hierarchy path, or scene object name.</summary>
+        /// <summary>Resolves a UnityEngine.Object-typed variable by asset path, Hierarchy path, or scene object name.</summary>
         private static bool TryConvertUnityObject(object raw, Type targetType, out object converted, out string error)
         {
             converted = null;
@@ -838,15 +837,15 @@ namespace UnitySkills
     }
 
     /// <summary>
-    /// Unity Behavior (com.unity.behavior) skills — behavior graph asset discovery and
-    /// inspection, BehaviorGraphAgent wiring, and blackboard variable read/write.
+    /// Unity Behavior (com.unity.behavior) skills: discovering and inspecting behavior graph assets,
+    /// attaching BehaviorGraphAgent, reading and writing blackboard variables.
     ///
-    /// The package is optional and is reached entirely through reflection
-    /// (see <see cref="BehaviorReflectionHelper"/>); when it is missing every skill returns
-    /// the same structured install hint instead of failing to compile or throwing.
+    /// This package is optional, and is accessed entirely through reflection (see
+    /// <see cref="BehaviorReflectionHelper"/>); when the package is missing, every skill returns the same
+    /// structured installation hint, without a compile failure or a thrown exception.
     ///
-    /// Node-level graph topology editing is deliberately out of scope — see the module
-    /// SKILL.md Limitations section.
+    /// Node-level graph topology editing is deliberately out of scope; see the Limitations section of the
+    /// module's SKILL.md.
     /// </summary>
     public static class BehaviorSkills
     {
@@ -986,7 +985,7 @@ namespace UnitySkills
             if (!BehaviorReflectionHelper.TryLoadAuthoringGraph(assetPath, out var authoring, out var loadError))
                 return loadError;
 
-            // GraphAsset.Nodes is List<NodeModel> (Tools/Graph/Asset/GraphAsset.cs).
+            // GraphAsset.Nodes is typed List<NodeModel> (Tools/Graph/Asset/GraphAsset.cs).
             if (!BehaviorReflectionHelper.TryGetMember(authoring, out var nodesValue, out var nodesError, "Nodes"))
                 return BehaviorReflectionHelper.ApiMismatch(nodesError);
 
@@ -1113,9 +1112,9 @@ namespace UnitySkills
                 return new { error = $"Failed to create asset at {resolvedPath}: {ex.Message}" };
             }
 
-            // The Behavior asset post-processor runs BehaviorAuthoringGraph.ValidateAsset() on
-            // import, which is what creates the blackboard, the baked BehaviorGraph sub-asset,
-            // the debug info sub-asset, and the mandatory Start root node.
+            // Behavior's asset postprocessor calls BehaviorAuthoringGraph.ValidateAsset() on import,
+            // which is what creates the blackboard, the baked BehaviorGraph sub-asset, the debug info
+            // sub-asset, and the required Start root node.
             AssetDatabase.ImportAsset(resolvedPath, ImportAssetOptions.ForceUpdate);
 
             var created = AssetDatabase.LoadMainAssetAtPath(resolvedPath);
@@ -1125,8 +1124,9 @@ namespace UnitySkills
             string bakeWarning = null;
             if (!BehaviorReflectionHelper.TryLoadRuntimeGraph(resolvedPath, out _, out _))
             {
-                // Fallback for import orders where the post-processor has not baked yet.
-                // Both members are public on BehaviorAuthoringGraph (Authoring/Asset/BehaviorAuthoringGraph.cs).
+                // Fallback: in some import orderings the postprocessor hasn't finished baking yet.
+                // Both of these members are public on BehaviorAuthoringGraph
+                // （Authoring/Asset/BehaviorAuthoringGraph.cs）。
                 BehaviorReflectionHelper.TryInvoke(created, "EnsureAuthoringDataIsUpToDate", null, out _, out _);
                 BehaviorReflectionHelper.TryInvoke(created, "BuildRuntimeGraph", new object[] { true }, out _, out _);
                 BehaviorReflectionHelper.TryInvoke(created, "SaveAsset", null, out _, out _);
@@ -1157,7 +1157,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Agents (4 skills)
+        // Agent (4 skills)
         // ==================================================================================
 
         [UnitySkill("behavior_agent_add", "Add a BehaviorGraphAgent component to a GameObject, optionally binding a behavior graph asset in the same call",
@@ -1180,8 +1180,7 @@ namespace UnitySkills
             var (go, findError) = GameObjectFinder.FindOrError(name, instanceId, path);
             if (findError != null) return findError;
 
-            // Resolve the graph before touching the scene so a bad path cannot leave a
-            // half-configured agent behind.
+            // Resolve the graph before touching the scene, so a bad path doesn't leave behind a half-configured agent.
             UnityEngine.Object runtimeGraph = null;
             if (!string.IsNullOrWhiteSpace(graphAssetPath))
             {
@@ -1375,6 +1374,13 @@ namespace UnitySkills
             Category = SkillCategory.Behavior, Operation = SkillOperation.Query,
             Tags = new[] { "behavior", "blackboard", "variable", "list", "ai", "behavior-tree" },
             Outputs = new[] { "source", "count", "variables" },
+            // This is a genuine either/or: a graph asset path reads authoring defaults, a GameObject locator
+            // reads a specific agent's runtime variables. Declaring only "gameObject" would wrongly reject
+            // a valid {graphAssetPath: …} request body, so this token names both sides, which
+            // SkillPlanningService._requiredInputGroups maps to {name, path, instanceId, graphAssetPath} —
+            // an empty request body gets rejected right at the entry point, rather than running all the way
+            // to the hand-written "Provide either …" error.
+            RequiresInput = new[] { "gameObject|graphAssetPath" },
             ReadOnly = true,
             RequiresPackages = new[] { PackageId },
             Mode = SkillMode.SemiAuto)]
@@ -1496,7 +1502,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Internals
+        // Internal implementation
         // ==================================================================================
 
         private static object SetAgentBlackboardVariable(string variableName, object value, string name,
@@ -1542,9 +1548,9 @@ namespace UnitySkills
                 };
             }
 
-            // BehaviorGraphAgent.SetVariableValue<TValue>(string, TValue) writes the agent-level
-            // override while the agent is uninitialised (which is always the case in edit mode),
-            // and writes the running graph instance in play mode.
+            // BehaviorGraphAgent.SetVariableValue<TValue>(string, TValue) writes an agent-level override
+            // when the agent isn't yet initialized (always true in edit mode), and writes to the running
+            // graph instance in play mode.
             var setter = BehaviorReflectionHelper.AgentType
                 .GetMethods(BindingFlags.Public | BindingFlags.Instance)
                 .FirstOrDefault(candidate =>
@@ -1659,8 +1665,8 @@ namespace UnitySkills
             if (!BehaviorReflectionHelper.TrySetMember(target, converted, out var setError, "ObjectValue"))
                 return BehaviorReflectionHelper.ApiMismatch(setError);
 
-            // Mirrors BehaviorAuthoringGraph.RebuildGraphAndBlackboardRuntimeData(): dirty the
-            // blackboard, rebake it, then rebake and save the graph so the runtime sub-assets match.
+            // Mirrors the order of BehaviorAuthoringGraph.RebuildGraphAndBlackboardRuntimeData():
+            // mark the blackboard dirty and rebake it first, then rebake and save the graph, so the runtime sub-assets stay in sync with it.
             BehaviorReflectionHelper.TryInvoke(blackboard, "SetAssetDirty", null, out _, out _);
             BehaviorReflectionHelper.TryInvoke(blackboard, "BuildRuntimeBlackboard", null, out _, out _);
             BehaviorReflectionHelper.TryInvoke(authoring, "SetAssetDirty", new object[] { true }, out _, out _);
@@ -1684,7 +1690,7 @@ namespace UnitySkills
             };
         }
 
-        /// <summary>Resolve a GameObject and require a BehaviorGraphAgent on it.</summary>
+        /// <summary>Locates the GameObject and requires that it has a BehaviorGraphAgent attached.</summary>
         private static (Component agent, object error) FindAgentOrError(string name, int instanceId, string path)
         {
             var agentType = BehaviorReflectionHelper.AgentType;
@@ -1708,8 +1714,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Resolve the baked runtime BehaviorGraph a caller referenced by authoring asset path.
-        /// Returns null on success, or a structured error object.
+        /// Resolves the caller-supplied authoring asset path to the baked runtime BehaviorGraph.
+        /// Returns null on success, a structured error object on failure.
         /// </summary>
         private static object ResolveRuntimeGraph(string graphAssetPath, out UnityEngine.Object runtimeGraph)
         {
@@ -1721,10 +1727,10 @@ namespace UnitySkills
             if (!BehaviorReflectionHelper.TryLoadRuntimeGraph(graphAssetPath, out runtimeGraph, out var runtimeError))
                 return runtimeError;
 
-            // BehaviorGraphAgent.Graph's setter walks RootGraph.BlackboardGroupReferences, so an
-            // uncompiled graph would throw inside the package. Refuse it up front. A missing
-            // RootGraph member means a layout change, not an uncompiled graph — let that pass and
-            // surface as a set error instead.
+            // BehaviorGraphAgent.Graph's setter iterates RootGraph.BlackboardGroupReferences,
+            // and an uncompiled graph throws inside the package, so it's rejected up front. Note: RootGraph
+            // being missing as a member itself indicates a layout change rather than an uncompiled graph;
+            // that case is let through, so it surfaces as a set error instead.
             if (BehaviorReflectionHelper.TryGetMember(runtimeGraph, out var rootGraph, out _, "RootGraph") &&
                 rootGraph == null)
             {
@@ -1744,7 +1750,7 @@ namespace UnitySkills
             return null;
         }
 
-        /// <summary>Write an already-resolved runtime graph onto an agent. Returns null on success.</summary>
+        /// <summary>Writes an already-resolved runtime graph onto the agent. Returns null on success.</summary>
         private static object AssignResolvedGraph(Component agent, UnityEngine.Object runtimeGraph)
         {
             Undo.RegisterCompleteObjectUndo(agent, "Set Behavior Graph");
@@ -1756,7 +1762,7 @@ namespace UnitySkills
             return null;
         }
 
-        /// <summary>Describe one authoring NodeModel for graph info output. Missing members degrade to null.</summary>
+        /// <summary>Describes an authoring NodeModel for graph-info output; falls back to null if a member is missing.</summary>
         private static object DescribeNodeModel(object node)
         {
             var position = BehaviorReflectionHelper.GetMemberOrNull(node, "Position");

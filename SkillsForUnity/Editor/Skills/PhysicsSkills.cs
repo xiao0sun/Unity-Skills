@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System.Linq;
 using Newtonsoft.Json;
@@ -6,16 +6,16 @@ using Newtonsoft.Json;
 namespace UnitySkills
 {
     /// <summary>
-    /// Physics skills - raycasts, overlap checks, gravity.
+    /// Physics skills: raycasting, overlap detection, gravity settings.
     /// </summary>
     public static class PhysicsSkills
     {
         private sealed class GravityValue { public float x; public float y; public float z; }
 
         /// <summary>
-        /// Registers getters/setters so physics setting changes are reversible via workflow
-        /// undo/redo. Layer-collision keys are registered on demand (their handlers close over
-        /// the specific layer pair). Runs on domain load.
+        /// Registers getters/setters so physics setting changes can be rolled back through
+        /// workflow undo/redo. Layer collision keys are registered as needed (their handler
+        /// closures capture the specific layer pair). Runs on domain load.
         /// </summary>
         [InitializeOnLoadMethod]
         private static void RegisterSettingRestorers()
@@ -30,12 +30,24 @@ namespace UnitySkills
                     return true;
                 });
 
-            // Register a restorer for every layer pair so undo/redo of a collision-matrix change
-            // works even after a domain reload (which clears the in-memory registry).
+            // Register a restorer for every layer pair: a domain reload clears the in-memory
+            // registry, so without pre-registration, undo/redo of collision matrix changes made
+            // after a reload would stop working.
             for (int a = 0; a < 32; a++)
                 for (int b = a; b < 32; b++)
                     EnsureLayerCollisionRestorer(a, b);
         }
+
+        /// <summary>A layer index outside 0-31 is not a real Unity layer; Physics.GetIgnoreLayerCollision
+        /// and IgnoreLayerCollision accept any int without erroring — they silently operate on or
+        /// report a meaningless layer pair.</summary>
+        private static object InvalidLayerIndexError(int value, string paramName) =>
+            SkillParamUtil.InvalidValueError(value.ToString(), paramName, new[] { "0-31" });
+
+        /// <summary>A negative radius/half-extent is not a valid cast or overlap shape; Physics.OverlapSphere,
+        /// SphereCast, OverlapBox, and BoxCast all accept it without erroring — they just return "no hit".</summary>
+        private static object InvalidNonNegativeError(float value, string paramName) =>
+            SkillParamUtil.InvalidValueError(SkillParamUtil.FormatFloatR(value), paramName, new[] { ">= 0" });
 
         private static string LayerCollisionKey(int layer1, int layer2)
         {
@@ -68,7 +80,7 @@ namespace UnitySkills
             float originX, float originY, float originZ,
             float dirX, float dirY, float dirZ,
             float maxDistance = 1000f,
-            int layerMask = -1 // Default to all layers
+            int layerMask = -1 // Default: all layers
         )
         {
             var origin = new Vector3(originX, originY, originZ);
@@ -110,6 +122,7 @@ namespace UnitySkills
             int layerMask = -1
         )
         {
+            if (radius < 0f) return InvalidNonNegativeError(radius, "radius");
             var position = new Vector3(x, y, z);
             var colliders = Physics.OverlapSphere(position, radius, layerMask);
             
@@ -151,7 +164,7 @@ namespace UnitySkills
                     JsonConvert.SerializeObject(new GravityValue { x = Physics.gravity.x, y = Physics.gravity.y, z = Physics.gravity.z }),
                     "Physics: Gravity");
 
-            // Record for Undo support via DynamicsManager asset
+            // Recorded via the DynamicsManager asset, so Undo can support it
             var assets = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/DynamicsManager.asset");
             if (assets != null && assets.Length > 0)
             {
@@ -209,6 +222,7 @@ namespace UnitySkills
             float dirX, float dirY, float dirZ,
             float radius, float maxDistance = 1000f, int layerMask = -1)
         {
+            if (radius < 0f) return InvalidNonNegativeError(radius, "radius");
             var origin = new Vector3(originX, originY, originZ);
             var direction = new Vector3(dirX, dirY, dirZ);
             if (direction.sqrMagnitude < 1e-6f)
@@ -241,6 +255,9 @@ namespace UnitySkills
             float halfExtentX = 0.5f, float halfExtentY = 0.5f, float halfExtentZ = 0.5f,
             float maxDistance = 1000f, int layerMask = -1)
         {
+            if (halfExtentX < 0f) return InvalidNonNegativeError(halfExtentX, "halfExtentX");
+            if (halfExtentY < 0f) return InvalidNonNegativeError(halfExtentY, "halfExtentY");
+            if (halfExtentZ < 0f) return InvalidNonNegativeError(halfExtentZ, "halfExtentZ");
             var origin = new Vector3(originX, originY, originZ);
             var direction = new Vector3(dirX, dirY, dirZ);
             if (direction.sqrMagnitude < 1e-6f)
@@ -273,6 +290,9 @@ namespace UnitySkills
             float halfExtentX = 0.5f, float halfExtentY = 0.5f, float halfExtentZ = 0.5f,
             int layerMask = -1)
         {
+            if (halfExtentX < 0f) return InvalidNonNegativeError(halfExtentX, "halfExtentX");
+            if (halfExtentY < 0f) return InvalidNonNegativeError(halfExtentY, "halfExtentY");
+            if (halfExtentZ < 0f) return InvalidNonNegativeError(halfExtentZ, "halfExtentZ");
             var center = new Vector3(x, y, z);
             var halfExtents = new Vector3(halfExtentX, halfExtentY, halfExtentZ);
             var colliders = Physics.OverlapBox(center, halfExtents, Quaternion.identity, layerMask);
@@ -310,8 +330,14 @@ namespace UnitySkills
             };
             var path = System.IO.Path.Combine(savePath, name + ".physicMaterial");
             path = AssetDatabase.GenerateUniqueAssetPath(path);
-            var dir = System.IO.Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
+            // Cannot use System.IO.Directory.CreateDirectory: it only touches the filesystem, and
+            // AssetDatabase doesn't know the new folder exists until a Refresh, so with the
+            // parent directory not yet a *known* asset folder, savePath would make
+            // AssetDatabase.CreateAsset throw a raw ArgumentException ("Invalid path").
+            // EnsureAssetFolderExists instead creates folders level by level with
+            // AssetDatabase.CreateFolder, registering each as it's created — the same approach
+            // material_create uses, for the same reason.
+            RenderPipelineSkillsCommon.EnsureAssetFolderExists(path);
             AssetDatabase.CreateAsset(mat, path);
             AssetDatabase.SaveAssets();
             return new { success = true, path };
@@ -349,6 +375,8 @@ namespace UnitySkills
             Mode = SkillMode.SemiAuto)]
         public static object PhysicsGetLayerCollision(int layer1, int layer2)
         {
+            if (layer1 < 0 || layer1 > 31) return InvalidLayerIndexError(layer1, "layer1");
+            if (layer2 < 0 || layer2 > 31) return InvalidLayerIndexError(layer2, "layer2");
             bool ignored = Physics.GetIgnoreLayerCollision(layer1, layer2);
             return new { layer1, layer2, collisionEnabled = !ignored };
         }
@@ -359,6 +387,8 @@ namespace UnitySkills
             Outputs = new[] { "success", "layer1", "layer2", "collisionEnabled" })]
         public static object PhysicsSetLayerCollision(int layer1, int layer2, bool enableCollision = true)
         {
+            if (layer1 < 0 || layer1 > 31) return InvalidLayerIndexError(layer1, "layer1");
+            if (layer2 < 0 || layer2 > 31) return InvalidLayerIndexError(layer2, "layer2");
             if (WorkflowManager.IsRecording)
             {
                 EnsureLayerCollisionRestorer(layer1, layer2);

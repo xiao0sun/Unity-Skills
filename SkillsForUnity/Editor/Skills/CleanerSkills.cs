@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System.IO;
 using System.Linq;
@@ -9,7 +9,7 @@ using UnitySkills.Internal;
 namespace UnitySkills
 {
     /// <summary>
-    /// Cleaner skills - find unused assets, duplicates, and missing references.
+    /// Cleaner skills: find unreferenced assets, duplicate files, and missing references.
     /// </summary>
     public static class CleanerSkills
     {
@@ -96,7 +96,8 @@ namespace UnitySkills
             var filter = $"t:{assetType}";
             var guids = AssetDatabase.FindAssets(filter, new[] { searchPath });
             
-            // Group by file size first (fast filter)
+            // First group by file size for a quick filter, then only compute MD5 for files
+            // sharing the same size.
             var sizeGroups = new Dictionary<long, List<string>>();
             foreach (var guid in guids)
             {
@@ -110,7 +111,6 @@ namespace UnitySkills
                 sizeGroups[size].Add(path);
             }
 
-            // Only check files with same size
             var duplicateGroups = new List<object>();
             using (var md5 = MD5.Create())
             {
@@ -178,7 +178,8 @@ namespace UnitySkills
 
             foreach (var go in allObjects)
             {
-                // Check for missing scripts
+                // A component with a missing script shows up as a null element in the
+                // GetComponents result.
                 var components = go.GetComponents<Component>();
                 for (int i = 0; i < components.Length; i++)
                 {
@@ -194,7 +195,6 @@ namespace UnitySkills
                     }
                 }
 
-                // Check serialized properties for missing references
                 foreach (var component in components.Where(c => c != null))
                 {
                     var so = new SerializedObject(component);
@@ -229,7 +229,7 @@ namespace UnitySkills
             };
         }
 
-        // Store pending delete operations for confirmation
+        // Pending delete operations awaiting confirmation, indexed by confirmToken.
         private static Dictionary<string, PendingDeleteOperation> _pendingDeletes = new Dictionary<string, PendingDeleteOperation>();
 
         private class PendingDeleteOperation
@@ -248,7 +248,7 @@ namespace UnitySkills
             string[] paths = null,
             string confirmToken = null)
         {
-            // Step 2: Execute deletion with confirmation token
+            // Step 2: when called with confirmToken, perform the actual deletion.
             if (!string.IsNullOrEmpty(confirmToken))
             {
                 if (!_pendingDeletes.TryGetValue(confirmToken, out var pending))
@@ -276,7 +276,7 @@ namespace UnitySkills
                     bool deleted = false;
                     if (existed)
                     {
-                        // One-shot delete: backs up file (+ .meta) to the store and records a Deleted snapshot.
+                        // All in one step: back up the file (plus .meta) into the repository and record a Deleted snapshot.
                         deleted = WorkflowManager.DeleteAssetToTrash(path);
                         if (deleted) deletedCount++;
                     }
@@ -297,7 +297,7 @@ namespace UnitySkills
                 };
             }
 
-            // Step 1: Preview and generate confirmation token
+            // Step 1: when called without a token, only preview and issue a confirmToken.
             if (paths == null || paths.Length == 0)
                 return new { success = false, error = "No paths provided. Provide paths array to preview deletion." };
 
@@ -474,8 +474,9 @@ namespace UnitySkills
             int deleted = 0;
             foreach (var folder in empty.OrderByDescending(f => f.Length))
             {
-                // Folder branch of DeleteAssetToTrash records a metadata-only Deleted snapshot
-                // (undo re-creates the empty folder) and removes it via AssetDatabase.DeleteAsset.
+                // The directory branch of DeleteAssetToTrash only records a metadata-level Deleted
+                // snapshot (recreating the empty folder on undo); the actual deletion goes through
+                // AssetDatabase.DeleteAsset.
                 if (WorkflowManager.DeleteAssetToTrash(folder)) deleted++;
             }
             AssetDatabase.Refresh();
@@ -485,7 +486,8 @@ namespace UnitySkills
         [UnitySkill("cleaner_fix_missing_scripts", "Remove missing script components from GameObjects", TracksWorkflow = true,
             Category = SkillCategory.Cleaner, Operation = SkillOperation.Execute | SkillOperation.Modify,
             Tags = new[] { "cleaner", "fix", "missing", "scripts" },
-            Outputs = new[] { "removedComponents" })]
+            Outputs = new[] { "removedComponents" },
+            MutatesScene = true, RiskLevel = "medium")]
         public static object CleanerFixMissingScripts(bool includeInactive = true)
         {
             var allObjects = includeInactive

@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.UI;
 using UnityEditor;
 using System.Linq;
@@ -10,12 +10,12 @@ using UnitySkills.Internal;
 namespace UnitySkills
 {
     /// <summary>
-    /// UI management skills - create and configure UI elements.
-    /// Dynamically uses TextMeshPro if available, falls back to Legacy UI Text.
+    /// UI management skills — create and configure UI elements.
+    /// Uses TextMeshPro dynamically when present in the project, otherwise falls back to Legacy UI Text.
     /// </summary>
     public static class UISkills
     {
-        // Cache TMP types for performance
+        // Cache TMP types to avoid repeated reflection
         private static Type _tmpTextType;
         private static Type _tmpInputFieldType;
         private static Type _tmpDropdownType;
@@ -23,7 +23,7 @@ namespace UnitySkills
         private static bool _tmpAvailable = false;
 
         /// <summary>
-        /// Check if TextMeshPro is available in the project
+        /// Checks whether TextMeshPro is available in the project
         /// </summary>
         private static bool IsTMPAvailable()
         {
@@ -39,7 +39,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Add text component - uses TMP if available, otherwise Legacy Text
+        /// Adds a text component — TMP if available, otherwise Legacy Text
         /// </summary>
         private static Component AddTextComponent(GameObject go, string text, int fontSize, Color color, TextAnchor alignment = TextAnchor.MiddleLeft)
         {
@@ -50,8 +50,8 @@ namespace UnitySkills
                 _tmpTextType.GetProperty("text")?.SetValue(tmp, text);
                 _tmpTextType.GetProperty("fontSize")?.SetValue(tmp, (float)fontSize);
                 _tmpTextType.GetProperty("color")?.SetValue(tmp, color);
-                
-                // Convert TextAnchor to TMP alignment
+
+                // Convert TextAnchor to TMP's alignment enum
                 var alignmentOptionsType = Type.GetType("TMPro.TextAlignmentOptions, Unity.TextMeshPro");
                 if (alignmentOptionsType != null)
                 {
@@ -87,7 +87,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Set text on a component (TMP or Legacy)
+        /// Sets text on a component (works for TMP or Legacy)
         /// </summary>
         private static bool SetTextOnComponent(Component comp, string text)
         {
@@ -108,26 +108,16 @@ namespace UnitySkills
             TracksWorkflow = true)]
         public static object UICreateCanvas(string name = "Canvas", string renderMode = "ScreenSpaceOverlay")
         {
+            // Must be resolved before the Canvas is created. The old default branch silently produced a
+            // ScreenSpaceOverlay canvas for any unrecognized value, so "Overlay" or "Camera" looked like it had taken effect.
+            if (!SkillParamUtil.TryParseRequiredEnum<RenderMode>(renderMode, "renderMode", out var mode, out var renderModeError))
+                return renderModeError;
+
             var go = new GameObject(name);
             var canvas = go.AddComponent<Canvas>();
             go.AddComponent<CanvasScaler>();
             go.AddComponent<GraphicRaycaster>();
-
-            switch (renderMode.ToLower())
-            {
-                case "screenspaceoverlay":
-                    canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-                    break;
-                case "screenspacecamera":
-                    canvas.renderMode = RenderMode.ScreenSpaceCamera;
-                    break;
-                case "worldspace":
-                    canvas.renderMode = RenderMode.WorldSpace;
-                    break;
-                default:
-                    canvas.renderMode = RenderMode.ScreenSpaceOverlay;
-                    break;
-            }
+            canvas.renderMode = mode;
 
             Undo.RegisterCreatedObjectUndo(go, "Create Canvas");
             WorkflowManager.SnapshotObject(go, SnapshotType.Created);
@@ -267,8 +257,8 @@ namespace UnitySkills
         [UnitySkill("ui_create_batch", "Create multiple UI elements (Efficient). items: JSON array of {type, name, parent, text, width, height, ...}",
             Category = SkillCategory.UI, Operation = SkillOperation.Create,
             Tags = new[] { "batch", "ugui", "bulk", "multiple" },
-            Outputs = new[] { "totalRequested", "succeeded", "failed", "results" },
-            TracksWorkflow = true)]
+            Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UICreateBatch(string items)
         {
             return BatchExecutor.Execute<BatchUIItem>(items, item =>
@@ -328,7 +318,7 @@ namespace UnitySkills
             public float width { get; set; } = 100;
             public float height { get; set; } = 30;
             public float fontSize { get; set; } = 14;
-            public float r { get; set; } = 1; // Default white/visible
+            public float r { get; set; } = 1; // Defaults to opaque white
             public float g { get; set; } = 1;
             public float b { get; set; } = 1;
             public float a { get; set; } = 1;
@@ -369,7 +359,7 @@ namespace UnitySkills
 
             if (IsTMPAvailable())
             {
-                // Use TMP InputField
+                // Use the TMP version of InputField
                 var inputField = go.AddComponent(_tmpInputFieldType);
 
                 var textAreaGo = new GameObject("Text Area");
@@ -401,7 +391,7 @@ namespace UnitySkills
                 textRect.sizeDelta = Vector2.zero;
                 var textComp = AddTextComponent(textGo, "", 14, Color.black);
 
-                // Set TMP_InputField properties
+                // Set TMP_InputField's properties
                 _tmpInputFieldType.GetProperty("textViewport")?.SetValue(inputField, textAreaRect);
                 _tmpInputFieldType.GetProperty("textComponent")?.SetValue(inputField, textComp);
                 _tmpInputFieldType.GetProperty("placeholder")?.SetValue(inputField, placeholderComp);
@@ -497,7 +487,7 @@ namespace UnitySkills
 
             slider.fillRect = fillRect;
 
-            // Handle
+            // Slider handle
             var handleAreaGo = new GameObject("Handle Slide Area");
             handleAreaGo.transform.SetParent(go.transform, false);
             var handleAreaRect = handleAreaGo.AddComponent<RectTransform>();
@@ -602,7 +592,7 @@ namespace UnitySkills
                 }
             }
 
-            // Fallback to Legacy Text
+            // Fall back to Legacy Text
             var textComp = go.GetComponent<Text>();
             if (textComp != null)
             {
@@ -660,11 +650,11 @@ namespace UnitySkills
                 if (parent != null) return parent;
             }
 
-            // Find existing canvas
+            // First look for an existing Canvas
             var canvas = UnityEngine.Object.FindAnyObjectByType<Canvas>();
             if (canvas != null) return canvas.gameObject;
 
-            // Create new canvas
+            // Otherwise create a new Canvas
             var go = new GameObject("Canvas");
             var canvasComp = go.AddComponent<Canvas>();
             canvasComp.renderMode = RenderMode.ScreenSpaceOverlay;
@@ -684,7 +674,7 @@ namespace UnitySkills
             if (go.GetComponent<Slider>()) return "Slider";
             if (go.GetComponent<Toggle>()) return "Toggle";
             
-            // Check TMP types first if available
+            // If TMP is available, check TMP types first
             if (IsTMPAvailable())
             {
                 if (_tmpInputFieldType != null && go.GetComponent(_tmpInputFieldType) != null) return "InputField";
@@ -700,7 +690,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Advanced UI Layout Skills
+        // Advanced UI layout skills
         // ==================================================================================
 
         [UnitySkill("ui_set_anchor", "Set anchor preset for a UI element (TopLeft, TopCenter, TopRight, MiddleLeft, MiddleCenter, MiddleRight, BottomLeft, BottomCenter, BottomRight, StretchHorizontal, StretchVertical, StretchAll)",
@@ -778,8 +768,6 @@ namespace UnitySkills
 
             WorkflowManager.SnapshotObject(rect);
             Undo.RecordObject(rect, "Set Rect");
-
-            // Size
             if (width.HasValue || height.HasValue)
             {
                 var size = rect.sizeDelta;
@@ -787,8 +775,6 @@ namespace UnitySkills
                 if (height.HasValue) size.y = height.Value;
                 rect.sizeDelta = size;
             }
-
-            // Position
             if (posX.HasValue || posY.HasValue)
             {
                 var pos = rect.anchoredPosition;
@@ -874,7 +860,7 @@ namespace UnitySkills
             return BuildRectTransformResult(go, rect);
         }
 
-        [UnitySkill("ui_set_rect_transform_batch", "Set full RectTransform data for multiple UI elements. items: JSON array with target identifiers and rect transform fields.",
+        [UnitySkill("ui_set_rect_transform_batch", "Set full RectTransform data for multiple UI elements. items: JSON array of {name, instanceId, path, anchorMinX/Y, anchorMaxX/Y, pivotX/Y, anchoredPosX/Y/Z, sizeDeltaX/Y, offsetMinX/Y, offsetMaxX/Y, localPosX/Y/Z, localRotX/Y/Z, localScaleX/Y/Z, width, height}",
             Category = SkillCategory.UI, Operation = SkillOperation.Modify,
             Tags = new[] { "rect-transform", "ugui", "anchor", "offset", "layout", "batch" },
             Outputs = new[] { "name", "anchorMin", "anchorMax", "anchoredPosition3D" },
@@ -912,7 +898,7 @@ namespace UnitySkills
             RequiresInput = new[] { "gameObject" })]
         public static object UILayoutChildren(
             string name = null, int instanceId = 0, string path = null,
-            string layoutType = "Vertical",  // Vertical, Horizontal, Grid
+            string layoutType = "Vertical",  // values: Vertical, Horizontal, Grid
             float spacing = 10f,
             float paddingLeft = 0, float paddingRight = 0, float paddingTop = 0, float paddingBottom = 0,
             int gridColumns = 3,
@@ -926,7 +912,7 @@ namespace UnitySkills
 
             Undo.RecordObject(parentGo, "Add Layout");
 
-            // Remove existing layout groups
+            // Remove any existing layout group
             var existingV = parentGo.GetComponent<UnityEngine.UI.VerticalLayoutGroup>();
             var existingH = parentGo.GetComponent<UnityEngine.UI.HorizontalLayoutGroup>();
             var existingG = parentGo.GetComponent<UnityEngine.UI.GridLayoutGroup>();
@@ -958,7 +944,7 @@ namespace UnitySkills
                     gLayout.padding = padding;
                     gLayout.constraint = UnityEngine.UI.GridLayoutGroup.Constraint.FixedColumnCount;
                     gLayout.constraintCount = gridColumns;
-                    // Auto-calculate cell size based on first child
+                    // Auto-derive cell size from the first child
                     if (rect.childCount > 0)
                     {
                         var firstChild = rect.GetChild(0).GetComponent<RectTransform>();
@@ -970,7 +956,7 @@ namespace UnitySkills
                     return new { error = $"Unknown layout type: {layoutType}" };
             }
 
-            // Add ContentSizeFitter if not present
+            // Add a ContentSizeFitter if one isn't already present
             if (parentGo.GetComponent<UnityEngine.UI.ContentSizeFitter>() == null)
             {
                 var fitter = Undo.AddComponent<UnityEngine.UI.ContentSizeFitter>(parentGo);
@@ -992,6 +978,13 @@ namespace UnitySkills
             RequiresInput = new[] { "selectedGameObjects" })]
         public static object UIAlignSelected(string alignment = "Center")
         {
+            // Validate before touching the selection: the switch below only produces a plain-text error with no
+            // errorCode/validValues for an unrecognized value, and that path also doesn't record
+            // Undo.RecordObjects — now moved to an upfront check instead.
+            var validAlignments = new[] { "Left", "Right", "Center", "Top", "Bottom", "Middle" };
+            if (!validAlignments.Any(v => string.Equals(v, alignment, StringComparison.OrdinalIgnoreCase)))
+                return SkillParamUtil.InvalidValueError(alignment, "alignment", validAlignments);
+
             var selected = Selection.gameObjects.Where(g => g.GetComponent<RectTransform>() != null).ToList();
             if (selected.Count < 2) return new { error = "Select at least 2 UI elements" };
 
@@ -1045,9 +1038,16 @@ namespace UnitySkills
             RequiresInput = new[] { "selectedGameObjects" })]
         public static object UIDistributeSelected(string direction = "Horizontal")
         {
+            // Validated up front: direction used to only ever be compared against == "horizontal", so any other
+            // value (a typo, "Diagonal", etc.) silently fell through to vertical distribution, echoing back that
+            // invalid value while still reporting success.
+            var validDirections = new[] { "Horizontal", "Vertical" };
+            if (!validDirections.Any(v => string.Equals(v, direction, StringComparison.OrdinalIgnoreCase)))
+                return SkillParamUtil.InvalidValueError(direction, "direction", validDirections);
+
             var selected = Selection.gameObjects
                 .Where(g => g.GetComponent<RectTransform>() != null)
-                .OrderBy(g => direction.ToLower() == "horizontal" 
+                .OrderBy(g => direction.ToLower() == "horizontal"
                     ? g.GetComponent<RectTransform>().anchoredPosition.x 
                     : g.GetComponent<RectTransform>().anchoredPosition.y)
                 .ToList();
@@ -1081,7 +1081,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // UI Element Creation Skills
+        // UI element creation skills
         // ==================================================================================
 
         [UnitySkill("ui_create_dropdown", "Create a Dropdown UI element with options",
@@ -1112,7 +1112,7 @@ namespace UnitySkills
             else
                 dropdownComp = go.AddComponent<Dropdown>();
 
-            // Caption label
+            // Caption text
             var captionGo = new GameObject("Label");
             captionGo.transform.SetParent(go.transform, false);
             var captionRect = captionGo.AddComponent<RectTransform>();
@@ -1132,7 +1132,7 @@ namespace UnitySkills
             var arrowImage = arrowGo.AddComponent<Image>();
             arrowImage.color = new Color(0.2f, 0.2f, 0.2f);
 
-            // Template (dropdown list)
+            // Template (the actual dropdown list body)
             var templateGo = new GameObject("Template");
             templateGo.transform.SetParent(go.transform, false);
             var templateRect = templateGo.AddComponent<RectTransform>();
@@ -1207,7 +1207,7 @@ namespace UnitySkills
             itemLabelRect.offsetMax = Vector2.zero;
             var itemLabelText = AddTextComponent(itemLabelGo, "Option", 14, Color.black);
 
-            // Set dropdown references via reflection (TMP) or direct (Legacy)
+            // Set dropdown references: TMP goes through reflection, Legacy assigns directly
             if (usingTmpDropdown)
             {
                 _tmpDropdownType.GetProperty("captionText")?.SetValue(dropdownComp, captionText);
@@ -1224,7 +1224,7 @@ namespace UnitySkills
 
             templateGo.SetActive(false);
 
-            // Add options
+            // Populate options
             var optionList = new List<string>();
             if (!string.IsNullOrEmpty(options))
             {
@@ -1265,6 +1265,9 @@ namespace UnitySkills
             bool horizontal = false, bool vertical = true,
             string movementType = "Elastic")
         {
+            if (!SkillParamUtil.TryParseRequiredEnum<ScrollRect.MovementType>(movementType, "movementType", out var mt, out var movementTypeError))
+                return movementTypeError;
+
             var parentGo = FindOrCreateCanvas(parent);
             if (parentGo == null)
                 return new { error = "Parent not found and could not create Canvas" };
@@ -1278,8 +1281,7 @@ namespace UnitySkills
             var scrollRect = go.AddComponent<ScrollRect>();
             scrollRect.horizontal = horizontal;
             scrollRect.vertical = vertical;
-            if (Enum.TryParse<ScrollRect.MovementType>(movementType, true, out var mt))
-                scrollRect.movementType = mt;
+            scrollRect.movementType = mt;
 
             var bgImage = go.AddComponent<Image>();
             bgImage.color = new Color(0.1f, 0.1f, 0.1f, 0.5f);
@@ -1352,6 +1354,11 @@ namespace UnitySkills
             string name = "Scrollbar", string parent = null,
             string direction = "BottomToTop", float value = 0, float size = 0.2f, int numberOfSteps = 0)
         {
+            // Resolve first: direction also determines the sizeDelta axis below, so a parse failure would
+            // produce a scrollbar sized on one axis but laid out along the other.
+            if (!SkillParamUtil.TryParseRequiredEnum<Scrollbar.Direction>(direction, "direction", out var dir, out var directionError))
+                return directionError;
+
             var parentGo = FindOrCreateCanvas(parent);
             if (parentGo == null)
                 return new { error = "Parent not found and could not create Canvas" };
@@ -1360,7 +1367,7 @@ namespace UnitySkills
             go.transform.SetParent(parentGo.transform, false);
 
             var rectTransform = go.AddComponent<RectTransform>();
-            var isHorizontal = direction.Contains("Left") || direction.Contains("Right");
+            var isHorizontal = dir == Scrollbar.Direction.LeftToRight || dir == Scrollbar.Direction.RightToLeft;
             rectTransform.sizeDelta = isHorizontal ? new Vector2(160, 20) : new Vector2(20, 160);
 
             var bgImage = go.AddComponent<Image>();
@@ -1388,17 +1395,16 @@ namespace UnitySkills
             scrollbar.size = size;
             scrollbar.numberOfSteps = numberOfSteps;
 
-            if (Enum.TryParse<Scrollbar.Direction>(direction, true, out var dir))
-                scrollbar.direction = dir;
+            scrollbar.direction = dir;
 
             Undo.RegisterCreatedObjectUndo(go, "Create Scrollbar");
             WorkflowManager.SnapshotObject(go, SnapshotType.Created);
 
-            return new { success = true, name = go.name, entityId = UnityObjectIdUtility.GetEntityId(go), instanceId = UnityObjectIdUtility.GetObjectId(go), parent = parentGo.name, direction };
+            return new { success = true, name = go.name, entityId = UnityObjectIdUtility.GetEntityId(go), instanceId = UnityObjectIdUtility.GetObjectId(go), parent = parentGo.name, direction = scrollbar.direction.ToString() };
         }
 
         // ==================================================================================
-        // UI Property Configuration Skills
+        // UI property configuration skills
         // ==================================================================================
 
         [UnitySkill("ui_set_image", "Set Image properties (type, fillMethod, fillAmount, preserveAspect, sprite)",
@@ -1419,13 +1425,20 @@ namespace UnitySkills
             var image = go.GetComponent<Image>();
             if (image == null) return new { error = "No Image component found" };
 
+            // Both are resolved before the first write: an invalid type used to be discarded while
+            // fillAmount / preserveAspect / spritePath in the same call still took effect.
+            if (!SkillParamUtil.TryParseOptionalEnum<Image.Type>(type, "type", out var imgType, out var typeError))
+                return typeError;
+            if (!SkillParamUtil.TryParseOptionalEnum<Image.FillMethod>(fillMethod, "fillMethod", out var fm, out var fillMethodError))
+                return fillMethodError;
+
             WorkflowManager.SnapshotObject(image);
             Undo.RecordObject(image, "Set Image");
 
-            if (!string.IsNullOrEmpty(type) && Enum.TryParse<Image.Type>(type, true, out var imgType))
-                image.type = imgType;
-            if (!string.IsNullOrEmpty(fillMethod) && Enum.TryParse<Image.FillMethod>(fillMethod, true, out var fm))
-                image.fillMethod = fm;
+            if (imgType.HasValue)
+                image.type = imgType.Value;
+            if (fm.HasValue)
+                image.fillMethod = fm.Value;
             if (fillAmount.HasValue)
                 image.fillAmount = fillAmount.Value;
             if (fillClockwise.HasValue)
@@ -1541,6 +1554,12 @@ namespace UnitySkills
             string name = null, int instanceId = 0, string path = null,
             string maskType = "RectMask2D", bool showMaskGraphic = true)
         {
+            // Validate before touching the GameObject: the old else branch treated any value other than "Mask"
+            // as RectMask2D, so a typo like "BogusMask" would silently add a RectMask2D while echoing that invalid string back.
+            var validMaskTypes = new[] { "Mask", "RectMask2D" };
+            if (!validMaskTypes.Any(v => string.Equals(v, maskType, StringComparison.OrdinalIgnoreCase)))
+                return SkillParamUtil.InvalidValueError(maskType, "maskType", validMaskTypes);
+
             var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
             if (error != null) return error;
 
@@ -1550,7 +1569,7 @@ namespace UnitySkills
             string applied;
             if (maskType.Equals("Mask", StringComparison.OrdinalIgnoreCase))
             {
-                // Mask requires an Image component
+                // Mask depends on an Image component
                 if (go.GetComponent<Image>() == null)
                     Undo.AddComponent<Image>(go);
                 var mask = go.GetComponent<Mask>() ?? Undo.AddComponent<Mask>(go);
@@ -1620,11 +1639,11 @@ namespace UnitySkills
             string transition = null,
             bool? interactable = null,
             string navigationMode = null,
-            // ColorBlock properties
-            float? normalR = null, float? normalG = null, float? normalB = null,
-            float? highlightedR = null, float? highlightedG = null, float? highlightedB = null,
-            float? pressedR = null, float? pressedG = null, float? pressedB = null,
-            float? disabledR = null, float? disabledG = null, float? disabledB = null,
+            // ColorBlock properties. Each channel (including alpha) defaults to the block's current value — see the TryMergeColor calls below.
+            float? normalR = null, float? normalG = null, float? normalB = null, float? normalA = null,
+            float? highlightedR = null, float? highlightedG = null, float? highlightedB = null, float? highlightedA = null,
+            float? pressedR = null, float? pressedG = null, float? pressedB = null, float? pressedA = null,
+            float? disabledR = null, float? disabledG = null, float? disabledB = null, float? disabledA = null,
             float? colorMultiplier = null, float? fadeDuration = null)
         {
             var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
@@ -1633,44 +1652,67 @@ namespace UnitySkills
             var selectable = go.GetComponent<Selectable>();
             if (selectable == null) return new { error = "No Selectable component found (Button, Toggle, Slider, etc.)" };
 
+            // In any writes before this: these two used to be silently dropped, while the color block and
+            // interactable flag in the same call were still committed.
+            if (!SkillParamUtil.TryParseOptionalEnum<Selectable.Transition>(transition, "transition", out var trans, out var transitionError))
+                return transitionError;
+            if (!SkillParamUtil.TryParseOptionalEnum<Navigation.Mode>(navigationMode, "navigationMode", out var navMode, out var navigationModeError))
+                return navigationModeError;
+
             WorkflowManager.SnapshotObject(selectable);
             Undo.RecordObject(selectable, "Configure Selectable");
 
             if (interactable.HasValue)
                 selectable.interactable = interactable.Value;
 
-            if (!string.IsNullOrEmpty(transition) && Enum.TryParse<Selectable.Transition>(transition, true, out var trans))
-                selectable.transition = trans;
+            if (trans.HasValue)
+                selectable.transition = trans.Value;
 
-            if (!string.IsNullOrEmpty(navigationMode))
+            if (navMode.HasValue)
             {
-                if (Enum.TryParse<Navigation.Mode>(navigationMode, true, out var navMode))
-                {
-                    var nav = selectable.navigation;
-                    nav.mode = navMode;
-                    selectable.navigation = nav;
-                }
+                var nav = selectable.navigation;
+                nav.mode = navMode.Value;
+                selectable.navigation = nav;
             }
 
-            // Update colors if any color param is provided
-            if (normalR.HasValue || highlightedR.HasValue || pressedR.HasValue || disabledR.HasValue ||
-                colorMultiplier.HasValue || fadeDuration.HasValue)
+            // Update colors as soon as any color parameter is passed. The old check only looked at the four R
+            // channels, so a call passing only normalG would silently drop the whole color block.
+            var colors = selectable.colors;
+            bool wroteColors = false;
+
+            if (TryMergeColor(normalR, normalG, normalB, normalA, colors.normalColor, out var normalColor))
             {
-                var colors = selectable.colors;
-                if (normalR.HasValue || normalG.HasValue || normalB.HasValue)
-                    colors.normalColor = new Color(normalR ?? colors.normalColor.r, normalG ?? colors.normalColor.g, normalB ?? colors.normalColor.b);
-                if (highlightedR.HasValue || highlightedG.HasValue || highlightedB.HasValue)
-                    colors.highlightedColor = new Color(highlightedR ?? colors.highlightedColor.r, highlightedG ?? colors.highlightedColor.g, highlightedB ?? colors.highlightedColor.b);
-                if (pressedR.HasValue || pressedG.HasValue || pressedB.HasValue)
-                    colors.pressedColor = new Color(pressedR ?? colors.pressedColor.r, pressedG ?? colors.pressedColor.g, pressedB ?? colors.pressedColor.b);
-                if (disabledR.HasValue || disabledG.HasValue || disabledB.HasValue)
-                    colors.disabledColor = new Color(disabledR ?? colors.disabledColor.r, disabledG ?? colors.disabledColor.g, disabledB ?? colors.disabledColor.b);
-                if (colorMultiplier.HasValue)
-                    colors.colorMultiplier = colorMultiplier.Value;
-                if (fadeDuration.HasValue)
-                    colors.fadeDuration = fadeDuration.Value;
+                colors.normalColor = normalColor;
+                wroteColors = true;
+            }
+            if (TryMergeColor(highlightedR, highlightedG, highlightedB, highlightedA, colors.highlightedColor, out var highlightedColor))
+            {
+                colors.highlightedColor = highlightedColor;
+                wroteColors = true;
+            }
+            if (TryMergeColor(pressedR, pressedG, pressedB, pressedA, colors.pressedColor, out var pressedColor))
+            {
+                colors.pressedColor = pressedColor;
+                wroteColors = true;
+            }
+            if (TryMergeColor(disabledR, disabledG, disabledB, disabledA, colors.disabledColor, out var disabledColor))
+            {
+                colors.disabledColor = disabledColor;
+                wroteColors = true;
+            }
+            if (colorMultiplier.HasValue)
+            {
+                colors.colorMultiplier = colorMultiplier.Value;
+                wroteColors = true;
+            }
+            if (fadeDuration.HasValue)
+            {
+                colors.fadeDuration = fadeDuration.Value;
+                wroteColors = true;
+            }
+
+            if (wroteColors)
                 selectable.colors = colors;
-            }
 
             return new
             {
@@ -1753,6 +1795,23 @@ namespace UnitySkills
             }
 
             result = new Vector2(x ?? current.x, y ?? current.y);
+            return true;
+        }
+
+        /// <summary>
+        /// Merges the given channels (including alpha) onto <paramref name="current"/>. Alpha must be passed
+        /// explicitly: <c>new Color(r, g, b)</c> sets a to 1, and ColorBlock.disabledColor ships with alpha 0.5,
+        /// so recoloring the disabled state used to also make it fully opaque as a side effect nobody asked for.
+        /// </summary>
+        private static bool TryMergeColor(float? r, float? g, float? b, float? a, Color current, out Color result)
+        {
+            if (!r.HasValue && !g.HasValue && !b.HasValue && !a.HasValue)
+            {
+                result = current;
+                return false;
+            }
+
+            result = new Color(r ?? current.r, g ?? current.g, b ?? current.b, a ?? current.a);
             return true;
         }
 

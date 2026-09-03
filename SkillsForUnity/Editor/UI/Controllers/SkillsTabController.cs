@@ -40,6 +40,7 @@ namespace UnitySkills
         private Button        _clearBtn;
         private Label         _resultLabel;
         private TextField     _resultField;
+        private TokenLevelSliderWidget _tokenLevelWidget;
 
         private string _selectedSkillName;
         private string _filterText = "";
@@ -58,6 +59,7 @@ namespace UnitySkills
             uxml.CloneTree(_root);
 
             CacheUiReferences();
+            _tokenLevelWidget = new TokenLevelSliderWidget(_root);
             BindEvents();
             RebuildList();
             ShowEmpty();
@@ -178,7 +180,6 @@ namespace UnitySkills
             string foldKey = $"UnitySkills_Foldout_{categoryName}";
             bool collapsed = !EditorPrefs.GetBool(foldKey, false);
 
-            // Header
             var header = new VisualElement();
             header.AddToClassList("category-header");
             header.style.flexDirection = FlexDirection.Row;
@@ -196,7 +197,6 @@ namespace UnitySkills
             countLabel.AddToClassList("cat-count");
             header.Add(countLabel);
 
-            // Body
             var body = new VisualElement();
             body.style.display = collapsed ? DisplayStyle.None : DisplayStyle.Flex;
 
@@ -253,7 +253,6 @@ namespace UnitySkills
         {
             _selectedSkillName = skill.Name;
 
-            // Update visual selection
             foreach (var r in _root.Query<VisualElement>(className: "skill-row").ToList())
             {
                 if (r.userData is UnitySkillsWindow.SkillInfo si && si.Name == skill.Name)
@@ -264,6 +263,13 @@ namespace UnitySkills
 
             PopulateDetail(skill, _window.BuildDefaultParams(skill.Method));
         }
+
+        /// <summary>
+        /// Redraws the rows from the window's catalog after the catalog itself changed underneath
+        /// us — currently a surface-profile switch, which adds or removes whole modules at once.
+        /// The window rebuilds its catalog first, then calls this.
+        /// </summary>
+        public void RefreshCatalog() => RebuildList();
 
         /// <summary>External API — called by main window for SelectTestSkill.</summary>
         public void SelectSkillByName(string skillName, string defaultParams)
@@ -298,7 +304,6 @@ namespace UnitySkills
             if (desc == skill.Name) desc = skill.Description;
             if (_skillDesc != null) _skillDesc.text = desc ?? "";
 
-            // Meta tags
             if (_skillMeta != null)
             {
                 _skillMeta.Clear();
@@ -323,7 +328,6 @@ namespace UnitySkills
             if (_resultField != null) _resultField.value = "";
             ClearResultError();
 
-            // Enable/disable DryRun based on metadata
             if (_dryRunBtn != null)
             {
                 var attr = skill.Method?.GetCustomAttribute<UnitySkillAttribute>();
@@ -392,9 +396,16 @@ namespace UnitySkills
             if (_clearBtn != null)    _clearBtn.text    = SkillsLocalization.Get("skills_detail_clear");
             if (_resultLabel != null) _resultLabel.text = SkillsLocalization.Get("skills_detail_result_label");
             if (_emptyLabel != null)  _emptyLabel.text  = SkillsLocalization.Get("skills_detail_empty");
+            _tokenLevelWidget?.RefreshTokenLevelLocalization();
 
             // Rebuild list to refresh badge texts in active language
             RebuildList();
+        }
+
+        public void Dispose()
+        {
+            _tokenLevelWidget?.Dispose();
+            _tokenLevelWidget = null;
         }
     }
 }

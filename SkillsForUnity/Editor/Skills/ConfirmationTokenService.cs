@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
@@ -7,18 +7,16 @@ using UnityEditor;
 namespace UnitySkills
 {
     /// <summary>
-    /// Issues and consumes one-shot confirmation tokens for high-risk skills
-    /// (RiskLevel="high" or Operation includes Delete).
+    /// Issues and consumes one-time confirmation tokens for high-risk skills (RiskLevel="high" or Operation includes Delete).
     ///
     /// Flow:
-    ///   1. Caller invokes a high-risk skill without "_confirm" parameter
-    ///   2. Server returns CONFIRMATION_REQUIRED + a fresh token + dry-run preview
-    ///   3. Caller re-invokes with the same args + "_confirm": &lt;token&gt;
-    ///   4. Server consumes the token and executes
+    ///   1. Caller invokes a high-risk skill without a "_confirm" argument
+    ///   2. The server returns CONFIRMATION_REQUIRED + a new token + a dry-run preview
+    ///   3. Caller re-invokes with the same arguments plus "_confirm": &lt;token&gt;
+    ///   4. The server consumes the token and actually executes
     ///
-    /// Tokens are bound to (skillName, argsHash) so an issued token cannot be replayed
-    /// against a modified payload. TTL defaults to 5 minutes.
-    /// Disabled by default — toggled via UnitySkillsWindow's Server tab.
+    /// A token is bound to (skillName, argsHash), so an issued token cannot be replayed against a
+    /// modified payload. TTL defaults to 5 minutes. Off by default; can be enabled from the Server tab of UnitySkillsWindow.
     /// </summary>
     public static class ConfirmationTokenService
     {
@@ -38,8 +36,8 @@ namespace UnitySkills
             new ConcurrentDictionary<string, Entry>(StringComparer.Ordinal);
 
         /// <summary>
-        /// Global toggle. Default false — most users want unattended automation.
-        /// When false, the service is a no-op and skills run without confirmation.
+        /// Global switch. Defaults to false -- most users want unattended automation.
+        /// When false, this service is entirely a no-op and skills execute without confirmation.
         /// </summary>
         public static bool RequireConfirmation
         {
@@ -50,8 +48,8 @@ namespace UnitySkills
         public static int Ttl => DefaultTtlSeconds;
 
         /// <summary>
-        /// A skill is considered high-risk if RiskLevel="high" or its Operation includes Delete.
-        /// Internal because <see cref="SkillRouter.SkillInfo"/> is internal.
+        /// A skill counts as high-risk when RiskLevel="high" or its Operation includes Delete.
+        /// Declared internal because <see cref="SkillRouter.SkillInfo"/> is itself internal.
         /// </summary>
         internal static bool IsHighRisk(SkillRouter.SkillInfo skill)
         {
@@ -64,7 +62,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Issue a fresh token bound to (skillName, argsHash). Token is one-shot.
+        /// Issues a new token bound to (skillName, argsHash), valid for a single use.
         /// </summary>
         public static (string token, int ttlSeconds) IssueToken(string skillName, string argsJson)
         {
@@ -84,8 +82,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Try to consume a token. Returns false if missing, expired, or bound to a
-        /// different (skillName, args) pair. Successfully consumed tokens are removed.
+        /// Attempts to consume a token. Returns false if it doesn't exist, has expired, or its
+        /// bound (skillName, args) doesn't match. A successfully consumed token is removed.
         /// </summary>
         public static bool TryConsume(string token, string skillName, string argsJson)
         {
@@ -95,11 +93,9 @@ namespace UnitySkills
             if (!_entries.TryGetValue(token, out var entry))
                 return false;
 
-            // Validate BEFORE removing. A valid, unexpired token bound to a different
-            // (skillName, args) — e.g. the client sent slightly different JSON, or is
-            // replaying the wrong skill — must NOT be destroyed: the caller needs it
-            // intact to retry the confirmation flow. The previous TryRemove-first logic
-            // deleted the entry before any check, so any mismatch burned a good token.
+            // Must validate before deleting. A token that's still valid but simply doesn't match on
+            // (skillName, args) -- e.g. the client's JSON differs slightly, or it was replayed against a different skill -- must not be destroyed: the caller still needs it to
+            // retry the confirmation flow properly. Deleting first and checking after would let any single mismatch burn a good token.
             if (DateTime.UtcNow > entry.ExpiresAtUtc)
                 return false;
 
@@ -109,8 +105,8 @@ namespace UnitySkills
             if (!string.Equals(entry.ArgsHash, HashArgs(argsJson), StringComparison.Ordinal))
                 return false;
 
-            // All checks passed — atomically consume. TryRemove handles the race where
-            // another thread consumed between our TryGetValue and now (returns false).
+            // All checks passed; consume atomically. If another thread already consumed it between
+            // the TryGetValue above and here, TryRemove returns false, which handles that race correctly.
             return _entries.TryRemove(token, out _);
         }
 
@@ -128,9 +124,9 @@ namespace UnitySkills
 
         private static void EnforceCapacity()
         {
-            // Cheap guard against runaway memory if a client churns tokens without consuming.
+            // Cheap safeguard against unbounded memory growth when clients issue tokens without consuming them.
             if (_entries.Count < MaxLiveTokens) return;
-            // Remove arbitrary entries until back under cap. Order is unspecified but bounded.
+            // Evict arbitrarily until back under the cap: order is unspecified, but bounded in count.
             foreach (var key in _entries.Keys)
             {
                 if (_entries.Count < MaxLiveTokens) break;
@@ -140,7 +136,7 @@ namespace UnitySkills
 
         private static string GenerateToken()
         {
-            // 16 bytes -> 22 chars base64url, plenty unique for a 5-minute window.
+            // 16 bytes -> 22-char base64url, plenty unique for a 5-minute window.
             var bytes = new byte[16];
             using (var rng = RandomNumberGenerator.Create())
                 rng.GetBytes(bytes);
@@ -152,8 +148,8 @@ namespace UnitySkills
 
         private static string HashArgs(string argsJson)
         {
-            // Normalize whitespace so trivial reformatting doesn't invalidate the token.
-            // We don't reorder keys — clients are expected to send the same shape both times.
+            // Only trim leading/trailing whitespace to avoid unrelated formatting differences invalidating
+            // the token. Keys are not reordered -- the client is expected to send the same structure both times.
             var normalized = argsJson ?? string.Empty;
             using (var sha = SHA256.Create())
             {

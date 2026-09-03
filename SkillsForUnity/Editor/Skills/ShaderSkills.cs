@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System.IO;
 using System.Linq;
@@ -20,9 +20,12 @@ namespace UnitySkills
         public static object ShaderCreate(string shaderName, string savePath, string template = null)
         {
             if (Validate.Required(shaderName, "shaderName") is object err) return err;
-            if (!string.IsNullOrEmpty(savePath) && Validate.SafePath(savePath, "savePath") is object pathErr) return pathErr;
+            // Validate.SafePath itself returns MISSING_PARAM for a null/empty string; it must not be wrapped
+            // again in a !string.IsNullOrEmpty(savePath) check — that would skip validation entirely when
+            // savePath is omitted, letting a null path fall through to Path.GetDirectoryName below and throw an ArgumentNullException.
+            if (Validate.SafePath(savePath, "savePath") is object pathErr) return pathErr;
 
-            if (!string.IsNullOrEmpty(savePath) && File.Exists(savePath))
+            if (File.Exists(savePath))
                 return new { error = $"File already exists: {savePath}" };
 
             var dir = Path.GetDirectoryName(savePath);
@@ -173,10 +176,16 @@ namespace UnitySkills
             Category = SkillCategory.Shader, Operation = SkillOperation.Query,
             Tags = new[] { "shader", "find", "search" },
             Outputs = new[] { "found", "name", "path" },
+            // Shader.Find(null) throws, and Shader.Find("") returns "Shader not found: " — neither is a usable
+            // reply for an empty request body; searchName is marked optional in the schema only because it's a
+            // reference type with no CLR default value.
+            RequiresInput = new[] { "searchName" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object ShaderFind(string searchName)
         {
+            if (Validate.Required(searchName, "searchName") is object nameErr) return nameErr;
+
             var shader = Shader.Find(searchName);
             if (shader == null)
                 return new { error = $"Shader not found: {searchName}" };
@@ -268,6 +277,12 @@ namespace UnitySkills
         public static object ShaderCreateUrp(string shaderName, string savePath, string type = "Unlit")
         {
             if (Validate.SafePath(savePath, "savePath") is object pathErr2) return pathErr2;
+            // An unrecognized type (e.g. "Wizard") would fall through the ternary below to the Unlit template,
+            // yet echo the caller's original string back as "type" — success:true while the payload
+            // misrepresents which template was actually written. So reject it outright instead.
+            if (!string.Equals(type, "Unlit", System.StringComparison.OrdinalIgnoreCase) &&
+                !string.Equals(type, "Lit", System.StringComparison.OrdinalIgnoreCase))
+                return SkillParamUtil.InvalidValueError(type, "type", new[] { "Unlit", "Lit" });
             if (File.Exists(savePath)) return new { error = $"File already exists: {savePath}" };
             var dir = Path.GetDirectoryName(savePath);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
@@ -336,7 +351,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Find a shader by name or asset path. Tries asset path first if it ends with .shader, then falls back to Shader.Find.
+        /// Finds a shader by name or asset path: if it ends with .shader, tries the asset path first, then falls back to Shader.Find.
         /// </summary>
         private static Shader FindShaderByNameOrPath(string shaderNameOrPath)
         {

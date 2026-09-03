@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEditor;
@@ -9,50 +9,50 @@ namespace UnitySkills.Internal
     [Serializable]
     public class ObjectSnapshot
     {
-        public string globalObjectId; // Unity GlobalObjectId string representation
-        public int objectInstanceId;  // Same-session fallback for objects in never-saved scenes.
-        public string originalJson;   // JSON state captured via EditorJsonUtility
+        public string globalObjectId; // String representation of the Unity GlobalObjectId
+        public int objectInstanceId;  // Fallback identifier within the same session, for objects in a scene that was never saved
+        public string originalJson;   // JSON state captured by EditorJsonUtility
         public bool objectReferencesCaptured;
         public List<ObjectReferenceData> objectReferences = new List<ObjectReferenceData>();
-        public string objectName;     // Cached name for display
+        public string objectName;     // Cached display name
         public string typeName;       // e.g. "GameObject", "Transform"
         public SnapshotType type = SnapshotType.Modified;
-        public string assetPath;      // For assets: path in project (e.g., "Assets/Materials/Red.mat")
-        public string assetBytesBase64; // Base64 encoded asset file backup (legacy, kept for old history compatibility)
+        public string assetPath;      // For assets: the in-project path (e.g. "Assets/Materials/Red.mat")
+        public string assetBytesBase64; // Base64-encoded asset file backup (legacy field, kept for backward compatibility with old history)
 
-        // Content-addressed file store hash. For Modified/Deleted asset snapshots.
+        // Hash into the content-addressed file store, used by Modified/Deleted asset snapshots.
         public string fileHash;
         public string metaFileHash;
 
-        // Deleted folders are represented by one root snapshot plus content-addressed entries.
+        // A deleted folder is represented by one root snapshot plus several content-addressed entries.
         public bool isDirectory;
         public bool deleteRecursively;
         public List<WorkflowStoredPath> directoryEntries = new List<WorkflowStoredPath>();
 
-        // For Moved type: the original asset path before the move.
+        // For the Moved type: the original asset path before the move.
         public string previousAssetPath;
 
-        // Reserved for future setting snapshots.
+        // Reserved for future setting-type snapshots.
         public string settingKey;
         public string settingOldValueJson;
 
-        // For Created type component undo - stores extra info for reliable deletion
-        public string componentTypeName;   // Full type name of the component (e.g., "UnityEngine.Rigidbody")
-        public string parentGameObjectId;  // GlobalObjectId of the parent GameObject
+        // For undoing a Created-type component: extra info needed for reliable deletion
+        public string componentTypeName;   // The component's fully qualified type name (e.g. "UnityEngine.Rigidbody")
+        public string parentGameObjectId;  // The parent GameObject's GlobalObjectId
         public int parentGameObjectInstanceId;
 
-        // For Created type GameObject redo - stores info for recreation
-        public string primitiveType;       // PrimitiveType name (Cube, Sphere, etc.) or empty for empty GameObject
+        // For redoing a Created-type GameObject: info needed to recreate it
+        public string primitiveType;       // The PrimitiveType name (Cube, Sphere, etc.), or an empty string for an empty GameObject
 
-        // Transform data for GameObject recreation
+        // Transform data used to recreate the GameObject
         public float posX, posY, posZ;
         public float rotX, rotY, rotZ, rotW;
         public float scaleX = 1, scaleY = 1, scaleZ = 1;
 
-        // All components data for full GameObject restoration
+        // Full component data used to fully restore the GameObject
         public List<ComponentData> components = new List<ComponentData>();
 
-        // Flat hierarchy data for deleted/recreated scene GameObjects.
+        // Flattened hierarchy data for a deleted/recreated scene GameObject.
         public List<GameObjectSnapshotData> gameObjectHierarchy = new List<GameObjectSnapshotData>();
     }
 
@@ -95,7 +95,7 @@ namespace UnitySkills
         public const int CurrentSchemaVersion = 5;
         public int schemaVersion = CurrentSchemaVersion;
         public List<WorkflowTask> tasks = new List<WorkflowTask>();
-        public List<WorkflowTask> undoneStack = new List<WorkflowTask>(); // Stack of undone tasks for redo
+        public List<WorkflowTask> undoneStack = new List<WorkflowTask>(); // Stack of undone tasks, for redo
 
         public void EnsureDefaults()
         {
@@ -119,7 +119,7 @@ namespace UnitySkills
         public string tag;
         public string description;
         public long timestamp;
-        public string sessionId;  // Groups tasks belonging to the same conversation/session
+        public string sessionId;  // Groups tasks from the same conversation/session together
         public List<ObjectSnapshot> snapshots = new List<ObjectSnapshot>();
         [NonSerialized] private HashSet<string> _snapshotKeys;
 
@@ -187,17 +187,17 @@ namespace UnitySkills
 
     public enum SnapshotType
     {
-        Modified = 0, // Object state changed
+        Modified = 0, // Object state was modified
         Created = 1,  // Object was newly created in this task
         Deleted = 2,  // Object was deleted in this task
         Moved = 3,    // Asset was moved in this task
-        Setting = 4   // Editor/project setting changed (restored via WorkflowSettingRestorerRegistry)
+        Setting = 4   // Editor/project setting was modified (restored via WorkflowSettingRestorerRegistry)
     }
 
     [Serializable]
     public class ComponentData
     {
-        public string typeName;      // Full type name
+        public string typeName;      // Fully qualified type name
         public string json;          // Serialized component data
         public string globalObjectId;
         public int objectInstanceId;
@@ -214,7 +214,7 @@ namespace UnitySkills
     }
 
     /// <summary>
-    /// Result of undoing/redoing a single snapshot.
+    /// The result of undoing/redoing a single snapshot.
     /// </summary>
     [Serializable]
     public class SnapshotUndoResult
@@ -226,7 +226,7 @@ namespace UnitySkills
     }
 
     /// <summary>
-    /// Aggregated result of undoing/redoing a workflow task or session.
+    /// The aggregate result of undoing/redoing a workflow task or session.
     /// </summary>
     [Serializable]
     public class TaskUndoResult
@@ -240,7 +240,7 @@ namespace UnitySkills
     }
 
     /// <summary>
-    /// Report produced by trimming workflow history and the content-addressed file store.
+    /// The report produced after trimming workflow history and the content-addressed file store.
     /// </summary>
     [Serializable]
     public class WorkflowTrimReport
@@ -251,8 +251,8 @@ namespace UnitySkills
     }
 
     /// <summary>
-    /// Persistent auto-cleanup configuration for workflow history and file store.
-    /// Backed by EditorPrefs under "UnitySkills.Workflow.*".
+    /// Persistent auto-cleanup configuration for workflow history and the file store.
+    /// Stored under the "UnitySkills.Workflow.*" EditorPrefs keys.
     /// </summary>
     public static class WorkflowAutoCleanConfig
     {
@@ -302,7 +302,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Reset all cleanup settings to their defaults.
+        /// Resets all cleanup settings to their default values.
         /// </summary>
         public static void ResetToDefaults()
         {
@@ -316,7 +316,7 @@ namespace UnitySkills
     }
 
     /// <summary>
-    /// Information about a session (conversation-level grouping of tasks).
+    /// Session info (groups tasks by conversation level).
     /// </summary>
     public class SessionInfo
     {

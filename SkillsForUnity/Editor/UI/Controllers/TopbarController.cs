@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.UIElements;
 using UnityEditor;
 
@@ -56,27 +56,25 @@ namespace UnitySkills
             BindEvents();
             UpdateLiveData(); // initial paint
 
-            // 权限模式变化不等 500ms 主 tick — 立刻刷新徽章文字 / 待批计数。
+            // Permission mode changes can't wait for the 500ms main tick -- refresh the badge text / pending count immediately.
             SkillsModeManager.OnChanged += UpdateLiveData;
             _root.RegisterCallback<DetachFromPanelEvent>(OnRootDetached);
             if (_topbarElement != null)
             {
                 _topbarElement.RegisterCallback<GeometryChangedEvent>(OnTopbarGeometryChanged);
-                // 兜底自愈：Unity 6 双击最大化会让窗口 detach→attach 并在同帧多次 layout，
-                // GeometryChangedEvent 可能漏派发"最终尺寸"那次，使响应式卡在窄布局。
-                // 低频轮询真实 layout 宽度重算——schedule 挂在元素上，detach 自动暂停、
-                // attach 自动恢复，不依赖事件派发；ApplyResponsiveLayout 内有状态早退，重复调用零副作用。
-                // 经 EditorUiScheduler.RepeatSafe 把 class 变更推迟到 delayCall，避免落在
-                // repaint/generateVisualContent 期间触发 InvalidOperationException（issue #44）。
+                // Self-healing fallback: on Unity 6, double-clicking maximize causes the window to detach->attach
+                // and lay out multiple times in the same frame; GeometryChangedEvent can miss dispatching the
+                // "final size" pass, leaving the responsive layout stuck narrow. Deferring the class change to
+                // delayCall via EditorUiScheduler.RepeatSafe avoids triggering an InvalidOperationException during repaint/generateVisualContent (issue #44).
                 EditorUiScheduler.RepeatSafe(_topbarElement, SelfHealIntervalMs, SelfHealResponsiveLayout);
             }
         }
 
         private void OnRootDetached(DetachFromPanelEvent _)
         {
-            // 仅退订静态事件，防止 window 关闭后 TopbarController 无法回收 / 回调打到已销毁 UI。
-            // GeometryChangedEvent 挂在 _topbarElement 自身，元素销毁会自动清理——
-            // 这里绝不能退订它，否则 maximize 引发的 detach→attach 会让响应式永久失效。
+            // Only unsubscribe the static event, so a closed window doesn't leave TopbarController uncollectable / callbacks hitting destroyed UI.
+            // GeometryChangedEvent is attached to _topbarElement itself, and gets cleaned up automatically when the element is destroyed -- it must never be unsubscribed here,
+            // or the detach->attach caused by maximize would permanently break the responsive layout.
             SkillsModeManager.OnChanged -= UpdateLiveData;
         }
 
@@ -85,7 +83,6 @@ namespace UnitySkills
             ApplyResponsiveLayout(evt.newRect.width);
         }
 
-        // 周期兜底：直接读取 topbar 当前 layout 宽度重算断点，覆盖 GeometryChangedEvent 漏派发的情况。
         private void SelfHealResponsiveLayout()
         {
             if (_topbarElement == null) return;
@@ -168,7 +165,6 @@ namespace UnitySkills
 
             if (_serverSwitch != null)
             {
-                // Click anywhere on the switch toggles the server
                 _serverSwitch.RegisterCallback<ClickEvent>(_ => ToggleServer());
             }
         }
@@ -208,7 +204,6 @@ namespace UnitySkills
                 _statusText.AddToClassList(running ? "on" : "off");
             }
 
-            // Refresh URL only when state changes or text differs
             if (_urlField != null)
             {
                 string url = running ? SkillsHttpServer.Url ?? "" : "";
@@ -221,8 +216,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 同步权限模式徽章的文字 + tooltip。
-        /// Approval 模式下若有待批，追加 ⚠N 计数提示用户。
+        /// Syncs the permission mode badge's text + tooltip.
         /// </summary>
         private void RefreshPermBadge()
         {
@@ -274,8 +268,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// 在徽章下方弹出 GenericMenu，三档选项 + 一项"打开权限设置…"。
-        /// 当前模式打勾；点选别的会触发 SkillsModeManager.OnChanged → 整套 UI 自动刷新。
+        /// Pops up a GenericMenu below the badge: three mode options plus an "Open permission settings..." item.
+        /// The current mode is checked; picking another one triggers SkillsModeManager.OnChanged -> the whole UI refreshes automatically.
         /// </summary>
         private void ShowModeDropdownMenu()
         {
@@ -296,7 +290,7 @@ namespace UnitySkills
                 false,
                 () => _window.OpenSettings());
 
-            // worldBound 与 EditorWindow 局部坐标对齐；从徽章正下方弹出。
+            // worldBound aligns with EditorWindow local coordinates; pops up right below the badge.
             menu.DropDown(_permBadge.worldBound);
         }
 

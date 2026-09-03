@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using UnityEngine.Timeline;
 using UnityEngine.Playables;
@@ -7,7 +7,7 @@ using System.Linq;
 namespace UnitySkills
 {
     /// <summary>
-    /// Timeline skills - Create assets, tracks, clips.
+    /// Timeline skills — creates assets, tracks, and clips.
     /// </summary>
     public static class TimelineSkills
     {
@@ -202,7 +202,25 @@ namespace UnitySkills
             if (err != null) return err;
             var track = timeline.GetOutputTracks().FirstOrDefault(t => t.name == trackName);
             if (track == null) return new { error = $"Track not found: {trackName}" };
+
+            // TrackAsset.CreateDefaultClip() only creates a clip when the track's own [TrackClipType] attribute
+            // specifies a PlayableAsset type; a track without that attribute (SignalTrack marks itself with SignalEmitter
+            // rather than clips, and has no such attribute at all) makes it log a warning and return null. We check this explicitly
+            // so the caller knows which track type rejected the call and why, instead of an unexplained NullReferenceException.
             var clip = track.CreateDefaultClip();
+            if (clip == null)
+            {
+                return new
+                {
+                    error = track is SignalTrack
+                        ? $"Track '{trackName}' is a Signal Track. Signal tracks hold SignalEmitter markers, not generic TimelineClips - timeline_add_clip does not support this track type."
+                        : $"Track '{trackName}' ({track.GetType().Name}) has no default clip type registered and cannot accept a generic clip via timeline_add_clip.",
+                    errorCode = SkillErrorCode.SemanticInvalid.ToWireString(),
+                    parameter = "trackName",
+                    trackType = track.GetType().Name
+                };
+            }
+
             clip.start = start;
             clip.duration = duration;
             AssetDatabase.SaveAssets();
@@ -219,13 +237,15 @@ namespace UnitySkills
         {
             var (timeline, director, err) = GetTimeline(name, instanceId, path);
             if (err != null) return err;
+
+            // Must be parsed before writing duration: otherwise an invalid wrapMode gets discarded while
+            // the timeline still gets clipped to FixedLength at the requested duration.
+            if (!SkillParamUtil.TryParseOptionalEnum<DirectorWrapMode>(wrapMode, "wrapMode", out var wm, out var wrapModeError))
+                return wrapModeError;
+
             timeline.fixedDuration = duration;
             timeline.durationMode = TimelineAsset.DurationMode.FixedLength;
-            if (!string.IsNullOrEmpty(wrapMode))
-            {
-                if (System.Enum.TryParse<DirectorWrapMode>(wrapMode, true, out var wm))
-                    director.extrapolationMode = wm;
-            }
+            if (wm.HasValue) director.extrapolationMode = wm.Value;
             AssetDatabase.SaveAssets();
             return new { success = true, duration, wrapMode = director.extrapolationMode.ToString() };
         }

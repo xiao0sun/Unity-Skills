@@ -1,12 +1,11 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using UnitySkills.Internal;
 
 namespace UnitySkills
 {
     /// <summary>
-    /// Sample/convenience skills - simplified API for common operations.
-    /// For full-featured equivalents, see GameObjectSkills and SceneSkills.
+    /// Sample/convenience skills: simplified APIs for common operations. See GameObjectSkills and SceneSkills for full functionality.
     /// </summary>
     public static class SampleSkills
     {
@@ -118,6 +117,11 @@ namespace UnitySkills
             Category = SkillCategory.Sample, Operation = SkillOperation.Query,
             Tags = new[] { "find", "search", "name", "quick" },
             Outputs = new[] { "query", "count", "objects" },
+            // This is written as an "A or B" token rather than a single parameter name: `name` is a valid alias of `nameContains`
+            // (see the merge logic below); requiring either one rigidly would reject request bodies this skill can fully handle.
+            // SkillPlanningService._requiredInputGroups maps this token to {nameContains, name}, so an empty request body
+            // gets rejected with "Provide one of: nameContains, name" instead of falling through to Validate.Required.
+            RequiresInput = new[] { "nameContains|name" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object FindObjectsByName(string nameContains = null, string name = null)

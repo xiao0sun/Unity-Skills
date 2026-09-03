@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using NUnit.Framework;
 using UnityEditor;
@@ -8,18 +8,15 @@ using UnityEngine;
 namespace UnitySkills.Tests.Core
 {
     /// <summary>
-    /// Integration coverage for the workflow-history backup/recovery hardening added alongside
-    /// the P0 fix pass:
-    /// - A blob referenced only by the task currently being recorded (not yet EndTask'd) must
-    ///   survive garbage collection.
-    /// - A corrupt history file must be quarantined (not silently reset) and GC must stay
-    ///   suspended for the rest of the session so an incomplete reference set never causes live
-    ///   backups to be reclaimed.
-    /// - SaveHistory must retain the previous main file as .bak instead of deleting it.
-    /// - RestoreFile must refuse to hand back a tampered store blob and must quarantine it.
+    /// Integration coverage for workflow history backup/restore hardening:
+    /// - A blob referenced only by a "task currently being recorded (not yet EndTask'd)" must survive garbage collection.
+    /// - A corrupted history file must be quarantined (not silently reset), and GC must stay suspended for the
+    ///   rest of this session, so an incomplete reference set doesn't reclaim backups still in use.
+    /// - SaveHistory must keep the previous main file as a .bak instead of deleting it.
+    /// - RestoreFile must refuse to hand back a tampered store blob, and must quarantine it.
     ///
-    /// Mirrors the fixture pattern in WorkflowPersistenceTests.cs (path overrides + ResetStateForTests)
-    /// rather than duplicating any of its test cases.
+    /// Reuses WorkflowPersistenceTests.cs's fixture pattern (path override + ResetStateForTests),
+    /// without duplicating any of its test cases.
     /// </summary>
     [TestFixture]
     public class WorkflowBackupResilienceTests
@@ -62,7 +59,7 @@ namespace UnitySkills.Tests.Core
             WorkflowManager.ResetStateForTests();
             WorkflowManager.OverrideHistoryFilePathForTests = null;
             WorkflowFileStore.OverrideStoreRootForTests = null;
-            // Keep a valid target scene through teardown, same rationale as WorkflowPersistenceTests.
+            // Keep a valid target scene present for the whole teardown, same reasoning as WorkflowPersistenceTests.
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             if (AssetDatabase.IsValidFolder(AssetRoot)) AssetDatabase.DeleteAsset(AssetRoot);
             AssetDatabase.Refresh();
@@ -86,14 +83,14 @@ namespace UnitySkills.Tests.Core
 
             WorkflowManager.BeginTask("recording-in-progress", "test");
             WorkflowManager.SnapshotObject(asset);
-            // Deliberately do NOT EndTask — simulates a task that is still being recorded (e.g. a
-            // manual workflow_begin_task session) while trim/GC runs concurrently.
+            // Deliberately don't call EndTask: simulates a task still being recorded (e.g. a manual
+            // workflow_begin_task session) happening concurrently with trim/GC.
             string hash = WorkflowManager.CurrentTask.snapshots[0].fileHash;
             Assert.That(hash, Is.Not.Null.And.Not.Empty);
 
-            // Backdate the blob past WorkflowFileStore's 10-minute recent-write grace window so
-            // only the in-flight-task reference (the fix under test) can protect it — otherwise
-            // the grace period alone would make this assertion pass even without the fix.
+            // Push the blob's write time back, past WorkflowFileStore's 10-minute "recently written" grace
+            // window, so only the "in-progress task reference" (i.e. the fix under test) can save it;
+            // otherwise the grace period alone would make this assertion pass even without the fix.
             File.SetLastWriteTimeUtc(Path.Combine(WorkflowFileStore.StoreRoot, hash), DateTime.UtcNow.AddDays(-1));
 
             WorkflowAutoCleanConfig.Enabled = true;
@@ -111,9 +108,9 @@ namespace UnitySkills.Tests.Core
         [Test]
         public void LoadHistory_CorruptMainFile_QuarantinesFileAndSuppressesGC()
         {
-            // An orphan blob that predates the corruption. It is legitimately unreferenced, but
-            // once history fails to load we can no longer prove that — recovery mode must leave
-            // it alone rather than delete a backup we can't confirm is safe to lose.
+            // An orphan blob predating the corruption. It genuinely has no references, but once history
+            // fails to load we can no longer prove that — restore mode must leave it alone rather than
+            // delete a backup that can't be confirmed disposable.
             string orphanHash = WorkflowFileStore.StoreBytes(System.Text.Encoding.UTF8.GetBytes("orphan-blob"));
             File.SetLastWriteTimeUtc(Path.Combine(WorkflowFileStore.StoreRoot, orphanHash), DateTime.UtcNow.AddDays(-1));
 
@@ -121,7 +118,7 @@ namespace UnitySkills.Tests.Core
             WorkflowManager.ResetStateForTests();
 
             var originalLevel = SkillsLogger.Level;
-            SkillsLogger.Level = LogLevel.Off; // The quarantine path intentionally logs an error; suppress it.
+            SkillsLogger.Level = LogLevel.Off; // The quarantine path intentionally logs an error; suppress it here.
             try
             {
                 Assert.That(WorkflowManager.History, Is.Not.Null, "A fresh empty history must still be usable after quarantine.");
@@ -137,8 +134,8 @@ namespace UnitySkills.Tests.Core
             var quarantined = Directory.GetFiles(_tempRoot, "workflow_history.corrupt.*.json");
             Assert.That(quarantined, Has.Length.EqualTo(1));
 
-            // Recovery mode must suppress GC even under an explicit force=true call. That path
-            // also logs a warning (recovery mode + force), so keep suppression on for it too.
+            // Even with force=true explicitly set, restore mode must still suppress GC. That path also
+            // logs a warning (restore mode + force), so the log suppression needs to stay in place too.
             WorkflowAutoCleanConfig.Enabled = true;
             SkillsLogger.Level = LogLevel.Off;
             try

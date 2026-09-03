@@ -1,9 +1,10 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -209,6 +210,18 @@ namespace UnitySkills
             Tags = new[] { "batch", "execute", "job", "report" },
             Outputs = new[] { "jobId", "reportId", "workflowId", "status" },
             RequiresInput = new[] { "confirmToken" },
+            // What actually executes is decided by confirmToken, so this single entry point covers every
+            // executor that ExecutePreviewItem dispatches to — including WorkflowManager.DeleteSceneObject
+            // and asset deletion.
+            // Under-declaring here isn't just a mislabel, it's a hole: the preview skills that mint tokens
+            // are all ReadOnly, so a profile that revokes scene/asset write permission would still hand the
+            // token to the agent, who then executes it here.
+            // This declaration shuts off the profile that hides every MutatesScene write (noSceneAuthoring);
+            // it does NOT shut off profiles that revoke by category — Workflow isn't in any hidden-category
+            // set — so the token's own operation still has to be reclassified against the current profile
+            // in SurfaceRejectionForKind.
+            MutatesScene = true,
+            MutatesAssets = true,
             SupportsDryRun = false)]
         public static object BatchExecute(string confirmToken, bool runAsync = true, int chunkSize = 100, int progressGranularity = 10)
         {
@@ -220,6 +233,17 @@ namespace UnitySkills
             var preview = BatchPersistence.GetPreview(confirmToken);
             if (preview == null)
                 return new { success = false, error = "Invalid or expired confirmToken. Call preview again to get a new token." };
+
+            // What we need to ask the surface profile about is the token, not this skill's own metadata:
+            // what's ever revoked is never this skill — it's the preview that mints the token, which is
+            // ReadOnly and available under every profile.
+            // This check runs before RemovePreview, so on rejection the token stays valid — the user can
+            // switch the profile back and continue executing without going through preview again.
+            var withdrawn = SurfaceRejectionForKind(preview.kind, "batch_execute",
+                "the operation this confirmToken was minted for");
+            if (withdrawn != null)
+                return withdrawn;
+
             if (preview.executableCount <= 0)
             {
                 BatchPersistence.RemovePreview(confirmToken);
@@ -241,7 +265,11 @@ namespace UnitySkills
                 };
             }
 
-            var completed = BatchJobService.Wait(job.jobId, Math.Max(5000, preview.executableCount * 50));
+            // 50ms budget per item, floor of 5s, then clamped to the shared main-thread wait ceiling,
+            // so an oversized inline preview can't let Wait freeze the editor past the allowed duration.
+            var inlineTimeoutMs = Math.Min(BatchJobService.MaxWaitTimeoutMs,
+                Math.Max(5000, preview.executableCount * 50));
+            var completed = BatchJobService.Wait(job.jobId, inlineTimeoutMs);
             if (completed == null)
                 return new { success = false, error = "Job disappeared during execution." };
 
@@ -318,14 +346,14 @@ namespace UnitySkills
             };
         }
 
-        [UnitySkill("job_status", "Get status for an asynchronous UnitySkills job.",
+        [UnitySkill("job_status", "Get status for an asynchronous UnitySkills job. Built for repeated polling, so the job's full result payload is NOT inlined by default: resultAvailable says whether one exists and resultHint names the skill that returns it. Pass includeDetails=true to inline it as `details` (the pre-2.7 behaviour).",
             Category = SkillCategory.Workflow, Operation = SkillOperation.Query,
             Tags = new[] { "job", "status", "async" },
-            Outputs = new[] { "jobId", "status", "progress", "currentStage" },
+            Outputs = new[] { "jobId", "status", "progress", "currentStage", "resultAvailable", "resultHint" },
             RequiresInput = new[] { "jobId" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
-        public static object JobStatus(string jobId)
+        public static object JobStatus(string jobId, bool includeDetails = false)
         {
             if (Validate.Required(jobId, "jobId") is object err)
                 return err;
@@ -333,6 +361,8 @@ namespace UnitySkills
             var job = AsyncJobService.Get(jobId);
             if (job == null)
                 return new { success = false, error = $"Job not found: {jobId}" };
+
+            bool resultAvailable = job.resultData != null && job.resultData.Count > 0;
 
             return new
             {
@@ -352,7 +382,9 @@ namespace UnitySkills
                 reportId = job.reportId,
                 canCancel = job.canCancel && !IsTerminalStatus(job.status),
                 error = job.error,
-                details = job.resultData
+                resultAvailable,
+                resultHint = includeDetails ? null : BuildJobResultHint(job, "job_status", resultAvailable),
+                details = includeDetails ? job.resultData : null
             };
         }
 
@@ -430,12 +462,15 @@ namespace UnitySkills
             };
         }
 
-        [UnitySkill("job_wait", "Wait for a UnitySkills job to finish or until timeoutMs elapses (clamped to [0, 2000]ms — this blocks the Unity main thread, so longer waits are not allowed). For job kinds that advance via Unity's own engine loop (compile/package/test/playmode/play_capture/build_player), blocking cannot help them progress, so this returns the current snapshot immediately with waitNotSupported=true instead of spinning — poll GET /jobs/{id} or subscribe to GET /events instead, both of which run off the main thread.",
+        [UnitySkill("job_wait", "Wait for a UnitySkills job to finish or until timeoutMs elapses (clamped to [0, 2000]ms — this blocks the Unity main thread, so longer waits are not allowed). For job kinds that advance via Unity's own engine loop (compile/package/test/playmode/play_capture/build_player), blocking cannot help them progress, so this returns the current snapshot immediately with waitNotSupported=true instead of spinning — poll GET /jobs/{id} or subscribe to GET /events instead, both of which run off the main thread. The job's full result payload is NOT inlined by default: resultAvailable says whether one exists and resultHint names the skill that returns it. Pass includeDetails=true to inline it as `details` (the pre-2.7 behaviour).",
             Category = SkillCategory.Workflow, Operation = SkillOperation.Execute,
             Tags = new[] { "job", "wait", "async" },
-            Outputs = new[] { "jobId", "status", "reportId", "waitNotSupported", "terminal" },
+            Outputs = new[] { "jobId", "status", "reportId", "waitNotSupported", "terminal", "resultAvailable", "resultHint" },
             RequiresInput = new[] { "jobId" })]
-        public static object JobWait(string jobId, int timeoutMs = 10000)
+        // The default value must equal the clamp ceiling, never exceed it: writing 10000 would make the
+        // manifest (and in turn the agent) believe omitting this parameter waits up to 10s, while
+        // AsyncJobService.Wait always clamps to 2000.
+        public static object JobWait(string jobId, int timeoutMs = 2000, bool includeDetails = false)
         {
             if (Validate.Required(jobId, "jobId") is object err)
                 return err;
@@ -443,6 +478,8 @@ namespace UnitySkills
             var job = AsyncJobService.Wait(jobId, timeoutMs, out var waitNotSupported);
             if (job == null)
                 return new { success = false, error = $"Job not found: {jobId}" };
+
+            bool resultAvailable = job.resultData != null && job.resultData.Count > 0;
 
             return new
             {
@@ -455,7 +492,9 @@ namespace UnitySkills
                 workflowId = job.relatedWorkflowId,
                 resultSummary = job.resultSummary,
                 error = job.error,
-                details = job.resultData,
+                resultAvailable,
+                resultHint = includeDetails ? null : BuildJobResultHint(job, "job_wait", resultAvailable),
+                details = includeDetails ? job.resultData : null,
                 terminal = IsTerminalStatus(job.status),
                 waitNotSupported,
                 hint = waitNotSupported
@@ -516,6 +555,9 @@ namespace UnitySkills
             Category = SkillCategory.Validation, Operation = SkillOperation.Analyze,
             Tags = new[] { "batch", "layer", "rendering", "gameobject" },
             Outputs = new[] { "confirmToken", "targetCount", "sampleChanges", "riskLevel" },
+            // If layer is empty, BuildSetLayerPreview throws "layer is required"; without this declaration
+            // that would become execute-then-fail. queryJson still stays optional (default = all scene objects).
+            RequiresInput = new[] { "layer" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object BatchSetRenderLayer(string queryJson = null, string layer = null, bool recursive = false, int sampleLimit = DefaultSampleLimit)
@@ -535,6 +577,10 @@ namespace UnitySkills
             Category = SkillCategory.Validation, Operation = SkillOperation.Analyze,
             Tags = new[] { "batch", "material", "replace", "renderer" },
             Outputs = new[] { "confirmToken", "targetCount", "sampleChanges", "riskLevel" },
+            // Shares the same builder as batch_preview_replace_material, so the two declarations must stay
+            // in sync: without this line, an empty materialPath would run all the way to
+            // BuildReplaceMaterialPreview before failing, instead of being rejected right at the entry point.
+            RequiresInput = new[] { "materialPath" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object BatchReplaceMaterial(string queryJson = null, string materialPath = null, int sampleLimit = DefaultSampleLimit)
@@ -584,7 +630,11 @@ namespace UnitySkills
         [UnitySkill("batch_retry_failed", "Re-run only the failed items from a previous batch execution report.",
             Category = SkillCategory.Workflow, Operation = SkillOperation.Execute,
             Tags = new[] { "batch", "retry", "failed", "recovery" },
-            Outputs = new[] { "jobId", "retryCount", "originalReportId" })]
+            Outputs = new[] { "jobId", "retryCount", "originalReportId" },
+            // Hands the recorded entries to the same executor as batch_execute to rerun them,
+            // so it must carry the same declarations as that one (same reasoning as above).
+            MutatesScene = true,
+            MutatesAssets = true)]
         public static object BatchRetryFailed(string reportId, bool runAsync = true, int chunkSize = 100)
         {
             chunkSize = Mathf.Clamp(chunkSize, 1, 200);
@@ -594,6 +644,13 @@ namespace UnitySkills
             var report = BatchPersistence.GetReport(reportId);
             if (report == null)
                 return new { error = $"Report not found: {reportId}" };
+
+            // The executor is the same as batch_execute, just entering by reportId instead of token,
+            // so it likewise has to look up the recorded kind against the surface profile.
+            var withdrawn = SurfaceRejectionForKind(report.kind, "batch_retry_failed",
+                "re-running this report's failed items");
+            if (withdrawn != null)
+                return withdrawn;
 
             var failedItems = report.items?.Where(i =>
                 string.Equals(i.status, "failed", StringComparison.OrdinalIgnoreCase)).ToList();
@@ -610,7 +667,6 @@ namespace UnitySkills
                 };
             }
 
-            // Reconstruct a preview envelope from failed items
             var preview = new BatchPreviewEnvelope
             {
                 confirmToken = Guid.NewGuid().ToString("N").Substring(0, 12),
@@ -646,11 +702,10 @@ namespace UnitySkills
 
             BatchPersistence.UpsertPreview(preview);
 
-            // Immediately execute
             var job = BatchJobService.Start(preview, chunkSize);
             if (!runAsync && job != null)
             {
-                var result = BatchJobService.Wait(job.jobId, 30000);
+                var result = BatchJobService.Wait(job.jobId, BatchJobService.MaxWaitTimeoutMs);
                 if (result != null && result.status == "completed")
                 {
                     return new
@@ -705,6 +760,52 @@ namespace UnitySkills
                         chunkIndex = chunkIndex
                     };
             }
+        }
+
+        /// <summary>
+        /// Which write category a given preview kind belongs to, used by the surface profile check on
+        /// the execution path. Kept in sync with <see cref="ExecutePreviewItem"/>'s dispatch; the category
+        /// chosen serves both the verdict and the manual documentation handed to the agent alongside a
+        /// rejection — each of the three categories Guide revokes has its own manual, so a rejection can
+        /// say "read this, follow it."
+        ///
+        /// The default branch deliberately fails closed: an unmapped kind can't execute anyway
+        /// (ExecutePreviewItem's own default fails every item of that kind), so treating it as a scene
+        /// write costs nothing, and it also prevents a newly added kind from becoming a new way to bypass
+        /// the profile before its mapping is filled in.
+        /// </summary>
+        private static SkillCategory SurfaceCategoryForKind(string kind)
+        {
+            switch (kind)
+            {
+                case "rename":
+                case "standardize_naming":
+                case "set_render_layer":
+                case "cleanup_temp_objects":
+                    return SkillCategory.GameObject;
+                // Removing a MonoBehaviour with a missing script is component surgery on an object, mapping to manual-component.
+                case "set_property":
+                case "fix_missing_scripts":
+                    return SkillCategory.Component;
+                // Writes Renderer.sharedMaterial: the material asset itself is untouched, what changes is
+                // which material the object uses, mapping to the drag-and-drop operation manual-material teaches.
+                case "replace_material":
+                    return SkillCategory.Material;
+                default:
+                    return SkillCategory.GameObject;
+            }
+        }
+
+        /// <summary>
+        /// Returns a SURFACE_EXCLUDED payload when the current profile revokes write permission for this
+        /// kind, or null when it's allowed; always null under the full profile.
+        /// </summary>
+        private static object SurfaceRejectionForKind(string kind, string skillName, string subject)
+        {
+            var category = SurfaceCategoryForKind(kind);
+            return SkillsSurfaceProfile.WithdrawsWriteIn(category)
+                ? SkillsSurfaceProfile.CarriedWriteRejection(skillName, category, subject, kind)
+                : null;
         }
 
         internal static BatchReportRecord CreateReportFromJob(BatchJobRecord job)
@@ -1198,7 +1299,7 @@ namespace UnitySkills
                 .OrderByDescending(group => group.count)
                 .ToArray();
 
-            return new
+            var payload = new
             {
                 success = true,
                 status = "preview",
@@ -1214,6 +1315,21 @@ namespace UnitySkills
                 sampleChanges = samples,
                 skipReasons
             };
+
+            // The preview still succeeds as before, still mints a token as before, still returns a diff as
+            // before — under a teaching profile, that diff is itself the point.
+            // The only difference is telling the caller ahead of time that batch_execute will reject this
+            // token, so the agent reads this wall as the user's configuration rather than a bug.
+            // This is "adding a field", not nulling one out, so under a profile that allows the operation
+            // the payload stays byte-identical to before.
+            var category = SurfaceCategoryForKind(preview.kind);
+            if (!SkillsSurfaceProfile.WithdrawsWriteIn(category))
+                return payload;
+
+            var annotated = JObject.FromObject(payload);
+            annotated["surfaceExclusion"] =
+                JObject.FromObject(SkillsSurfaceProfile.CarriedWriteNotice("batch_execute", category));
+            return annotated;
         }
 
         private static BatchPreviewEnvelope CreatePreviewEnvelope(string kind, BatchTargetQuery query, string riskLevel)
@@ -1367,19 +1483,24 @@ namespace UnitySkills
             return Equals(currentValue, nextValue);
         }
 
+        // currentValue/nextValue in the report get read back by the agent and written back as-is, so every
+        // number must round-trip losslessly. SkillParamUtil's formatter is the single answer: culture-invariant
+        // (a localized editor would otherwise emit "0,5", which no parser here recognizes), and validated by
+        // re-parsing "R", falling back to a digit-safe format on runtimes where "R" is still the old lossy
+        // implementation. Only cases SkillParamUtil has no way of knowing about are handled locally:
+        // Unity's structs (whose own ToString rounds to one decimal place) and asset references (echoed back as a path).
         private static string FormatValue(object value)
         {
-            if (value == null) return "null";
-            if (value is Vector2 v2) return $"({v2.x}, {v2.y})";
-            if (value is Vector3 v3) return $"({v3.x}, {v3.y}, {v3.z})";
-            if (value is Vector4 v4) return $"({v4.x}, {v4.y}, {v4.z}, {v4.w})";
-            if (value is Color color) return $"({color.r}, {color.g}, {color.b}, {color.a})";
+            if (value is Vector2 v2) return SkillParamUtil.FormatVector2(v2);
+            if (value is Vector3 v3) return SkillParamUtil.FormatVector3(v3);
+            if (value is Vector4 v4) return SkillParamUtil.FormatVector4(v4);
+            if (value is Color color) return SkillParamUtil.FormatColor(color);
             if (value is UnityEngine.Object unityObject)
             {
                 var assetPath = AssetDatabase.GetAssetPath(unityObject);
                 return string.IsNullOrWhiteSpace(assetPath) ? unityObject.name : assetPath;
             }
-            return value.ToString();
+            return SkillParamUtil.FormatScalarR(value);
         }
 
         private static GameObject FindTarget(BatchPreviewItem item)
@@ -1551,6 +1672,31 @@ namespace UnitySkills
         private static bool IsTerminalStatus(string status)
         {
             return status == "completed" || status == "failed" || status == "cancelled";
+        }
+
+        /// <summary>
+        /// Tells the caller where to fetch a job's full payload: job_status/job_wait now only report
+        /// resultAvailable and no longer inline resultData (a completed test/compile job can reach tens of
+        /// KB, and polling would resend it every time).
+        /// A kind with a dedicated result skill points to that skill; a job that produced a batch report
+        /// points to batch_report_get; everything else is told to re-query with includeDetails=true —
+        /// that's the only way to fetch the payload.
+        /// Returns null when there's no payload to fetch.
+        /// </summary>
+        private static string BuildJobResultHint(BatchJobRecord job, string selfSkill, bool resultAvailable)
+        {
+            if (!resultAvailable)
+                return null;
+
+            if (string.Equals(job.kind, "test", StringComparison.OrdinalIgnoreCase))
+                return "Call test_get_result(jobId) for the parsed totals, failed test names and failure details.";
+            if (string.Equals(job.kind, "test_discovery", StringComparison.OrdinalIgnoreCase))
+                return "Call test_discover_get_result(jobId) for the discovered test list.";
+
+            if (!string.IsNullOrEmpty(job.reportId))
+                return $"Call batch_report_get(reportId=\"{job.reportId}\") for the per-item execution report.";
+
+            return $"Job kind '{job.kind}' has no dedicated result skill — re-call {selfSkill} with includeDetails=true to inline the full result payload.";
         }
     }
 }

@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System;
 using System.Collections.Generic;
@@ -9,21 +9,21 @@ using UnitySkills.Internal;
 namespace UnitySkills
 {
     /// <summary>
-    /// Reflection helper for XR Interaction Toolkit version compatibility.
-    /// Supports XRI 2.x (Unity 2022, root namespace) and XRI 3.x (Unity 6, sub-namespaces).
-    /// All XRI API calls go through reflection — no compile-time dependency on XRI assemblies.
+    /// Version-compatible reflection helper for XR Interaction Toolkit.
+    /// Supports XRI 2.x (Unity 2022, types in the root namespace) and XRI 3.x (Unity 6, types moved into sub-namespaces).
+    /// Every XRI API call goes through reflection — no compile-time dependency on the XRI assembly.
     /// </summary>
     internal static class XRReflectionHelper
     {
         // ==================================================================================
-        // Version Detection (cached)
+        // Version detection (cached)
         // ==================================================================================
 
         private static int? _majorVersion;
         private static readonly Dictionary<string, Type> _typeCache = new Dictionary<string, Type>();
 
         /// <summary>
-        /// Detected XRI major version: 3 = XRI 3.x, 2 = XRI 2.x, 0 = not installed.
+        /// The detected XRI major version: 3 = XRI 3.x, 2 = XRI 2.x, 0 = not installed.
         /// </summary>
         public static int XRIMajorVersion
         {
@@ -38,14 +38,14 @@ namespace UnitySkills
 
         private static void DetectVersion()
         {
-            // XRI 3.x moved types into sub-namespaces (e.g. .Interactors.XRRayInteractor)
+            // XRI 3.x moved types into a sub-namespace (e.g. .Interactors.XRRayInteractor)
             if (FindTypeInAssemblies("UnityEngine.XR.Interaction.Toolkit.Interactors.XRRayInteractor") != null)
             {
                 _majorVersion = 3;
                 return;
             }
 
-            // XRI 2.x keeps types in root namespace
+            // XRI 2.x types are still in the root namespace
             if (FindTypeInAssemblies("UnityEngine.XR.Interaction.Toolkit.XRRayInteractor") != null)
             {
                 _majorVersion = 2;
@@ -56,7 +56,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Standard error response when XRI is not installed.
+        /// The standard error response when XRI is not installed.
         /// </summary>
         public static object NoXRI() => new
         {
@@ -65,12 +65,12 @@ namespace UnitySkills
         };
 
         // ==================================================================================
-        // Type Mapping — maps short names to full qualified names [v3, v2] fallback order
+        // Type map — short name -> fully-qualified names, ordered [v3, v2] as the fallback order
         // ==================================================================================
 
         private static readonly Dictionary<string, string[]> TypeMap = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
-            // Core (same namespace in both versions)
+            // Core types (same namespace across both versions)
             ["XRInteractionManager"] = new[] { "UnityEngine.XR.Interaction.Toolkit.XRInteractionManager" },
 
             // Interactors
@@ -100,7 +100,7 @@ namespace UnitySkills
                 "UnityEngine.XR.Interaction.Toolkit.Interactables.XRBaseInteractable",
                 "UnityEngine.XR.Interaction.Toolkit.XRBaseInteractable" },
 
-            // Locomotion - Teleportation
+            // Locomotion — teleportation
             ["TeleportationProvider"] = new[] {
                 "UnityEngine.XR.Interaction.Toolkit.Locomotion.Teleportation.TeleportationProvider",
                 "UnityEngine.XR.Interaction.Toolkit.TeleportationProvider" },
@@ -111,7 +111,7 @@ namespace UnitySkills
                 "UnityEngine.XR.Interaction.Toolkit.Locomotion.Teleportation.TeleportationAnchor",
                 "UnityEngine.XR.Interaction.Toolkit.TeleportationAnchor" },
 
-            // Locomotion - Movement
+            // Locomotion — movement
             ["ContinuousMoveProvider"] = new[] {
                 "UnityEngine.XR.Interaction.Toolkit.Locomotion.Movement.ContinuousMoveProvider",
                 "UnityEngine.XR.Interaction.Toolkit.ContinuousMoveProvider" },
@@ -119,7 +119,7 @@ namespace UnitySkills
                 "UnityEngine.XR.Interaction.Toolkit.Locomotion.Movement.ActionBasedContinuousMoveProvider",
                 "UnityEngine.XR.Interaction.Toolkit.ActionBasedContinuousMoveProvider" },
 
-            // Locomotion - Turning
+            // Locomotion — turning
             ["SnapTurnProvider"] = new[] {
                 "UnityEngine.XR.Interaction.Toolkit.Locomotion.Turning.SnapTurnProvider",
                 "UnityEngine.XR.Interaction.Toolkit.SnapTurnProvider" },
@@ -133,7 +133,7 @@ namespace UnitySkills
                 "UnityEngine.XR.Interaction.Toolkit.Locomotion.Turning.ActionBasedContinuousTurnProvider",
                 "UnityEngine.XR.Interaction.Toolkit.ActionBasedContinuousTurnProvider" },
 
-            // Locomotion - System/Mediator
+            // Locomotion — system/mediator
             ["LocomotionSystem"] = new[] {
                 "UnityEngine.XR.Interaction.Toolkit.LocomotionSystem" },
             ["LocomotionMediator"] = new[] {
@@ -145,7 +145,7 @@ namespace UnitySkills
             ["XRUIInputModule"] = new[] {
                 "UnityEngine.XR.Interaction.Toolkit.UI.XRUIInputModule" },
 
-            // Input Controllers
+            // Input controllers
             ["ActionBasedController"] = new[] {
                 "UnityEngine.XR.Interaction.Toolkit.Interactors.ActionBasedController",
                 "UnityEngine.XR.Interaction.Toolkit.ActionBasedController" },
@@ -156,30 +156,30 @@ namespace UnitySkills
             // XR Origin (from com.unity.xr.core-utils)
             ["XROrigin"] = new[] { "Unity.XR.CoreUtils.XROrigin" },
 
-            // Line Visual
+            // Ray visualization
             ["XRInteractorLineVisual"] = new[] {
                 "UnityEngine.XR.Interaction.Toolkit.Interactors.Visuals.XRInteractorLineVisual",
                 "UnityEngine.XR.Interaction.Toolkit.XRInteractorLineVisual" },
 
-            // Interaction Layers
+            // Interaction layers
             ["InteractionLayerMask"] = new[] {
                 "UnityEngine.XR.Interaction.Toolkit.InteractionLayerMask" },
         };
 
         // ==================================================================================
-        // Type Resolution
+        // Type resolution
         // ==================================================================================
 
         /// <summary>
-        /// Find a type by full name across all loaded assemblies.
-        /// Uses asm.GetType() first, then falls back to full assembly scan.
+        /// Looks up a type by full name across all loaded assemblies.
+        /// Tries asm.GetType() first, falls back to a full-assembly scan on failure.
         /// </summary>
         public static Type FindTypeInAssemblies(string fullName)
         {
             if (string.IsNullOrEmpty(fullName)) return null;
             if (_typeCache.TryGetValue(fullName, out var cached)) return cached;
 
-            // Pass 1: Fast path — asm.GetType(fullName)
+            // Pass 1: fast path — asm.GetType(fullName)
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
                 try
@@ -194,7 +194,7 @@ namespace UnitySkills
                 catch { /* ignore assemblies that fail to enumerate */ }
             }
 
-            // Pass 2: Fallback — full scan with GetTypes() (handles assembly forwarding/loading edge cases)
+            // Pass 2: fallback — full scan with GetTypes() (covers assembly-forwarding/loading edge cases)
             var shortName = fullName.Contains(".") ? fullName.Substring(fullName.LastIndexOf('.') + 1) : fullName;
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
@@ -217,8 +217,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Resolve an XR type by short name using the version-aware mapping table.
-        /// Tries v3 namespace first, then falls back to v2.
+        /// Resolves an XR type by short name using the version-aware type map.
+        /// Tries the v3 namespace first, then falls back to v2.
         /// </summary>
         public static Type ResolveXRType(string shortName)
         {
@@ -247,8 +247,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Find a Component type by simple name, scanning all assemblies.
-        /// This is the broadest search — slower but handles assembly loading edge cases.
+        /// Scans all assemblies for a Component type by simple name.
+        /// This is the widest search — slower, but covers assembly-loading edge cases.
         /// </summary>
         private static Type FindTypeBySimpleName(string simpleName)
         {
@@ -259,7 +259,7 @@ namespace UnitySkills
 
             Type result = null;
 
-            // Search all types in all assemblies by simple name (case-insensitive)
+            // Match by simple name (case-insensitive) across every type in every assembly
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
                 try
@@ -283,13 +283,12 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Component Operations
+        // Component operations
         // ==================================================================================
 
         /// <summary>
-        /// Add an XR component to a GameObject using reflection.
-        /// Returns the added component, or null on failure.
-        /// Uses ResolveXRType first, then falls back to full assembly scan.
+        /// Adds an XR component to a GameObject via reflection; returns the component on success, null on failure.
+        /// Tries ResolveXRType first, falls back to a full-assembly scan on failure.
         /// </summary>
         public static Component AddXRComponent(GameObject go, string typeName)
         {
@@ -297,7 +296,7 @@ namespace UnitySkills
 
             var type = ResolveXRType(typeName);
 
-            // Ultimate fallback: scan all types in all assemblies by simple name
+            // Final fallback: scan all assemblies for the type by simple name
             if (type == null)
                 type = FindTypeBySimpleName(typeName);
 
@@ -310,7 +309,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Get an XR component from a GameObject using reflection.
+        /// Gets an XR component from a GameObject via reflection.
         /// </summary>
         public static Component GetXRComponent(GameObject go, string typeName)
         {
@@ -321,7 +320,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Check if a GameObject has an XR component.
+        /// Determines whether a GameObject has a given XR component attached.
         /// </summary>
         public static bool HasXRComponent(GameObject go, string typeName)
         {
@@ -329,11 +328,11 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Property Access
+        // Property access
         // ==================================================================================
 
         /// <summary>
-        /// Get a property value from an object via reflection.
+        /// Reads an object's property value via reflection.
         /// </summary>
         public static object GetProperty(object obj, string propName)
         {
@@ -343,15 +342,14 @@ namespace UnitySkills
             if (prop != null && prop.CanRead)
                 return prop.GetValue(obj);
 
-            // Try field as fallback
+            // Fall back to a field if the property can't be found
             var field = obj.GetType().GetField(propName,
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             return field?.GetValue(obj);
         }
 
         /// <summary>
-        /// Set a property value on an object via reflection.
-        /// Handles enum conversion automatically.
+        /// Sets an object's property value via reflection, converting enums automatically.
         /// </summary>
         public static bool SetProperty(object obj, string propName, object value)
         {
@@ -369,7 +367,7 @@ namespace UnitySkills
                 }
             }
 
-            // Try field as fallback
+            // Fall back to a field if the property can't be found
             var field = obj.GetType().GetField(propName,
                 BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
             if (field != null)
@@ -386,7 +384,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Set a property that is an enum, parsing the string value by name.
+        /// Sets an enum-typed property, resolving the string value by name.
         /// </summary>
         public static bool SetEnumProperty(object obj, string propName, string enumValueName)
         {
@@ -413,7 +411,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Get available enum values for a property.
+        /// Gets the list of available enum values for a given property.
         /// </summary>
         public static string[] GetEnumValues(object obj, string propName)
         {
@@ -427,11 +425,11 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Method Invocation
+        // Method invocation
         // ==================================================================================
 
         /// <summary>
-        /// Invoke a method on an object via reflection.
+        /// Invokes a method on an object via reflection.
         /// </summary>
         public static object InvokeMethod(object obj, string methodName, params object[] args)
         {
@@ -445,11 +443,11 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Scene Query
+        // Scene queries
         // ==================================================================================
 
         /// <summary>
-        /// Find all components of an XR type in the scene.
+        /// Finds every component of a given XR type in the scene.
         /// </summary>
         public static Component[] FindComponentsOfXRType(string typeName)
         {
@@ -460,7 +458,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Find the first component of an XR type in the scene.
+        /// Finds the first component of a given XR type in the scene.
         /// </summary>
         public static Component FindFirstOfXRType(string typeName)
         {
@@ -469,7 +467,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Get a readable summary of an XR component's key properties.
+        /// Gets a readable summary of a given XR component's key properties.
         /// </summary>
         public static Dictionary<string, object> GetComponentInfo(Component comp)
         {
@@ -483,7 +481,7 @@ namespace UnitySkills
             info["instanceId"] = UnityObjectIdUtility.GetObjectId(comp.gameObject);
             info["enabled"] = comp is Behaviour b ? b.enabled : true;
 
-            // Read common XR properties (verified from XRI source code)
+            // Read common XR properties (property names verified against the XRI source)
             var commonProps = new[] {
                 // Interactor properties
                 "interactionLayers", "selectMode", "maxRaycastDistance", "lineType",
@@ -494,13 +492,13 @@ namespace UnitySkills
                 "smoothPosition", "smoothPositionAmount", "smoothRotation", "smoothRotationAmount",
                 "trackPosition", "trackRotation", "trackScale",
                 "useDynamicAttach", "attachEaseInTime", "throwVelocityScale",
-                // Locomotion properties
+                // Locomotion-related properties
                 "moveSpeed", "enableStrafe", "enableFly",
                 "turnAmount", "turnSpeed", "enableTurnLeftRight", "enableTurnAround",
                 // Socket properties
                 "showInteractableHoverMeshes", "socketActive", "recycleDelayTime",
                 "socketSnappingRadius", "socketScaleMode",
-                // State (readonly)
+                // Runtime state (read-only)
                 "isSelected", "isHovered"
             };
 
@@ -522,7 +520,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Value Conversion
+        // Value conversion
         // ==================================================================================
 
         private static object ConvertValue(object value, Type targetType)
@@ -530,20 +528,20 @@ namespace UnitySkills
             if (value == null) return null;
             if (targetType.IsInstanceOfType(value)) return value;
 
-            // Enum conversion from string
+            // String to enum
             if (targetType.IsEnum && value is string s)
             {
                 try { return Enum.Parse(targetType, s, ignoreCase: true); }
                 catch { return null; }
             }
 
-            // Numeric conversions
+            // Numeric type conversion
             try { return Convert.ChangeType(value, targetType); }
             catch { return null; }
         }
 
         /// <summary>
-        /// Clear the type resolution cache (useful after package install/domain reload).
+        /// Clears the type resolution cache (useful after installing a package or a domain reload).
         /// </summary>
         public static void ClearCache()
         {

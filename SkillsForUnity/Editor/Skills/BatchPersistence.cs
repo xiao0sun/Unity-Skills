@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using Newtonsoft.Json;
@@ -86,8 +86,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Flush pending changes to disk if the state has been modified.
-        /// Call at key transition points (job completion, cancellation, failure).
+        /// Flush pending writes to disk when state has been modified. Should be called at key state transitions (job completed, cancelled, failed).
         /// </summary>
         internal static void FlushIfDirty()
         {

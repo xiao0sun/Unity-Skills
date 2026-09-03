@@ -1,12 +1,12 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace UnitySkills
 {
     /// <summary>
-    /// Stable, AI-parseable error codes for REST responses.
-    /// Wire format is SCREAMING_SNAKE_CASE (see <see cref="SkillErrorCodeExtensions.ToWireString"/>).
-    /// Add new values to the END to keep numeric ordering stable.
+    /// Stable error codes for REST responses, for AI parsing.
+    /// The wire format is SCREAMING_SNAKE_CASE (see <see cref="SkillErrorCodeExtensions.ToWireString"/>).
+    /// New values are always appended at the end, to keep numeric ordering stable.
     /// </summary>
     public enum SkillErrorCode
     {
@@ -35,6 +35,7 @@ namespace UnitySkills
         ModeForbidden,
         GrantPendingApproval,
         InvalidMode,
+        SurfaceExcluded,
     }
 
     internal static class SkillErrorCodeExtensions
@@ -67,6 +68,7 @@ namespace UnitySkills
                 case SkillErrorCode.ModeForbidden:        return "MODE_FORBIDDEN";
                 case SkillErrorCode.GrantPendingApproval: return "GRANT_PENDING_APPROVAL";
                 case SkillErrorCode.InvalidMode:          return "INVALID_MODE";
+                case SkillErrorCode.SurfaceExcluded:      return "SURFACE_EXCLUDED";
                 default:                                  return "UNKNOWN";
             }
         }
@@ -74,9 +76,9 @@ namespace UnitySkills
         private static Dictionary<string, SkillErrorCode> _byName;
 
         /// <summary>
-        /// Reverse of <see cref="ToWireString"/>: accepts either the wire value ("TARGET_NOT_FOUND")
-        /// or the enum name ("TargetNotFound"), case-insensitively. Used when a skill declares an
-        /// errorCode on its own error object and the router honours it verbatim.
+        /// The inverse of <see cref="ToWireString"/>: accepts both the wire value ("TARGET_NOT_FOUND")
+        /// and the enum name ("TargetNotFound"), case-insensitively. Used when a skill declares
+        /// errorCode on its own error object and the router carries it through unchanged.
         /// </summary>
         public static bool TryParseWire(string value, out SkillErrorCode code)
         {

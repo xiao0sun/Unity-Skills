@@ -1,13 +1,14 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using UnityEditor.Animations;
 using System.IO;
 using System.Linq;
+using System.Collections.Generic;
 
 namespace UnitySkills
 {
     /// <summary>
-    /// Animator management skills - create controllers, manage parameters, control playback.
+    /// Animator management skills: create controllers, manage parameters, control playback.
     /// </summary>
     public static class AnimatorSkills
     {
@@ -75,7 +76,8 @@ namespace UnitySkills
             WorkflowManager.SnapshotObject(controller);
             controller.AddParameter(paramName, type);
 
-            // Set default value — use index to modify struct in-place (value type copy bug fix)
+            // AnimatorControllerParameter is a value type, so the array element must be mutated in
+            // place by index and written back wholesale; mutating a copy pulled out of the enumeration has no effect.
             var parameters = controller.parameters;
             int idx = System.Array.FindIndex(parameters, p => p.name == paramName);
             if (idx >= 0)
@@ -145,10 +147,51 @@ namespace UnitySkills
             var (animator, error) = GameObjectFinder.FindComponentOrError<Animator>(name, instanceId, path);
             if (error != null) return error;
 
+            if (animator.runtimeAnimatorController == null)
+                return new
+                {
+                    error = $"GameObject '{animator.gameObject.name}' has an Animator but no AnimatorController assigned",
+                    errorCode = SkillErrorCode.TargetNotFound.ToWireString()
+                };
+
+            // Animator.SetFloat/SetInteger/SetBool/SetTrigger fail silently on a parameter name
+            // that doesn't exist (no exception, no log), so the runtime parameter table must be
+            // checked first, otherwise a misspelled paramName would be reported as a success.
+            var parameters = animator.parameters;
+            var matchedParam = parameters.FirstOrDefault(p => p.name == paramName);
+            bool paramExists = parameters.Any(p => p.name == paramName);
+            if (!paramExists)
+            {
+                return new
+                {
+                    error = $"Parameter '{paramName}' not found on Animator '{animator.gameObject.name}'",
+                    errorCode = SkillErrorCode.TargetNotFound.ToWireString(),
+                    availableParameters = parameters.Select(p => new { name = p.name, type = p.type.ToString() }).ToArray()
+                };
+            }
+
+            var requestedType = (paramType ?? "float").ToLower();
+            bool typeMatches = requestedType switch
+            {
+                "float" => matchedParam.type == AnimatorControllerParameterType.Float,
+                "int" => matchedParam.type == AnimatorControllerParameterType.Int,
+                "bool" => matchedParam.type == AnimatorControllerParameterType.Bool,
+                "trigger" => matchedParam.type == AnimatorControllerParameterType.Trigger,
+                _ => false
+            };
+            if (!typeMatches)
+            {
+                return new
+                {
+                    error = $"Parameter '{paramName}' is of type {matchedParam.type} on the controller, but paramType='{paramType}' was requested",
+                    errorCode = SkillErrorCode.SemanticInvalid.ToWireString()
+                };
+            }
+
             WorkflowManager.SnapshotObject(animator);
             Undo.RecordObject(animator, "Set Animator Parameter");
 
-            switch (paramType.ToLower())
+            switch (requestedType)
             {
                 case "float":
                     animator.SetFloat(paramName, floatValue);
@@ -179,9 +222,66 @@ namespace UnitySkills
             var (animator, error) = GameObjectFinder.FindComponentOrError<Animator>(name, instanceId, path);
             if (error != null) return error;
 
+            // Animator.Play likewise fails silently on a state name that doesn't exist, so the state
+            // machine (including sub-state machines) is walked recursively to validate first, so a misspelled stateName isn't reported as a successful play.
+            var controller = animator.runtimeAnimatorController as AnimatorController;
+            if (controller == null && animator.runtimeAnimatorController != null)
+            {
+                var controllerAssetPath = AssetDatabase.GetAssetPath(animator.runtimeAnimatorController);
+                if (!string.IsNullOrEmpty(controllerAssetPath))
+                    controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerAssetPath);
+            }
+
+            if (controller == null)
+                return new
+                {
+                    error = $"GameObject '{animator.gameObject.name}' has an Animator but no AnimatorController assigned",
+                    errorCode = SkillErrorCode.TargetNotFound.ToWireString()
+                };
+
+            if (layer < 0 || layer >= controller.layers.Length)
+                return new
+                {
+                    error = $"Layer {layer} does not exist. Controller has {controller.layers.Length} layers.",
+                    errorCode = SkillErrorCode.SemanticInvalid.ToWireString()
+                };
+
+            var availableStates = new List<string>();
+            if (!SearchStateMachineForState(controller.layers[layer].stateMachine, "", stateName, availableStates))
+            {
+                return new
+                {
+                    error = $"State '{stateName}' not found on layer {layer} of controller",
+                    errorCode = SkillErrorCode.TargetNotFound.ToWireString(),
+                    availableStates = availableStates.ToArray()
+                };
+            }
+
             animator.Play(stateName, layer, normalizedTime);
 
             return new { success = true, gameObject = animator.gameObject.name, state = stateName, layer };
+        }
+
+        /// <summary>
+        /// Collects the names of all reachable states in <paramref name="stateMachine"/> (dotted
+        /// paths for sub-state machines) into <paramref name="names"/>, and returns whether
+        /// <paramref name="target"/> matches a state's simple name or its full dotted path.
+        /// </summary>
+        private static bool SearchStateMachineForState(AnimatorStateMachine stateMachine, string prefix, string target, List<string> names)
+        {
+            bool found = false;
+            foreach (var s in stateMachine.states)
+            {
+                var fullName = prefix + s.state.name;
+                names.Add(fullName);
+                if (s.state.name == target || fullName == target) found = true;
+            }
+            foreach (var child in stateMachine.stateMachines)
+            {
+                var childPrefix = prefix + child.stateMachine.name + ".";
+                if (SearchStateMachineForState(child.stateMachine, childPrefix, target, names)) found = true;
+            }
+            return found;
         }
 
         [UnitySkill("animator_get_info", "Get Animator component information (supports name/instanceId/path)",

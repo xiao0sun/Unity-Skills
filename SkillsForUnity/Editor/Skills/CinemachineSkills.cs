@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System.Reflection;
 using System.Collections.Generic;
@@ -21,12 +21,12 @@ using UnityEngine.Splines;
 namespace UnitySkills
 {
     /// <summary>
-    /// Cinemachine skills - 支持 Cinemachine 2.x 和 3.x
+    /// Cinemachine skills -- supports both Cinemachine 2.x and 3.x
     /// </summary>
     public static class CinemachineSkills
     {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
-        private static object NoCinemachine() => new { error = "Cinemachine 未安装。请通过 Package Manager 安装 Cinemachine 2.x 或 3.x" };
+        private static object NoCinemachine() => new { error = "Cinemachine is not installed. Install Cinemachine 2.x or 3.x via Package Manager." };
 #endif
         [UnitySkill("cinemachine_create_vcam", "Create a new Virtual Camera",
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Create,
@@ -45,7 +45,7 @@ namespace UnitySkills
             Undo.RegisterCreatedObjectUndo(go, "Create Virtual Camera");
             WorkflowManager.SnapshotObject(go, SnapshotType.Created);
 
-            // 确保 CinemachineBrain 存在
+            // Ensure a CinemachineBrain exists
             var mainCamera = Camera.main;
             if (mainCamera != null)
             {
@@ -111,14 +111,14 @@ namespace UnitySkills
             var result = new Dictionary<string, object>();
             result["_type"] = t.Name;
 
-            // Collect serialized fields (what appears in Inspector)
             var serialized = new Dictionary<string, object>();
             var flags = BindingFlags.Public | BindingFlags.Instance;
 
             foreach (var field in t.GetFields(flags))
             {
                 try { if (field.GetCustomAttribute<System.ObsoleteAttribute>() != null) continue; } catch { continue; }
-                // Include: public fields with m_ prefix, [SerializeField], [Tooltip], or simple value types
+                // Fields deemed to appear in the Inspector: public fields with an m_ prefix, fields with
+                // [SerializeField] / [Tooltip], and simple value types.
                 bool isInspector = field.Name.StartsWith("m_")
                     || field.GetCustomAttribute<SerializeField>() != null
                     || field.GetCustomAttribute<TooltipAttribute>() != null
@@ -127,7 +127,7 @@ namespace UnitySkills
                     || typeof(Object).IsAssignableFrom(field.FieldType);
 
                 if (!isInspector) continue;
-                // Skip internal/runtime fields
+                // Skip MonoBehaviour's own internal / runtime fields.
                 if (field.Name == "destroyCancellationToken" || field.Name == "useGUILayout"
                     || field.Name == "runInEditMode" || field.Name == "enabled") continue;
 
@@ -141,7 +141,6 @@ namespace UnitySkills
 
             result["settings"] = serialized;
 
-            // Stage detection
             if (CinemachineAdapter.TryGetPipelineStage(mb, out var pipelineStage))
                 result["stage"] = pipelineStage.ToString();
             else if (typeof(CinemachineExtension).IsAssignableFrom(t)) result["stage"] = "Extension";
@@ -163,7 +162,7 @@ namespace UnitySkills
             if (val is Color c) return new { c.r, c.g, c.b, c.a };
             if (val is Object uo) return uo != null ? uo.name : "None";
 
-            // For structs, recurse one level
+            // Recurse one more level for structs.
             if (t.IsValueType && !t.IsPrimitive)
             {
                 var dict = new Dictionary<string, object>();
@@ -178,7 +177,7 @@ namespace UnitySkills
         }
 #endif
 
-        // --- Custom Sanitizer to break Loops ---
+        // --- Custom serialization sanitizer, used to break circular references ---
 #if CINEMACHINE_2 || CINEMACHINE_3
         private static object Sanitize(object obj, int depth = 0, HashSet<int> visited = null)
         {
@@ -188,7 +187,7 @@ namespace UnitySkills
             var t = obj.GetType();
             if (t.IsPrimitive || t == typeof(string) || t == typeof(bool) || t.IsEnum) return obj;
 
-            // Handle Unity Structs manually
+            // Manually expand Unity structs.
             if (obj is Vector2 v2) return new { v2.x, v2.y };
             if (obj is Vector3 v3) return new { v3.x, v3.y, v3.z };
             if (obj is Vector4 v4) return new { v4.x, v4.y, v4.z, v4.w };
@@ -196,7 +195,7 @@ namespace UnitySkills
             if (obj is Color c) return new { c.r, c.g, c.b, c.a };
             if (obj is Rect r) return new { r.x, r.y, r.width, r.height };
 
-            // Cycle detection for reference types
+            // Do cycle detection for reference types.
             if (!t.IsValueType)
             {
                 if (visited == null) visited = new HashSet<int>();
@@ -204,7 +203,7 @@ namespace UnitySkills
                 if (!visited.Add(id)) return $"[Circular: {t.Name}]";
             }
 
-            // Handle Dictionaries (before IEnumerable to preserve key-value structure)
+            // Dictionaries must be handled before IEnumerable, otherwise the key-value structure gets flattened into a list.
             if (obj is System.Collections.IDictionary dict)
             {
                 var dictResult = new Dictionary<string, object>();
@@ -213,7 +212,6 @@ namespace UnitySkills
                 return dictResult;
             }
 
-            // Handle Arrays/Lists
             if (obj is System.Collections.IEnumerable list)
             {
                 var result = new List<object>();
@@ -221,7 +219,7 @@ namespace UnitySkills
                 return result;
             }
 
-            // Deep Sanitization for complex Structs/Classes
+            // Complex structs / classes go through deep sanitization.
             var memberDict = new Dictionary<string, object>();
             var members = t.GetMembers(BindingFlags.Public | BindingFlags.Instance)
                 .Where(m => m.MemberType == MemberTypes.Field || m.MemberType == MemberTypes.Property);
@@ -364,12 +362,33 @@ namespace UnitySkills
             var vcam = CinemachineAdapter.GetVCam(go);
             if (CinemachineAdapter.VCamOrError(vcam) is object vcamErr) return vcamErr;
 
+            // GameObjectFinder.Find(...)?.transform returns null when not found, and null for
+            // CinemachineAdapter.SetFollow/SetLookAt specifically means "clear this binding" -- so
+            // a typo in followName/lookAtName would wipe out an otherwise-working target while still reporting success:true.
+            // So both targets are first resolved via FindOrError (missing target yields TARGET_NOT_FOUND) before touching the binding;
+            // an empty string / omission means "leave as-is" rather than "clear", so it short-circuits before the lookup.
+            Transform followTransform = null;
+            if (!string.IsNullOrEmpty(followName))
+            {
+                var (followGo, followErr) = GameObjectFinder.FindOrError(name: followName);
+                if (followErr != null) return followErr;
+                followTransform = followGo.transform;
+            }
+
+            Transform lookAtTransform = null;
+            if (!string.IsNullOrEmpty(lookAtName))
+            {
+                var (lookAtGo, lookAtErr) = GameObjectFinder.FindOrError(name: lookAtName);
+                if (lookAtErr != null) return lookAtErr;
+                lookAtTransform = lookAtGo.transform;
+            }
+
             WorkflowManager.SnapshotObject(vcam);
             Undo.RecordObject(vcam, "Set Targets");
-            if (followName != null)
-                CinemachineAdapter.SetFollow(vcam, GameObjectFinder.Find(followName)?.transform);
-            if (lookAtName != null)
-                CinemachineAdapter.SetLookAt(vcam, GameObjectFinder.Find(lookAtName)?.transform);
+            if (!string.IsNullOrEmpty(followName))
+                CinemachineAdapter.SetFollow(vcam, followTransform);
+            if (!string.IsNullOrEmpty(lookAtName))
+                CinemachineAdapter.SetLookAt(vcam, lookAtTransform);
 
             EditorUtility.SetDirty(go);
             return new { success = true };
@@ -429,7 +448,7 @@ namespace UnitySkills
 #endif
         }
 
-        [UnitySkill("cinemachine_set_lens", "Quickly configure Lens settings (FOV, Near, Far, OrthoSize).",
+        [UnitySkill("cinemachine_set_lens", "Quickly configure Lens settings (FOV, Near, Far, OrthoSize) and the projection ModeOverride. 'mode' accepts None / Orthographic / Perspective / Physical (case-insensitive); an invalid value rejects the whole call without writing anything.",
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Modify,
             Tags = new[] { "camera", "lens", "fov", "clip", "cinemachine" },
             Outputs = new[] { "success", "message" },
@@ -446,6 +465,14 @@ namespace UnitySkills
             var vcam = CinemachineAdapter.GetVCam(go);
             if (CinemachineAdapter.VCamOrError(vcam) is object vcamErr) return vcamErr;
 
+            // mode must be fully parsed before touching lens: otherwise a misspelled projection mode gets silently dropped,
+            // while the fov/clip planes in the same call still get written.
+            if (!SkillParamUtil.TryParseOptionalEnum<LensSettings.OverrideModes>(
+                    mode, "mode", out var modeOverride, out var modeError))
+            {
+                return modeError;
+            }
+
             WorkflowManager.SnapshotObject(vcam);
             var lens = CinemachineAdapter.GetLens(vcam);
             bool changed = false;
@@ -454,6 +481,8 @@ namespace UnitySkills
             if (nearClip.HasValue) { lens.NearClipPlane = nearClip.Value; changed = true; }
             if (farClip.HasValue) { lens.FarClipPlane = farClip.Value; changed = true; }
             if (orthoSize.HasValue) { lens.OrthographicSize = orthoSize.Value; changed = true; }
+            // LensSettings.ModeOverride has the same name and meaning in CM2 and CM3, so like the fields above it needs no version branch.
+            if (modeOverride.HasValue) { lens.ModeOverride = modeOverride.Value; changed = true; }
 
             if (changed)
             {
@@ -525,7 +554,7 @@ namespace UnitySkills
                     return new { error = requestedType.Name + " belongs to the " + actualStage + " stage, not " + stageEnum + "." };
             }
 
-            // 1. Remove existing component at this stage
+            // 1. First remove any existing component on this stage
             var existing = CinemachineAdapter.GetPipelineComponent(go, stageEnum.ToString());
             if (existing != null && requestedType != null && existing.GetType() == requestedType)
                 return new { success = true, message = "Set " + stageEnum + " to " + requestedType.Name + " (already configured)" };
@@ -537,7 +566,7 @@ namespace UnitySkills
                 CinemachineAdapter.InvalidatePipeline(go);
             }
 
-            // 2. Add new component if not "None"
+            // 2. Add the new component only when it's not "None"
             if (requestedType != null)
             {
                 var comp = CinemachineAdapter.AddPipelineComponent(go, requestedType, out var addError);
@@ -693,7 +722,7 @@ namespace UnitySkills
 #endif
         }
 
-        // --- Helpers ---
+        // --- Helper methods ---
 
         private static void RecordAndSetDirty(Object target, string name)
         {
@@ -883,9 +912,9 @@ namespace UnitySkills
 #if !CINEMACHINE_2 && !CINEMACHINE_3
             return NoCinemachine();
 #elif CINEMACHINE_2
-            return new { error = "cinemachine_set_spline 仅支持 Cinemachine 3.x + Splines 包" };
+            return new { error = "cinemachine_set_spline requires Cinemachine 3.x together with the Splines package." };
 #elif !SPLINES_2
-            return new { error = "cinemachine_set_spline 需要 com.unity.splines 2.x（[2.0,3.0)）。当前项目未安装兼容版本：未安装、或安装的是 1.x / 3.x。请通过 Package Manager 安装 2.x 版本的 Splines 包。" };
+            return new { error = "cinemachine_set_spline requires com.unity.splines 2.x ([2.0,3.0)). No compatible version is installed in this project — it is either missing, or 1.x / 3.x is installed instead. Install the 2.x Splines package via Package Manager." };
 #else
             var (vcamGo, vcamErr) = GameObjectFinder.FindOrError(vcamName, vcamInstanceId, vcamPath);
             if (vcamErr != null) return vcamErr;
@@ -1251,7 +1280,7 @@ namespace UnitySkills
 #endif
         }
 
-        // ===================== Sequencer =====================
+        // ===================== Sequencer camera =====================
 
         [UnitySkill("cinemachine_create_sequencer", "Create a Sequencer camera (CM3) or BlendList camera (CM2) that plays child cameras in sequence.",
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Create,
@@ -1270,7 +1299,7 @@ namespace UnitySkills
             var seq = go.AddComponent(type) as MonoBehaviour;
             CinemachineAdapter.SetSequencerLoop(seq, loop);
 
-            // 确保 Brain 存在
+            // Ensure Brain exists
             var mainCamera = Camera.main;
             if (mainCamera != null && mainCamera.GetComponent<CinemachineBrain>() == null)
             {
@@ -1324,7 +1353,7 @@ namespace UnitySkills
 #endif
         }
 
-        // ===================== FreeLook =====================
+        // ===================== FreeLook camera =====================
 
         [UnitySkill("cinemachine_create_freelook", "Create a FreeLook camera. CM2: CinemachineFreeLook. CM3: CinemachineCamera + OrbitalFollow(ThreeRing) + RotationComposer.",
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Create,
@@ -1338,7 +1367,7 @@ namespace UnitySkills
 #else
             var go = CinemachineAdapter.CreateFreeLook(name);
 
-            // 确保 Brain 存在
+            // Ensure Brain exists
             var mainCamera = Camera.main;
             if (mainCamera != null && mainCamera.GetComponent<CinemachineBrain>() == null)
             {
@@ -1346,7 +1375,7 @@ namespace UnitySkills
                 WorkflowManager.SnapshotCreatedComponent(brain);
             }
 
-            // 设置目标
+            // Set targets
             var vcam = CinemachineAdapter.GetVCam(go);
             if (vcam != null)
             {
@@ -1362,7 +1391,7 @@ namespace UnitySkills
                 }
             }
 #if CINEMACHINE_2
-            // CM2 FreeLook 有独立的 Follow/LookAt
+            // CM2 FreeLook has independent Follow/LookAt
             var freeLook = go.GetComponent<CinemachineFreeLook>();
             if (freeLook != null)
             {
@@ -1386,7 +1415,7 @@ namespace UnitySkills
 #endif
         }
 
-        // ===================== Camera Manager Configure =====================
+        // ===================== Camera manager configuration =====================
 
         [UnitySkill("cinemachine_configure_camera_manager", "Configure ClearShot/StateDriven/Sequencer camera properties.",
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Modify,
@@ -1403,7 +1432,7 @@ namespace UnitySkills
             // StateDriven
             string animatorName = null,
             int? layerIndex = null,
-            // Common
+            // Common to all three
             string defaultBlendStyle = null,
             float? defaultBlendTime = null,
             // Sequencer
@@ -1513,7 +1542,7 @@ namespace UnitySkills
 #endif
         }
 
-        // ===================== Body / Aim Configure =====================
+        // ===================== Body / Aim stage configuration =====================
 
         [UnitySkill("cinemachine_configure_body", "Configure Body stage component (Follow, OrbitalFollow, ThirdPersonFollow, PositionComposer, etc.) in one call.",
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Modify,
@@ -1705,7 +1734,7 @@ namespace UnitySkills
             }
             else
             {
-                // Generic fallback - try all offset/damping params
+                // Generic fallback: for unrecognized component types, just try each offset/damping parameter.
                 TrySet("FollowOffset", offsetX.HasValue || offsetY.HasValue || offsetZ.HasValue ? (object)new Vector3(offsetX ?? 0, offsetY ?? 0, offsetZ ?? 0) : null, "offset");
             }
 
@@ -1772,6 +1801,31 @@ namespace UnitySkills
                     rc.Composition = comp;
                     changes.Add($"screen=({pos.x},{pos.y})");
                 }
+                // CM3's RotationComposer has no m_DeadZoneWidth/Height, m_SoftZoneWidth/Height
+                // fields (those belong to CM2's Composer); the equivalents are Composition.DeadZone.Size and
+                // Composition.HardLimits.Size (Unity's own CM2->CM3 upgrader maps SoftZone to
+                // HardLimits, not to a same-named "SoftZone" field). Without this branch these four parameters silently fail:
+                // TrySet only recognizes the old field names, and the old names don't exist here, so nothing actually gets tried.
+                if (deadZoneWidth.HasValue || deadZoneHeight.HasValue)
+                {
+                    var rc = (CinemachineRotationComposer)aim;
+                    var comp = rc.Composition;
+                    var cur = comp.DeadZone.Size;
+                    comp.DeadZone.Size = new Vector2(deadZoneWidth ?? cur.x, deadZoneHeight ?? cur.y);
+                    comp.DeadZone.Enabled = true;
+                    rc.Composition = comp;
+                    changes.Add($"deadZone=({comp.DeadZone.Size.x},{comp.DeadZone.Size.y})");
+                }
+                if (softZoneWidth.HasValue || softZoneHeight.HasValue)
+                {
+                    var rc = (CinemachineRotationComposer)aim;
+                    var comp = rc.Composition;
+                    var cur = comp.HardLimits.Size;
+                    comp.HardLimits.Size = new Vector2(softZoneWidth ?? cur.x, softZoneHeight ?? cur.y);
+                    comp.HardLimits.Enabled = true;
+                    rc.Composition = comp;
+                    changes.Add($"softZone=({comp.HardLimits.Size.x},{comp.HardLimits.Size.y})");
+                }
                 TrySet("Damping", horizontalDamping.HasValue && verticalDamping.HasValue ? (object)new Vector2(horizontalDamping.Value, verticalDamping.Value) : null, "damping");
                 if (horizontalDamping.HasValue && !verticalDamping.HasValue) TrySet("Damping.x", horizontalDamping, "hDamping");
                 if (verticalDamping.HasValue && !horizontalDamping.HasValue) TrySet("Damping.y", verticalDamping, "vDamping");
@@ -1823,7 +1877,7 @@ namespace UnitySkills
 #endif
         }
 
-        // ===================== Extension / Impulse Configure =====================
+        // ===================== Extensions / Impulse configuration =====================
 
         [UnitySkill("cinemachine_configure_extension", "Configure Cinemachine extension properties (Confiner, Deoccluder, FollowZoom, GroupFraming, etc.).",
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Modify,
@@ -1866,7 +1920,7 @@ namespace UnitySkills
             }
             if (ext == null)
             {
-                // Auto-detect: find first CinemachineExtension on the GO
+                // When unspecified, automatically use the first CinemachineExtension on the object.
                 var exts = go.GetComponents<CinemachineExtension>();
                 ext = exts.Length > 0 ? exts[0] : null;
             }
@@ -1877,10 +1931,9 @@ namespace UnitySkills
             var typeName = ext.GetType().Name;
             var changes = new List<string>();
 
-            // Note: several branches below intentionally probe two candidate field/property names
-            // per logical setting (e.g. "Damping" for CM3, "m_Damping" for CM2) — exactly one is
-            // expected to miss depending on the installed Cinemachine version, so failures here are
-            // not surfaced as warnings (that would be noise on every successful call).
+            // Note: several branches below deliberately try two candidate field / property names for the same logical setting
+            // (e.g. CM3's "Damping" vs CM2's "m_Damping"). Depending on the installed Cinemachine version,
+            // one of them is guaranteed to fail to match, so a failure here isn't reported as a warning -- otherwise every successful call would produce noise.
             void TrySet(string prop, object val, string label)
             {
                 if (val == null) return;
@@ -1895,7 +1948,7 @@ namespace UnitySkills
                     var shapeGo = GameObjectFinder.Find(boundingShapeName);
                     if (shapeGo != null)
                     {
-                        // Try Collider2D, then Collider
+                        // Try Collider2D first, then fall back to Collider.
                         var col2d = shapeGo.GetComponent<Collider2D>();
                         var col3d = shapeGo.GetComponent<Collider>();
                         if (col2d != null && SetFieldOrProperty(ext, "BoundingShape2D", col2d))
@@ -1954,7 +2007,7 @@ namespace UnitySkills
             }
             else
             {
-                // Generic: try all params
+                // Generic fallback: try each parameter.
                 TrySet("Damping", damping, "damping");
                 TrySet("CameraRadius", cameraRadius, "camRadius");
             }
@@ -2009,7 +2062,7 @@ namespace UnitySkills
                 else warnings.Add($"Failed to set {label} ({prop})");
             }
 
-            // CM3: ImpulseDefinition is a direct field, CM2: m_ImpulseDefinition
+            // Field name differs by version: CM3 uses ImpulseDefinition, CM2 uses m_ImpulseDefinition.
 #if CINEMACHINE_3
             TrySet("ImpulseDefinition.ImpactRadius", impactRadius, "impactRadius");
             TrySet("ImpulseDefinition.DissipationRate", dissipationRate, "dissipationRate");

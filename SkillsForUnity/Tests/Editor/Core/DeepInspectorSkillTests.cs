@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -6,7 +6,9 @@ using UnityEditor.Events;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Events;
+#if UGUI
 using UnityEngine.UI;
+#endif
 
 namespace UnitySkills.Tests.Core
 {
@@ -120,6 +122,8 @@ namespace UnitySkills.Tests.Core
             Assert.That(copied.Mode, Is.EqualTo(DeepInspectorMode.Advanced));
         }
 
+        // Button comes from the optional package com.unity.ugui; this whole block compiles out when the package is missing, to avoid breaking the whole test assembly build.
+#if UGUI
         [Test]
         public void EventSetListener_ReplacesButtonOnClickPersistentListener()
         {
@@ -149,6 +153,7 @@ namespace UnitySkills.Tests.Core
             var arg = serialized.FindProperty("m_OnClick.m_PersistentCalls.m_Calls.Array.data[0].m_Arguments.m_StringArgument");
             Assert.That(arg.stringValue, Is.EqualTo("payload"));
         }
+#endif
 
         private static void AssertSuccess(object result)
         {

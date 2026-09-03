@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System.IO;
 using System.Linq;
@@ -166,7 +166,7 @@ namespace UnitySkills
         [UnitySkill("scriptableobject_set_batch", "Set multiple fields on a ScriptableObject at once. fields: JSON object {fieldName: value, ...}",
             Category = SkillCategory.ScriptableObject, Operation = SkillOperation.Modify,
             Tags = new[] { "scriptableobject", "set", "batch", "fields" },
-            Outputs = new[] { "fieldsSet" },
+            Outputs = new[] { "fieldsSet", "failed", "results" },
             RequiresInput = new[] { "assetPath" },
             TracksWorkflow = true)]
         public static object ScriptableObjectSetBatch(string assetPath, string fields)
@@ -179,14 +179,34 @@ namespace UnitySkills
             Undo.RecordObject(asset, "Set SO Batch");
             var type = asset.GetType();
             int set = 0;
+            var failedKeys = new System.Collections.Generic.List<string>();
             foreach (var kv in dict)
             {
+                // Same "fields first, then properties" fallback as scriptableobject_set: looking at
+                // fields only would silently skip every public-property target (e.g. Tile.colliderType /
+                // Tile.color, which are auto-properties on Unity's built-in types), leaving fieldsSet
+                // untouched for that key with no indication of which key was skipped or why.
                 var field = type.GetField(kv.Key, BindingFlags.Public | BindingFlags.Instance);
-                if (field != null) { field.SetValue(asset, ComponentSkills.ConvertValue(kv.Value, field.FieldType)); set++; }
+                if (field != null)
+                {
+                    field.SetValue(asset, ComponentSkills.ConvertValue(kv.Value, field.FieldType));
+                    set++;
+                    continue;
+                }
+
+                var prop = type.GetProperty(kv.Key, BindingFlags.Public | BindingFlags.Instance);
+                if (prop != null && prop.CanWrite)
+                {
+                    prop.SetValue(asset, ComponentSkills.ConvertValue(kv.Value, prop.PropertyType));
+                    set++;
+                    continue;
+                }
+
+                failedKeys.Add(kv.Key);
             }
             EditorUtility.SetDirty(asset);
             AssetDatabase.SaveAssets();
-            return new { success = true, fieldsSet = set };
+            return new { success = failedKeys.Count == 0, fieldsSet = set, failed = failedKeys.Count, results = failedKeys.Select(k => new { field = k, error = "Field/property not found or not writable" }).ToArray() };
         }
 
         [UnitySkill("scriptableobject_delete", "Delete a ScriptableObject asset",
@@ -228,7 +248,9 @@ namespace UnitySkills
             Tags = new[] { "scriptableobject", "export", "json", "serialize" },
             Outputs = new[] { "json", "path" },
             RequiresInput = new[] { "assetPath" },
-            ReadOnly = true,
+            // Same shape as scene_dependency_analyze: when savePath is supplied this skill runs
+            // File.WriteAllText, so marking it ReadOnly=true would bypass the surface profile and diff capture.
+            MutatesAssets = true,
             Mode = SkillMode.SemiAuto)]
         public static object ScriptableObjectExportJson(string assetPath, string savePath = null)
         {
@@ -262,8 +284,8 @@ namespace UnitySkills
             }
             if (string.IsNullOrEmpty(data)) return new { error = "No JSON data provided" };
 
-            // EditorJsonUtility.FromJsonOverwrite silently ignores bare field JSON; it expects the
-            // {"MonoBehaviour":{...}} envelope that scriptableobject_export_json produces, so wrap bare objects.
+            // EditorJsonUtility.FromJsonOverwrite silently ignores bare-field JSON; it expects the
+            // {"MonoBehaviour":{...}} wrapper produced by scriptableobject_export_json, so we wrap bare objects here.
             try
             {
                 var root = Newtonsoft.Json.Linq.JToken.Parse(data);

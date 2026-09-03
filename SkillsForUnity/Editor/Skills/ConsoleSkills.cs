@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System.Collections.Generic;
 using System.Linq;
@@ -7,7 +7,7 @@ using Newtonsoft.Json;
 namespace UnitySkills
 {
     /// <summary>
-    /// Console and debug skills.
+    /// Skills related to the Console panel: log reading / capture / export and console toggles.
     /// </summary>
     public static class ConsoleSkills
     {
@@ -15,14 +15,14 @@ namespace UnitySkills
         private static readonly object _logLock = new object();
         private static bool _capturing;
 
-        // Console flag bit masks (match Unity's internal ConsoleWindow flags).
+        // Console flag bitmasks; values match Unity's internal ConsoleWindow flags.
         private const int FlagClearOnPlay = 16;
         private const int FlagCollapse = 32;
         private const int FlagErrorPause = 256;
 
         /// <summary>
-        /// Registers setting getters/setters so console flag changes are truly reversible
-        /// via the workflow undo/redo system. Runs on domain load.
+        /// Registers setting readers/writers so console flag changes can actually be rolled back via workflow undo/redo.
+        /// Runs on domain load.
         /// </summary>
         [InitializeOnLoadMethod]
         private static void RegisterSettingRestorers()
@@ -41,8 +41,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Reads the current state of a console flag, mirroring the write path's primary source
-        /// (the ConsoleWindow s_ConsoleFlags field), with an EditorPrefs fallback.
+        /// Reads the current state of a console flag. The data source matches the write path
+        /// (ConsoleWindow's s_ConsoleFlags field); falls back to EditorPrefs if unavailable.
         /// </summary>
         private static bool GetConsoleFlagValue(int flag, string prefFallbackKey)
         {
@@ -105,7 +105,7 @@ namespace UnitySkills
         {
             if (_capturing)
             {
-                // Capture mode: return buffered logs with timestamps
+                // Capture mode: returns timestamped logs from the buffer.
                 lock (_logLock)
                 {
                     IEnumerable<LogEntry> results = _logs;
@@ -124,7 +124,7 @@ namespace UnitySkills
                 }
             }
 
-            // Direct mode: read existing entries from Unity Console via LogEntries reflection
+            // Direct-read mode: reads existing entries from Unity Console via reflection on LogEntries.
             int targetMask = 0;
             if (type == "All" || type.Contains("Error"))   targetMask |= DebugSkills.ErrorModeMask;
             if (type == "All" || type.Contains("Warning")) targetMask |= DebugSkills.WarningModeMask;
@@ -164,10 +164,12 @@ namespace UnitySkills
         [UnitySkill("console_log", "Write a message to the console",
             Category = SkillCategory.Console, Operation = SkillOperation.Execute,
             Tags = new[] { "console", "log", "debug", "message" },
-            Outputs = new[] { "logged" })]
+            Outputs = new[] { "logged", "warning" })]
         public static object ConsoleLog(string message, string type = "log")
         {
-            switch (type.ToLower())
+            string normalized = type?.ToLower() ?? "log";
+            string warning = null;
+            switch (normalized)
             {
                 case "warning":
                     Debug.LogWarning(message);
@@ -175,11 +177,17 @@ namespace UnitySkills
                 case "error":
                     Debug.LogError(message);
                     break;
+                case "log":
+                    Debug.Log(message);
+                    break;
                 default:
+                    // An unrecognized type (e.g. "Fatal") is still written out as Log on a best-effort basis, but must return a warning:
+                    // silently downgrading would hide a misspelled or made-up value, letting the caller believe the type actually took effect.
+                    warning = $"Unrecognized type '{type}'; valid values are Log, Warning, Error. Logged as Log.";
                     Debug.Log(message);
                     break;
             }
-            return new { success = true, logged = message };
+            return new { success = true, logged = message, warning };
         }
 
         private static void OnLogMessage(string message, string stackTrace, LogType type)
@@ -194,7 +202,7 @@ namespace UnitySkills
                     time = System.DateTime.Now
                 });
 
-                // Keep only last 1000 entries
+                // Keep only the most recent 1000 entries.
                 if (_logs.Count > 1000)
                     _logs.RemoveAt(0);
             }
@@ -231,7 +239,11 @@ namespace UnitySkills
             var dir = System.IO.Path.GetDirectoryName(savePath);
             if (!string.IsNullOrEmpty(dir) && !System.IO.Directory.Exists(dir)) System.IO.Directory.CreateDirectory(dir);
 
-            if (_capturing || _logs.Count > 0)
+            // Only the capture branch reads _logs, so the condition must check only _capturing.
+            // After console_stop_capture, _logs still retains entries from the previous capture round (this is intentional,
+            // so that console_get_logs' branch — which is likewise gated on _capturing — won't see them either).
+            // If this were changed to check _logs.Count > 0, it would forever export that stale snapshot.
+            if (_capturing)
             {
                 lock (_logLock)
                 {
@@ -241,7 +253,7 @@ namespace UnitySkills
                 }
             }
 
-            // Direct mode: read from Unity Console when no capture buffer is available
+            // Direct-read mode: reads Unity Console directly when there's no capture buffer.
             int allMask = DebugSkills.ErrorModeMask | DebugSkills.WarningModeMask | DebugSkills.LogModeMask;
             var entries = DebugSkills.ReadLogEntries(allMask, null, 1000);
             var directLines = entries.Select(e => { dynamic d = e; return $"[{d.type}] {d.message}"; });
@@ -257,7 +269,9 @@ namespace UnitySkills
             Mode = SkillMode.SemiAuto)]
         public static object ConsoleGetStats()
         {
-            if (_capturing || _logs.Count > 0)
+            // Same rule as console_export: after capture stops, _logs is just a leftover snapshot,
+            // the condition must check only _capturing, otherwise it will keep reporting "source: capture".
+            if (_capturing)
             {
                 lock (_logLock)
                 {
@@ -273,7 +287,7 @@ namespace UnitySkills
                 }
             }
 
-            // Direct mode: read from Unity Console
+            // Direct-read mode: reads Unity Console directly.
             int allMask = DebugSkills.ErrorModeMask | DebugSkills.WarningModeMask | DebugSkills.LogModeMask;
             var entries = DebugSkills.ReadLogEntries(allMask, null, 10000);
             int errCount = 0, warnCount = 0, logCount = 0;
@@ -322,7 +336,7 @@ namespace UnitySkills
             var consoleType = System.Type.GetType("UnityEditor.ConsoleWindow, UnityEditor");
             if (consoleType == null) return new { error = "ConsoleWindow not found" };
 
-            // Unity 6+: try SetConsoleFlag method
+            // Unity 6+: prefer the ConsoleWindow.SetConsoleFlag method.
             var setFlagMethod = consoleType.GetMethod("SetConsoleFlag", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Public);
             if (setFlagMethod != null)
             {
@@ -330,7 +344,7 @@ namespace UnitySkills
                 catch { /* fall through */ }
             }
 
-            // Legacy: try s_ConsoleFlags field
+            // Older versions: modify the s_ConsoleFlags field directly.
             var flagField = consoleType.GetField("s_ConsoleFlags", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
             if (flagField != null)
             {
@@ -340,7 +354,7 @@ namespace UnitySkills
                 return new { success = true, setting = name, enabled };
             }
 
-            // Fallback: LogEntries API
+            // Fall back further: the LogEntries API.
             var logEntriesType = System.Type.GetType("UnityEditor.LogEntries, UnityEditor");
             if (logEntriesType != null)
             {
@@ -352,7 +366,7 @@ namespace UnitySkills
                 }
             }
 
-            // Final fallback: EditorPrefs
+            // Last resort: write to EditorPrefs only.
             EditorPrefs.SetBool("UnitySkills_Console_" + name, enabled);
             return new { success = true, setting = name, enabled, note = "Set via EditorPrefs fallback" };
         }

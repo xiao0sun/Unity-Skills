@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System;
 using System.Linq;
@@ -17,20 +17,19 @@ using Unity.Netcode.Transports.UTP;
 namespace UnitySkills
 {
     /// <summary>
-    /// Netcode for GameObjects skills — NetworkManager setup, NetworkObject/NetworkTransform
+    /// Netcode for GameObjects skills: NetworkManager configuration, NetworkObject/NetworkTransform
     /// management, prefab list registration, host/server/client runtime control.
     ///
-    /// Requires com.unity.netcode.gameobjects (2.x). Gracefully degrades when the package is not
-    /// installed (each skill returns a clear NoNetcode() error).
+    /// Depends on com.unity.netcode.gameobjects (2.x). Degrades gracefully when the package is not
+    /// installed (every skill returns an explicit NoNetcode() error).
     ///
-    /// All API calls are anchored to NGO 2.x source (see netcode-design advisory module for the
-    /// contract: lifecycle, ownership, RPC, variables, spawning, scene, transport, pitfalls).
+    /// All API calls follow the NGO 2.x source as ground truth (see the netcode-design advisory
+    /// module for the full contract: lifecycle, ownership, RPC, variables, spawn, scene, transport, pitfalls).
     ///
-    /// NGO 2.5+ features (AttachableBehaviour / AttachableNode / ComponentController) are outside
-    /// the versionDefine range this file compiles against (NETCODE_GAMEOBJECTS covers all of
-    /// [2.0,3.0)), so those types are never referenced at compile time. Presence is probed at
-    /// runtime via reflection instead (see Has25Features()/ResolveXxxType() below) — the same
-    /// optional-sub-feature pattern used by DOTweenReflectionHelper for DOTween Pro.
+    /// NGO 2.5+ features (AttachableBehaviour / AttachableNode / ComponentController) fall outside
+    /// the versionDefine range this file compiles against (NETCODE_GAMEOBJECTS covers the whole
+    /// [2.0,3.0) range), so these types are never referenced at compile time and are instead probed
+    /// via runtime reflection (see Has25Features()/ResolveXxxType() below) — the same optional-subfeature pattern DOTweenReflectionHelper uses for DOTween Pro-only features.
     /// </summary>
     public static class NetcodeSkills
     {
@@ -43,7 +42,7 @@ namespace UnitySkills
 #endif
 
         // ==================================================================================
-        // 1. Setup & Validation (5 skills)
+        // 1. Configuration & validation (5 skills)
         // ==================================================================================
 
         [UnitySkill("netcode_check_setup",
@@ -97,10 +96,6 @@ namespace UnitySkills
                         issues.Add($"PlayerPrefab '{pp.name}' not found in any assigned NetworkPrefabsList.");
                 }
 
-                // Scene-placed NetworkObjects (not yet spawned in edit mode)
-                var netObjects = FindHelper.FindAll<NetworkObject>(includeInactive: true);
-                info["scenePlacedNetworkObjects"] = netObjects.Length;
-
                 if (Application.isPlaying)
                 {
                     info["isListening"] = nm.IsListening;
@@ -109,6 +104,14 @@ namespace UnitySkills
                     info["isClient"] = nm.IsClient;
                 }
             }
+
+            // A NetworkObject placed in the scene (not yet spawned in edit mode) can exist entirely
+            // without any NetworkManager — e.g. a prefab instance dragged in before a NetworkManager was
+            // added. So this cannot live inside the managers.Length > 0 branch above: that would silently
+            // drop the count for a zero-NetworkManager scene instead of reporting it (netcode_list_network_objects
+            // uses the same includeInactive:true call and finds them regardless of whether a NetworkManager exists).
+            var netObjects = FindHelper.FindAll<NetworkObject>(includeInactive: true);
+            info["scenePlacedNetworkObjects"] = netObjects.Length;
 
             info["issueCount"] = issues.Count;
             info["issues"] = issues;
@@ -318,7 +321,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // 2. Transport Configuration (4 skills)
+        // 2. Transport configuration (4 skills)
         // ==================================================================================
 
         [UnitySkill("netcode_set_transport_address",
@@ -448,10 +451,10 @@ namespace UnitySkills
         }
 
         [UnitySkill("netcode_get_transport_info",
-            "Read current UnityTransport connection data and type",
+            "Read current UnityTransport connection data and type. When protocol is RelayUnityTransport (set via netcode_set_relay_server_data), address/port/serverListenAddress are omitted rather than shown, because UnityTransport keeps the active relay allocation in a private field with no public getter — those fields would otherwise still show the stale direct-connect values.",
             Category = SkillCategory.Netcode, Operation = SkillOperation.Query,
-            Tags = new[] { "netcode", "ngo", "transport", "info" },
-            Outputs = new[] { "found", "type", "address", "port", "serverListenAddress" },
+            Tags = new[] { "netcode", "ngo", "transport", "info", "relay" },
+            Outputs = new[] { "found", "type", "isUnityTransport", "protocol", "address", "port", "serverListenAddress", "note" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object GetTransportInfo(string name = null)
@@ -469,11 +472,32 @@ namespace UnitySkills
             {
                 return new { found = true, type = transport.GetType().Name, isUnityTransport = false };
             }
+
+            bool relayActive = utp.Protocol == UnityTransport.ProtocolType.RelayUnityTransport;
+            if (relayActive)
+            {
+                // ConnectionData.Address/Port are direct-connect fields that SetRelayServerData never touches;
+                // after switching to Relay they still hold whatever direct-connect values were configured before
+                // (or UnityTransport's defaults) — reporting them here would read as "current connection" when they are neither current nor in use.
+                return new
+                {
+                    found = true,
+                    type = nameof(UnityTransport),
+                    isUnityTransport = true,
+                    protocol = utp.Protocol.ToString(),
+                    address = (string)null,
+                    port = (int?)null,
+                    serverListenAddress = (string)null,
+                    note = "Protocol is RelayUnityTransport (set via netcode_set_relay_server_data); the direct-connect address/port are not used and UnityTransport exposes no public getter for the active relay allocation, so they are omitted rather than shown stale."
+                };
+            }
+
             return new
             {
                 found = true,
                 type = nameof(UnityTransport),
                 isUnityTransport = true,
+                protocol = utp.Protocol.ToString(),
                 address = utp.ConnectionData.Address,
                 port = (int)utp.ConnectionData.Port,
                 serverListenAddress = utp.ConnectionData.ServerListenAddress
@@ -482,7 +506,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // 3. NetworkObject Management (5 skills)
+        // 3. NetworkObject management (5 skills)
         // ==================================================================================
 
         [UnitySkill("netcode_add_network_object",
@@ -639,6 +663,10 @@ namespace UnitySkills
             Category = SkillCategory.Netcode, Operation = SkillOperation.Query,
             Tags = new[] { "netcode", "ngo", "networkobject", "info" },
             Outputs = new[] { "found", "networkObjectId", "ownerClientId", "isSpawned", "isPlayerObject" },
+            // Each locator parameter is optional on its own, so an empty request body would fall through
+            // to GameObjectFinder and return "GameObject not found." — reporting "no target was ever specified"
+            // as a lookup failure. Only a grouped requirement can state upfront "you didn't specify any object".
+            RequiresInput = new[] { "gameObject" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object GetNetworkObjectInfo(string name = null, int instanceId = 0, string path = null)
@@ -824,6 +852,10 @@ namespace UnitySkills
             Category = SkillCategory.Netcode, Operation = SkillOperation.Query,
             Tags = new[] { "netcode", "ngo", "prefabs", "list" },
             Outputs = new[] { "count", "entries" },
+            // This is not a missing test fixture: when listPath is omitted, the load below fetches the asset
+            // at path "" and replies "NetworkPrefabsList not found at .", which reads like a missing asset
+            // rather than a missing parameter. listPath has no CLR default, so the schema won't auto-mark it required.
+            RequiresInput = new[] { "listPath" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object ListNetworkPrefabs(string listPath)
@@ -1254,7 +1286,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // 6. Scene & Spawning query (3 skills)
+        // 6. Scene & spawn queries (3 skills)
         // ==================================================================================
 
         [UnitySkill("netcode_configure_scene_management",
@@ -1374,7 +1406,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // 7. Runtime Control (5 skills; all MayEnterPlayMode)
+        // 7. Runtime control (5 skills, all flagged MayEnterPlayMode)
         // ==================================================================================
 
         [UnitySkill("netcode_start_host",
@@ -1494,7 +1526,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // 8. NGO 2.5+ Features — Attachable / ComponentController (6 skills)
+        // 8. NGO 2.5+ features — Attachable / ComponentController (6 skills)
         // ==================================================================================
 
         [UnitySkill("netcode_version",
@@ -1667,11 +1699,10 @@ namespace UnitySkills
             object parsedAutoDetach = null;
             if (!string.IsNullOrEmpty(autoDetach))
             {
-                // NGO declares AutoDetachTypes as [Flags] but gives its members the implicit
-                // sequential values 0,1,2,3 instead of powers of two. Combining therefore collides:
-                // OnOwnershipChange|OnDespawn == 1|2 == 3 == OnAttachNodeDestroy, so a comma list
-                // silently writes an unrelated member. Reject it rather than corrupting the field —
-                // one flag per call is the only shape that round-trips on this enum.
+                // NGO declares AutoDetachTypes as [Flags], but its members take implicit sequential values
+                // 0,1,2,3 instead of powers of two, so combinations collide: OnOwnershipChange|OnDespawn == 1|2
+                // == 3 == OnAttachNodeDestroy, and a comma-separated list would silently write an unrelated
+                // member. Reject rather than pollute the field — only one flag at a time round-trips on this enum.
                 if (autoDetach.IndexOf(',') >= 0)
                 {
                     return new
@@ -1831,9 +1862,8 @@ namespace UnitySkills
             if (comp == null)
                 return new { error = $"'{go.name}' has no ComponentController. Use netcode_component_controller_add first." };
 
-            // `Components` is `internal [SerializeField] List<ComponentEntry>` inside ComponentController
-            // (verified against NGO source, PR #3518) — not part of the public API, so every access
-            // below goes through reflection rather than a compile-time reference.
+            // `Components` on ComponentController is internally `internal [SerializeField] List<ComponentEntry>`
+            // (verified against NGO PR #3518), not public API, so every access below uses reflection, not a compile-time reference.
             var componentsField = ccType.GetField("Components", BindingFlags.NonPublic | BindingFlags.Instance);
             var entryType = ccType.GetNestedType("ComponentEntry", BindingFlags.NonPublic);
             if (componentsField == null || entryType == null)
@@ -1841,8 +1871,8 @@ namespace UnitySkills
 
             try
             {
-                // Record before any reflection mutation below (list contents + StartEnabled), matching
-                // the Undo.RecordObject-before-write convention used by every other netcode_configure_* skill.
+                // Must be recorded before any reflection-based mutation below (list contents + StartEnabled),
+                // consistent with every netcode_configure_* skill's "Undo.RecordObject first, then write" convention.
                 Undo.RecordObject(comp, "Configure ComponentController");
 
                 var currentList = componentsField.GetValue(comp) as IList;
@@ -1875,10 +1905,9 @@ namespace UnitySkills
                 if (startEnabled.HasValue)
                     startEnabledField.SetValue(comp, startEnabled.Value);
 
-                // Mirror the Inspector's own drag-and-drop expansion: OnValidate() strips whole-GameObject
-                // entries and replaces them with every eligible child component, skipping
-                // NetworkBehaviour/NetworkObject/NetworkManager. Invoking it here keeps this skill's
-                // result identical to what a human would get dragging the same GameObjects onto the field.
+                // Reproduces the Inspector's own drag-and-drop expansion logic: OnValidate() strips whole-GameObject
+                // entries and replaces them with every eligible child component underneath, skipping
+                // NetworkBehaviour/NetworkObject/NetworkManager. Calling it here matches a human dragging the same GameObject onto this field.
                 var onValidate = ccType.GetMethod("OnValidate", BindingFlags.NonPublic | BindingFlags.Instance);
                 try { onValidate?.Invoke(comp, null); }
                 catch (Exception ex) { SkillsLogger.LogWarning($"[netcode_component_controller_configure] OnValidate reflection call failed: {ex.Message}"); }
@@ -1936,13 +1965,12 @@ namespace UnitySkills
         }
 
         // ---- NGO 2.5+ reflection gate (AttachableBehaviour / AttachableNode / ComponentController) ----
-        // These types live inside the same [2.0,3.0) versionDefine window as the rest of the file
-        // (NETCODE_GAMEOBJECTS), so there is no dedicated compile-time symbol for "2.5+" to branch
-        // on without editing the asmdef's versionDefines. Detecting them by type-name lookup instead
-        // means every skill above degrades to No25Features() on NGO 2.0–2.4.x instead of failing to
-        // compile — the same tradeoff DOTweenReflectionHelper makes for DOTween Pro-only features.
+        // These types sit in the same [2.0,3.0) versionDefine window (NETCODE_GAMEOBJECTS) as the rest
+        // of this file, so without editing the asmdef's versionDefines there is no compile-time symbol
+        // exclusive to "2.5+" to branch on. Looking types up by name instead means every skill above
+        // degrades to No25Features() on NGO 2.0–2.4.x rather than failing to compile — the same tradeoff DOTweenReflectionHelper makes for DOTween Pro-only features.
         private const string AttachableBehaviourTypeName = "Unity.Netcode.Components.AttachableBehaviour";
-        private const string AttachableNodeTypeName = "AttachableNode"; // NGO ships this one in the global namespace
+        private const string AttachableNodeTypeName = "AttachableNode"; // NGO puts this type in the global namespace
         private const string ComponentControllerTypeName = "Unity.Netcode.Components.ComponentController";
 
         private static Type ResolveAttachableBehaviourType() => SkillsCommon.FindTypeByName(AttachableBehaviourTypeName);
@@ -1969,12 +1997,12 @@ namespace UnitySkills
                 if (member is FieldInfo f) return f.GetValue(instance);
                 if (member is PropertyInfo p) return p.GetValue(instance);
             }
-            catch { /* tolerate cross-version layout drift */ }
+            catch { /* tolerate field-layout drift across versions */ }
             return null;
         }
 #endif
 
-        /// <summary>Strips a pre-release/build suffix (e.g. "2.5.0-pre.1" -&gt; "2.5.0") so System.Version can parse it.</summary>
+        /// <summary>Strips prerelease/build suffixes (e.g. "2.5.0-pre.1" -&gt; "2.5.0") so System.Version can parse it.</summary>
         private static string StripPrereleaseSuffix(string version)
         {
             if (string.IsNullOrEmpty(version)) return null;

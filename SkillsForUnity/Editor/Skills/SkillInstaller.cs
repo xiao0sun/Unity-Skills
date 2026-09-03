@@ -1,38 +1,72 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 
 namespace UnitySkills
 {
     /// <summary>
-    /// One-click skill installer for mainstream AI IDEs: Claude Code, Antigravity, Codex, Cursor, and OpenCode.
+    /// One-click skill installer for mainstream AI IDEs: Claude Code, Antigravity, Codex, Cursor, OpenCode, Kimi Code.
     /// </summary>
     public static class SkillInstaller
     {
-        // Claude Code paths - Claude supports any folder name
+        // Claude Code path: Claude accepts any folder name
         public static string ClaudeProjectPath => Path.Combine(Application.dataPath, "..", ".claude", "skills", "unity-skills");
         public static string ClaudeGlobalPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "skills", "unity-skills");
 
-        // Antigravity paths - https://antigravity.google/docs/skills
-        // Workspace shared with Codex via .agents/skills (open Agent Skills standard)
+        // Antigravity path - https://antigravity.google/docs/skills
+        // The workspace path is shared with Codex via .agents/skills (the open Agent Skills standard)
         public static string AntigravityProjectPath => Path.Combine(Application.dataPath, "..", ".agents", "skills", "unity-skills");
         public static string AntigravityGlobalPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gemini", "antigravity", "skills", "unity-skills");
 
-        // Codex paths - https://developers.openai.com/codex/skills
-        // Workspace shared with Antigravity via .agents/skills (open Agent Skills standard)
+        // Codex path - https://developers.openai.com/codex/skills
+        // The workspace path is shared with Antigravity via .agents/skills (the open Agent Skills standard)
         public static string CodexProjectPath => Path.Combine(Application.dataPath, "..", ".agents", "skills", "unity-skills");
         public static string CodexGlobalPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".agents", "skills", "unity-skills");
 
-        // Cursor paths - https://cursor.com/docs/context/skills
+        // Cursor path - https://cursor.com/docs/context/skills
         public static string CursorProjectPath => Path.Combine(Application.dataPath, "..", ".cursor", "skills", "unity-skills");
         public static string CursorGlobalPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cursor", "skills", "unity-skills");
 
-        // OpenCode paths - https://opencode.ai/docs/skills
-        // Workspace shared via .agents/skills (open Agent Skills standard)
+        // OpenCode path - https://opencode.ai/docs/skills
+        // The workspace path is shared via .agents/skills (the open Agent Skills standard)
         public static string OpenCodeProjectPath => Path.Combine(Application.dataPath, "..", ".opencode", "skills", "unity-skills");
         public static string OpenCodeGlobalPath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".config", "opencode", "skills", "unity-skills");
+
+        // Kimi Code path - https://www.kimi.com/code/docs/kimi-code-cli/customization/skills.html
+        // Kimi Code CLI scans four scopes; this points only at its own dedicated directory (not the
+        // .agents/skills shared with Codex/Antigravity), so each tool's install state and uninstall
+        // stay independent of each other. A global Codex copy installed under ~/.agents/skills will still be picked up incidentally by Kimi Code.
+        // The user-level root takes this value if the Editor inherits KIMI_CODE_HOME, otherwise ~/.kimi-code.
+        public static string KimiCodeProjectPath => Path.Combine(Application.dataPath, "..", ".kimi-code", "skills", "unity-skills");
+        public static string KimiCodeGlobalPath => Path.Combine(KimiCodeHome, "skills", "unity-skills");
+
+        /// <summary>
+        /// Resolves $KIMI_CODE_HOME (default ~/.kimi-code). Only visible when Unity was launched
+        /// from a shell that exported this variable; otherwise falls back to the documented default.
+        /// </summary>
+        private static string KimiCodeHome
+        {
+            get
+            {
+                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                var configured = Environment.GetEnvironmentVariable("KIMI_CODE_HOME");
+                if (string.IsNullOrWhiteSpace(configured))
+                    return Path.Combine(home, ".kimi-code");
+
+                configured = configured.Trim();
+                // A shell doesn't expand a leading "~" when it's inside quotes, so it's handled here manually,
+                // otherwise a directory literally named "~" would get created next to the project.
+                if (configured == "~")
+                    return home;
+                if (configured.StartsWith("~/", StringComparison.Ordinal) || configured.StartsWith("~\\", StringComparison.Ordinal))
+                    return Path.Combine(home, configured.Substring(2));
+
+                return configured;
+            }
+        }
 
         public static bool IsClaudeProjectInstalled => Directory.Exists(ClaudeProjectPath) && File.Exists(Path.Combine(ClaudeProjectPath, "SKILL.md"));
         public static bool IsClaudeGlobalInstalled => Directory.Exists(ClaudeGlobalPath) && File.Exists(Path.Combine(ClaudeGlobalPath, "SKILL.md"));
@@ -44,6 +78,8 @@ namespace UnitySkills
         public static bool IsCursorGlobalInstalled => Directory.Exists(CursorGlobalPath) && File.Exists(Path.Combine(CursorGlobalPath, "SKILL.md"));
         public static bool IsOpenCodeProjectInstalled => Directory.Exists(OpenCodeProjectPath) && File.Exists(Path.Combine(OpenCodeProjectPath, "SKILL.md"));
         public static bool IsOpenCodeGlobalInstalled => Directory.Exists(OpenCodeGlobalPath) && File.Exists(Path.Combine(OpenCodeGlobalPath, "SKILL.md"));
+        public static bool IsKimiCodeProjectInstalled => Directory.Exists(KimiCodeProjectPath) && File.Exists(Path.Combine(KimiCodeProjectPath, "SKILL.md"));
+        public static bool IsKimiCodeGlobalInstalled => Directory.Exists(KimiCodeGlobalPath) && File.Exists(Path.Combine(KimiCodeGlobalPath, "SKILL.md"));
 
         public static (bool success, string message) InstallClaude(bool global)
         {
@@ -175,6 +211,76 @@ namespace UnitySkills
             }
         }
 
+        public static (bool success, string message) InstallKimiCode(bool global)
+        {
+            try
+            {
+                var targetPath = global ? KimiCodeGlobalPath : KimiCodeProjectPath;
+                return InstallSkill(targetPath, "Kimi Code", "KimiCode");
+            }
+            catch (Exception ex)
+            {
+                return (false, ex.Message);
+            }
+        }
+
+        public static (bool success, string message) UninstallKimiCode(bool global)
+        {
+            try
+            {
+                var targetPath = global ? KimiCodeGlobalPath : KimiCodeProjectPath;
+                return UninstallSkill(targetPath, "Kimi Code");
+            }
+            catch (Exception ex)
+            {
+                return (false, ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Runtime description of an install target (tool x scope). The panel and the auto-sync
+        /// share this single detect/install entry point, avoiding two separate copies of the copy logic drifting apart.
+        /// </summary>
+        public sealed class InstallTarget
+        {
+            public string DisplayName;
+            public string Path;
+            public Func<bool> IsInstalled;
+            public Func<(bool success, string message)> Install;
+        }
+
+        /// <summary>
+        /// Enumerates all built-in install targets (6 tools x project/global scope).
+        /// Note that Codex and Antigravity's project-level paths are both .agents/skills (a shared directory per the open standard); callers that need to de-duplicate by path
+        /// must handle that themselves.
+        /// </summary>
+        public static IEnumerable<InstallTarget> EnumerateTargets()
+        {
+            yield return MakeTarget("Claude Code (Project)", ClaudeProjectPath, () => IsClaudeProjectInstalled, () => InstallClaude(false));
+            yield return MakeTarget("Claude Code (Global)", ClaudeGlobalPath, () => IsClaudeGlobalInstalled, () => InstallClaude(true));
+            yield return MakeTarget("Codex (Project)", CodexProjectPath, () => IsCodexProjectInstalled, () => InstallCodex(false));
+            yield return MakeTarget("Codex (Global)", CodexGlobalPath, () => IsCodexGlobalInstalled, () => InstallCodex(true));
+            yield return MakeTarget("Antigravity (Project)", AntigravityProjectPath, () => IsAntigravityProjectInstalled, () => InstallAntigravity(false));
+            yield return MakeTarget("Antigravity (Global)", AntigravityGlobalPath, () => IsAntigravityGlobalInstalled, () => InstallAntigravity(true));
+            yield return MakeTarget("Cursor (Project)", CursorProjectPath, () => IsCursorProjectInstalled, () => InstallCursor(false));
+            yield return MakeTarget("Cursor (Global)", CursorGlobalPath, () => IsCursorGlobalInstalled, () => InstallCursor(true));
+            yield return MakeTarget("OpenCode (Project)", OpenCodeProjectPath, () => IsOpenCodeProjectInstalled, () => InstallOpenCode(false));
+            yield return MakeTarget("OpenCode (Global)", OpenCodeGlobalPath, () => IsOpenCodeGlobalInstalled, () => InstallOpenCode(true));
+            yield return MakeTarget("Kimi Code (Project)", KimiCodeProjectPath, () => IsKimiCodeProjectInstalled, () => InstallKimiCode(false));
+            yield return MakeTarget("Kimi Code (Global)", KimiCodeGlobalPath, () => IsKimiCodeGlobalInstalled, () => InstallKimiCode(true));
+        }
+
+        private static InstallTarget MakeTarget(string displayName, string path, Func<bool> isInstalled, Func<(bool, string)> install)
+        {
+            return new InstallTarget
+            {
+                DisplayName = displayName,
+                Path = path,
+                IsInstalled = isInstalled,
+                Install = install
+            };
+        }
+
         public static (bool success, string message) InstallCustom(string path, string agentName = "Custom")
         {
             try
@@ -205,11 +311,11 @@ namespace UnitySkills
             if (!Directory.Exists(targetPath))
                 Directory.CreateDirectory(targetPath);
 
-            // Use UTF-8 WITHOUT BOM: some agents reject YAML frontmatter when a BOM (EF BB BF) precedes the leading `---`.
+            // Must use UTF-8 without BOM: if a BOM (EF BB BF) appears before the leading `---`, some agents refuse to parse the YAML frontmatter.
             var utf8NoBom = SkillsCommon.Utf8NoBom;
             CopyTemplateDirectory(GetSkillTemplateRoot(), targetPath, utf8NoBom);
 
-            // Write agent config for automatic agent identification
+            // Write agent config for automatic agent identity detection
             var scriptsPath = Path.Combine(targetPath, "scripts");
             if (!Directory.Exists(scriptsPath))
                 Directory.CreateDirectory(scriptsPath);
@@ -224,12 +330,12 @@ namespace UnitySkills
         {
             string templateRoot;
 
-            // 1. Try project root (development / local clone)
+            // 1. Project root (development / local clone)
             templateRoot = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "unity-skills"));
             if (Directory.Exists(templateRoot))
                 return templateRoot;
 
-            // 2. Try inside UPM package (unity-skills~ is a tilde-hidden dir bundled with the package)
+            // 2. Inside the UPM package (unity-skills~ is the tilde hidden directory shipped with the package)
             string resolvedPath = null;
             var packageInfo = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(SkillInstaller).Assembly);
             if (packageInfo != null)
@@ -244,17 +350,17 @@ namespace UnitySkills
 
             if (!string.IsNullOrEmpty(resolvedPath))
             {
-                // Tilde-hidden directory bundled inside the package
+                // Tilde hidden directory inside the package
                 templateRoot = Path.GetFullPath(Path.Combine(resolvedPath, "unity-skills~"));
                 if (Directory.Exists(templateRoot))
                     return templateRoot;
 
-                // Sibling of package root (git ?path= full repo clone)
+                // Sibling of the package root (the case of a full-repo clone via git ?path=)
                 templateRoot = Path.GetFullPath(Path.Combine(resolvedPath, "..", "unity-skills"));
                 if (Directory.Exists(templateRoot))
                     return templateRoot;
 
-                // Child of package root
+                // Subdirectory of the package root
                 templateRoot = Path.GetFullPath(Path.Combine(resolvedPath, "unity-skills"));
                 if (Directory.Exists(templateRoot))
                     return templateRoot;

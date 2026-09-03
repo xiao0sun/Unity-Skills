@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System;
 using System.Collections.Generic;
@@ -9,12 +9,12 @@ using Newtonsoft.Json.Linq;
 namespace UnitySkills
 {
     /// <summary>
-    /// Workflow Skills - Bookmarks, history, undo management.
-    /// Designed to help AI agents navigate and manage work sessions.
+    /// Workflow skills -- bookmarks, history, and undo management.
+    /// Aimed at helping an AI agent navigate and manage a work session.
     /// </summary>
     public static class WorkflowSkills
     {
-        // In-memory bookmark storage (persists until domain reload)
+        // Bookmarks are kept in memory; a domain reload invalidates them
         private static Dictionary<string, BookmarkData> _bookmarks = new Dictionary<string, BookmarkData>();
 
         private class BookmarkData
@@ -45,7 +45,7 @@ namespace UnitySkills
                 createdAt = System.DateTime.Now
             };
 
-            // Try to capture Scene View camera position
+            // Try to record the Scene View camera position
             var sceneView = SceneView.lastActiveSceneView;
             if (sceneView != null)
             {
@@ -76,7 +76,7 @@ namespace UnitySkills
             if (!_bookmarks.TryGetValue(bookmarkName, out var bookmark))
                 return new { success = false, error = $"Bookmark '{bookmarkName}' not found" };
 
-            // Restore selection. Prefer Unity 6000.5-safe EntityIds; legacy instanceIds are kept for older bookmarks.
+            // Restore the selection set. Prefer the Unity 6000.5-safe EntityId; instanceId is kept only for compatibility with older bookmarks.
             var validEntityIds = (bookmark.selectedEntityIds ?? Array.Empty<string>())
                 .Where(id => UnityObjectIdUtility.EntityIdToObject(id) != null)
                 .ToArray();
@@ -92,7 +92,7 @@ namespace UnitySkills
                 UnityObjectIdUtility.SetSelectionObjectIds(validIds);
             }
 
-            // Restore scene view
+            // Restore the Scene View perspective
             if (bookmark.sceneViewPosition.HasValue)
             {
                 var sceneView = SceneView.lastActiveSceneView;
@@ -156,7 +156,8 @@ namespace UnitySkills
         [UnitySkill("history_undo", "Undo the last operation (or multiple steps)",
             Category = SkillCategory.Workflow, Operation = SkillOperation.Execute,
             Tags = new[] { "undo", "history", "revert" },
-            Outputs = new[] { "undoneSteps" })]
+            Outputs = new[] { "undoneSteps" },
+            MutatesScene = true)]
         public static object HistoryUndo(int steps = 1)
         {
             if (steps < 1)
@@ -174,7 +175,8 @@ namespace UnitySkills
         [UnitySkill("history_redo", "Redo the last undone operation (or multiple steps)",
             Category = SkillCategory.Workflow, Operation = SkillOperation.Execute,
             Tags = new[] { "redo", "history", "restore" },
-            Outputs = new[] { "redoneSteps" })]
+            Outputs = new[] { "redoneSteps" },
+            MutatesScene = true)]
         public static object HistoryRedo(int steps = 1)
         {
             if (steps < 1)
@@ -205,7 +207,7 @@ namespace UnitySkills
             };
         }
 
-        // --- Persistent Workflow Skills ---
+        // --- Persistent workflow skills ---
 
         [UnitySkill("workflow_task_start", "Start a new persistent workflow task to track changes for undo. Call workflow_task_end when done.",
             Category = SkillCategory.Workflow, Operation = SkillOperation.Execute,
@@ -286,7 +288,7 @@ namespace UnitySkills
                 description = t.description,
                 time = t.GetFormattedTime(),
                 changes = t.snapshots.Count
-            }).ToList<object>(); // Cast to object list for JSON serializability
+            }).ToList<object>(); // Converted to an object list for JSON serialization
 
             return new { success = true, count = list.Count, history = list };
         }
@@ -295,9 +297,17 @@ namespace UnitySkills
             Category = SkillCategory.Workflow, Operation = SkillOperation.Execute,
             Tags = new[] { "undo", "task", "revert", "restore" },
             Outputs = new[] { "success", "taskId", "total", "succeeded", "failed", "details", "error" },
-            RequiresInput = new[] { "taskId" })]
+            RequiresInput = new[] { "taskId" },
+            // Restoring a snapshot rewrites everything that task touched: scene objects, and --
+            // via UndoMovedSnapshot / RedoDeletedSnapshot / RestoreModifiedSnapshot -- project assets.
+            MutatesScene = true, MutatesAssets = true)]
         public static object WorkflowUndoTask(string taskId)
         {
+            var withdrawn = SurfaceRejectionForTasks("workflow_undo_task", "restoring this task's snapshots",
+                WorkflowManager.History.tasks.Where(t => t.id == taskId));
+            if (withdrawn != null)
+                return withdrawn;
+
             var result = WorkflowManager.UndoTask(taskId);
             return new
             {
@@ -314,10 +324,11 @@ namespace UnitySkills
         [UnitySkill("workflow_redo_task", "Redo a previously undone task (restore changes)",
             Category = SkillCategory.Workflow, Operation = SkillOperation.Execute,
             Tags = new[] { "redo", "task", "restore", "changes" },
-            Outputs = new[] { "success", "taskId", "total", "succeeded", "failed", "details", "error" })]
+            Outputs = new[] { "success", "taskId", "total", "succeeded", "failed", "details", "error" },
+            MutatesScene = true, MutatesAssets = true)]
         public static object WorkflowRedoTask(string taskId = null)
         {
-            // If no taskId provided, redo the most recent undone task
+            // When taskId isn't given, redo the most recently undone task
             if (string.IsNullOrEmpty(taskId))
             {
                 var undoneStack = WorkflowManager.GetUndoneStack();
@@ -325,6 +336,11 @@ namespace UnitySkills
                     return new { success = false, error = "No undone tasks to redo" };
                 taskId = undoneStack[undoneStack.Count - 1].id;
             }
+
+            var withdrawn = SurfaceRejectionForTasks("workflow_redo_task", "re-applying this task's snapshots",
+                WorkflowManager.GetUndoneStack().Where(t => t.id == taskId));
+            if (withdrawn != null)
+                return withdrawn;
 
             var result = WorkflowManager.RedoTask(taskId);
             return new
@@ -364,9 +380,17 @@ namespace UnitySkills
             Category = SkillCategory.Workflow, Operation = SkillOperation.Execute,
             Tags = new[] { "undo", "task", "revert", "deprecated" },
             Outputs = new[] { "taskId" },
-            RequiresInput = new[] { "taskId" })]
+            RequiresInput = new[] { "taskId" },
+            MutatesScene = true, MutatesAssets = true)]
         public static object WorkflowRevertTask(string taskId)
         {
+            // Query using this skill's own name rather than handing it off to the delegate: the agent called workflow_revert_task, but if the rejection message shows
+            // workflow_undo_task instead, it reads like "the alias is fine, the target is the problem," which would only bait a pointless retry.
+            var withdrawn = SurfaceRejectionForTasks("workflow_revert_task", "restoring this task's snapshots",
+                WorkflowManager.History.tasks.Where(t => t.id == taskId));
+            if (withdrawn != null)
+                return withdrawn;
+
             return WorkflowUndoTask(taskId);
         }
 
@@ -448,7 +472,7 @@ namespace UnitySkills
             };
         }
 
-        // --- Session Management (Conversation-Level Undo) ---
+        // --- Session management (conversation-level undo) ---
 
         [UnitySkill("workflow_session_start", "Start a new session (conversation-level). All changes will be tracked and can be undone together.",
             Category = SkillCategory.Workflow, Operation = SkillOperation.Execute,
@@ -487,10 +511,11 @@ namespace UnitySkills
         [UnitySkill("workflow_session_undo", "Undo all changes made during a specific session (conversation-level undo)",
             Category = SkillCategory.Workflow, Operation = SkillOperation.Execute,
             Tags = new[] { "session", "undo", "conversation", "revert" },
-            Outputs = new[] { "success", "sessionId", "total", "succeeded", "failed", "details", "error", "message" })]
+            Outputs = new[] { "success", "sessionId", "total", "succeeded", "failed", "details", "error", "message" },
+            MutatesScene = true, MutatesAssets = true)]
         public static object WorkflowSessionUndo(string sessionId = null)
         {
-            // If no sessionId provided, try to get the most recent session
+            // When sessionId isn't given, take the most recent session
             if (string.IsNullOrEmpty(sessionId))
             {
                 var sessions = WorkflowManager.GetSessions();
@@ -498,6 +523,11 @@ namespace UnitySkills
                     return new { success = false, error = "No sessions found in history" };
                 sessionId = sessions[0].sessionId;
             }
+
+            var withdrawn = SurfaceRejectionForTasks("workflow_session_undo", "restoring this session's snapshots",
+                WorkflowManager.History.tasks.Where(t => t.sessionId == sessionId));
+            if (withdrawn != null)
+                return withdrawn;
 
             var result = WorkflowManager.UndoSession(sessionId);
             return new
@@ -618,7 +648,7 @@ namespace UnitySkills
                 var planJson = SkillRouter.Plan(skillName, paramsObj.ToString());
                 var planResult = JObject.Parse(planJson);
 
-                // Extract risk level from plan
+                // Pull the risk level out of the plan
                 var stepRisk = planResult.SelectToken("skill.riskLevel")?.ToString()
                                ?? planResult.SelectToken("impact.riskLevel")?.ToString()
                                ?? "low";
@@ -628,7 +658,7 @@ namespace UnitySkills
                 if (planResult["serverAvailability"] != null)
                     mayDisconnect = true;
 
-                // Detect dependencies: if this step uses a name that a previous step creates
+                // Dependency detection: was the name this step uses created by an earlier step
                 var targetName = GetTargetFromPlan(planResult);
                 if (!string.IsNullOrEmpty(targetName) && createdNames.Contains(targetName))
                 {
@@ -640,10 +670,10 @@ namespace UnitySkills
                     });
                 }
 
-                // Track created names for dependency detection
+                // Record already-created names, for use by dependency detection
                 TrackCreatedNames(planResult, createdNames);
 
-                // Collect warnings from individual plan
+                // Aggregate warnings from each individual step's plan
                 if (planResult["validation"] is JObject valJObj)
                 {
                     var warnings = valJObj["warnings"] as JArray;
@@ -675,6 +705,84 @@ namespace UnitySkills
             };
 
             return result;
+        }
+
+        /// <summary>
+        /// Returns a SURFACE_EXCLUDED payload when restoring these tasks would write into a category
+        /// the current tier has withdrawn; returns null when every snapshot is allowed, and is always null under the full tier.
+        ///
+        /// Undo/redo's write action is hidden inside the recorded snapshot rather than in this module's
+        /// metadata, so the snapshot itself must be consulted about the tier. Rejection is all-or-nothing rather than per-snapshot: to a user asking for a rollback, a task is
+        /// a single operation, and a half-restored task would leave a state neither side asked for.
+        ///
+        /// An empty task set doesn't count as a rejection -- that id might simply not exist, and
+        /// answering "withdrawn" for a nonexistent task would hide a plain typo behind the policy wall.
+        /// </summary>
+        private static object SurfaceRejectionForTasks(
+            string skillName, string subject, IEnumerable<WorkflowTask> tasks)
+        {
+            if (SkillsSurfaceProfile.IsFull || tasks == null)
+                return null;
+
+            foreach (var task in tasks)
+            {
+                if (task?.snapshots == null) continue;
+
+                foreach (var snapshot in task.snapshots)
+                {
+                    if (!TryClassifySnapshot(snapshot, out var category, out var operation)) continue;
+                    if (!SkillsSurfaceProfile.WithdrawsWriteIn(category)) continue;
+
+                    return SkillsSurfaceProfile.CarriedWriteRejection(skillName, category, subject, operation);
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Determines which category of write restoring a given snapshot would cause. Returns
+        /// false if that restoration isn't withdrawn by any tier -- which is the common case, and exactly why this classification is worth doing.
+        ///
+        /// An empty <c>assetPath</c> is the criterion for "this originally lived in the scene":
+        /// WorkflowManager fills this field via AssetDatabase.GetAssetPath, so scene objects get an empty string while everything else gets a project path. Setting-type snapshots have
+        /// neither, so they're classified first -- they restore editor/project settings, not scene content.
+        ///
+        /// Asset restoration is classified by extension, and only for the few kinds a tier actually withdraws: .unity is the scene itself, .mat belongs to material authoring.
+        /// Everything else -- scripts, prefabs, textures, ScriptableObjects -- is deliberately left available: these are exactly the writes the guide tier leaves for the AI, and
+        /// withdrawing their undo too would pull the safety net out from under work it still permits.
+        /// </summary>
+        private static bool TryClassifySnapshot(
+            Internal.ObjectSnapshot snapshot, out SkillCategory category, out string operation)
+        {
+            category = default;
+            operation = null;
+            if (snapshot == null || snapshot.type == SnapshotType.Setting)
+                return false;
+
+            if (string.IsNullOrEmpty(snapshot.assetPath))
+            {
+                category = SkillCategory.GameObject;
+                operation = "scene_object_snapshot";
+                return true;
+            }
+
+            var extension = System.IO.Path.GetExtension(snapshot.assetPath);
+            if (string.Equals(extension, ".unity", StringComparison.OrdinalIgnoreCase))
+            {
+                category = SkillCategory.Scene;
+                operation = "scene_asset_snapshot";
+                return true;
+            }
+
+            if (string.Equals(extension, ".mat", StringComparison.OrdinalIgnoreCase))
+            {
+                category = SkillCategory.Material;
+                operation = "material_asset_snapshot";
+                return true;
+            }
+
+            return false;
         }
 
         private static string MaxRisk(string a, string b)

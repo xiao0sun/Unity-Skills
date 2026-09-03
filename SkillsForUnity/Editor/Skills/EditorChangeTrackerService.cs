@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -12,10 +12,9 @@ using UnityEngine.SceneManagement;
 namespace UnitySkills
 {
     /// <summary>
-    /// Persistent, bounded editor-change journal used by editor_get_changes. It observes scene
-    /// structure, serialized properties and imported files continuously, without a recording
-    /// session. Entries live under Library so they survive domain reloads but never enter source
-    /// control or the user's Assets folder.
+    /// The persisted, bounded editor-change log behind editor_get_changes. It continuously observes scene structure,
+    /// serialized properties, and imported files, with no need to start a recording session. Entries are stored under Library:
+    /// that lets them survive domain reloads while staying out of version control and the user's Assets folder.
     /// </summary>
     [InitializeOnLoad]
     public static class EditorChangeTrackerService
@@ -78,7 +77,7 @@ namespace UnitySkills
             }
         }
 
-        /// <summary>Marks changes caused by a REST skill so callers can filter them from manual edits.</summary>
+        /// <summary>Marks changes triggered by a REST skill, so callers can distinguish them from manual edits.</summary>
         public static void BeginRestExecution() => _restDepth++;
 
         public static void EndRestExecution()

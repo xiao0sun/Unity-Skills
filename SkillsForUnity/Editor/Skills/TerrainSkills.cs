@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System.Linq;
 using System.Collections.Generic;
@@ -6,7 +6,7 @@ using System.Collections.Generic;
 namespace UnitySkills
 {
     /// <summary>
-    /// Terrain skills - create, modify, and query terrain data.
+    /// Terrain skills — create, modify, and query TerrainData.
     /// </summary>
     public static class TerrainSkills
     {
@@ -162,8 +162,11 @@ namespace UnitySkills
         [UnitySkill("terrain_set_heights_batch", "Set terrain heights in a rectangular region. Heights is a 2D array [z][x] with values 0-1.", TracksWorkflow = true,
             Category = SkillCategory.Terrain, Operation = SkillOperation.Modify,
             Tags = new[] { "terrain", "height", "batch", "heightmap", "region" },
-            Outputs = new[] { "success", "modifiedWidth", "modifiedLength", "totalPointsModified" },
-            RequiresInput = new[] { "terrain" })]
+            Outputs = new[] { "success", "startX", "startZ", "modifiedWidth", "modifiedLength", "totalPointsModified" },
+            RequiresInput = new[] { "terrain" },
+            // SetHeights writes to the TerrainData asset (created by terrain_create via AssetDatabase.CreateAsset);
+            // the scene's Terrain component is unaffected.
+            MutatesAssets = true)]
         public static object TerrainSetHeightsBatch(
             int startX, int startZ,
             float[][] heights,
@@ -238,7 +241,6 @@ namespace UnitySkills
             int centerZ = Mathf.RoundToInt(normalizedZ * (resolution - 1));
             int radiusPixels = Mathf.Max(1, Mathf.RoundToInt(radius * resolution));
 
-            // Calculate affected area
             int startX = Mathf.Max(0, centerX - radiusPixels);
             int startZ = Mathf.Max(0, centerZ - radiusPixels);
             int endX = Mathf.Min(resolution - 1, centerX + radiusPixels);
@@ -249,7 +251,7 @@ namespace UnitySkills
 
             float[,] heights = data.GetHeights(startX, startZ, width, length);
 
-            // Add hill with smooth falloff
+            // Add a hill with a smooth falloff
             for (int z = 0; z < length; z++)
             {
                 for (int x = 0; x < width; x++)
@@ -257,14 +259,13 @@ namespace UnitySkills
                     int worldX = startX + x;
                     int worldZ = startZ + z;
 
-                    // Calculate distance from center
                     float dx = (worldX - centerX) / (float)radiusPixels;
                     float dz = (worldZ - centerZ) / (float)radiusPixels;
                     float distance = Mathf.Sqrt(dx * dx + dz * dz);
 
                     if (distance <= 1f)
                     {
-                        // Smooth falloff using cosine interpolation
+                        // Smooth falloff via cosine interpolation
                         float falloff = Mathf.Pow(Mathf.Cos(distance * Mathf.PI * 0.5f), smoothness);
                         float addHeight = height * falloff;
                         heights[z, x] = Mathf.Clamp01(heights[z, x] + addHeight);
@@ -310,7 +311,7 @@ namespace UnitySkills
             int resolution = data.heightmapResolution;
             float[,] heights = new float[resolution, resolution];
 
-            // Use seed for reproducible results
+            // Seed keeps the result reproducible
             System.Random random = seed != 0 ? new System.Random(seed) : new System.Random();
             float offsetX = random.Next(-10000, 10000);
             float offsetZ = random.Next(-10000, 10000);
@@ -323,7 +324,7 @@ namespace UnitySkills
                     float frequency = 1f;
                     float noiseHeight = 0f;
 
-                    // Generate multiple octaves of Perlin noise
+                    // Stack multiple octaves of Perlin noise
                     for (int i = 0; i < octaves; i++)
                     {
                         float sampleX = (x / (float)resolution * scale + offsetX) * frequency;
@@ -396,7 +397,7 @@ namespace UnitySkills
                 {
                     for (int x = 0; x < width; x++)
                     {
-                        // Average with 8 neighbors
+                        // Average with the surrounding 8-neighborhood
                         float sum = 0f;
                         for (int dz = 0; dz <= 2; dz++)
                         {
@@ -533,12 +534,12 @@ namespace UnitySkills
             {
                 for (int x = 0; x < width; x++)
                 {
-                    // Apply brush with falloff
+                    // Apply the brush with falloff
                     float dist = Vector2.Distance(new Vector2(x, z), new Vector2(width / 2f, height / 2f));
                     float falloff = Mathf.Clamp01(1f - dist / halfBrush);
                     float paintStrength = strength * falloff;
 
-                    // Reduce other layers and increase target layer
+                    // Reduce other layers' weight, raise the target layer's
                     for (int l = 0; l < layerCount; l++)
                     {
                         if (l == layerIndex)
@@ -547,7 +548,7 @@ namespace UnitySkills
                             alphamaps[z, x, l] = Mathf.Lerp(alphamaps[z, x, l], 0f, paintStrength);
                     }
 
-                    // Normalize
+                    // Alphamap requires each pixel's per-layer weights to sum to 1; must renormalize after editing
                     float sum = 0;
                     for (int l = 0; l < layerCount; l++) sum += alphamaps[z, x, l];
                     if (sum > 0)

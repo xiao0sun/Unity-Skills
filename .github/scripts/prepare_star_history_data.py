@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Prepare Star History data for the pinned official renderer."""
 
 from __future__ import annotations
@@ -156,6 +156,51 @@ def build_records(
     ]
 
 
+def stargazer_drift_tolerance(star_count: int) -> int:
+    """Return how far the stargazers listing may lag the aggregate counter.
+
+    GitHub keeps stars from suspended or deleted accounts in
+    ``stargazers_count`` but never lists those users, so a small permanent
+    gap is expected. A larger gap means the listing was truncated.
+    """
+    return max(2, star_count // 200)
+
+
+def fetch_snapshot(repository: str, token: str) -> tuple[dict, list[datetime]]:
+    """Return repository metadata and stargazer timestamps from one snapshot.
+
+    The counter is read on both sides of the pagination: while it holds
+    still no star landed mid-fetch, so a single pass over the pages is
+    already consistent and any remaining gap is structural. Only a counter
+    that actually moved makes the expensive pagination run again.
+    """
+    for attempt in range(1, 4):
+        before = fetch_metadata(repository, token)
+        timestamps = fetch_stargazers(repository, token)
+        metadata = fetch_metadata(repository, token)
+        star_count = int(metadata["stargazers_count"])
+        if int(before["stargazers_count"]) != star_count:
+            if attempt < 3:
+                print("Star count changed while fetching; retrying a consistent snapshot.")
+                time.sleep(attempt * 2)
+            continue
+        drift = abs(len(timestamps) - star_count)
+        tolerance = stargazer_drift_tolerance(star_count)
+        if drift > tolerance:
+            raise RuntimeError(
+                f"GitHub listed {len(timestamps)} stargazers for a reported "
+                f"{star_count} stars; the drift of {drift} exceeds the "
+                f"tolerance of {tolerance}"
+            )
+        if drift:
+            print(
+                f"Accepting a stargazer drift of {drift} (tolerance {tolerance}); "
+                "GitHub counts stars from accounts it no longer lists."
+            )
+        return metadata, timestamps
+    raise RuntimeError("GitHub star count kept changing while stargazers were fetched")
+
+
 def main() -> int:
     args = parse_args()
     repository = validate_repository(args.repository)
@@ -163,20 +208,7 @@ def main() -> int:
     if not token:
         raise SystemExit(f"{args.token_env} is empty")
 
-    metadata: dict = {}
-    timestamps: list[datetime] = []
-    for attempt in range(1, 4):
-        timestamps = fetch_stargazers(repository, token)
-        metadata = fetch_metadata(repository, token)
-        if len(timestamps) == int(metadata["stargazers_count"]):
-            break
-        if attempt < 3:
-            print("Star count changed while fetching; retrying a consistent snapshot.")
-            time.sleep(attempt * 2)
-    else:
-        raise RuntimeError(
-            "GitHub star count kept changing while stargazers were fetched"
-        )
+    metadata, timestamps = fetch_snapshot(repository, token)
 
     owner = metadata.get("owner")
     if not isinstance(owner, dict):
@@ -209,3 +241,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+# Producer:Betsy

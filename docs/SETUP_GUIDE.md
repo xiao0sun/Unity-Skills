@@ -76,6 +76,8 @@ scripts/agent_config.json   # Agent configuration
 references/                 # Unity development references
 ```
 
+> **Auto-Sync on Package Update**: when the package version changes, every tool you already installed is refreshed to the new version on the next Editor load — you don't have to press Install again. Only existing installs are touched; a tool you never installed is never installed for you. Files are overwritten exactly as a manual Install would, so local edits to an installed copy are replaced. Toggle it off under ⚙ Settings ▸ AI Tools.
+
 > **Codex Note**: Antigravity and Codex share `.agents/skills/` in workspace mode — install once for either makes it available to both. Codex auto-discovers skills; no `AGENTS.md` declaration needed.
 
 > **Per-Scope Uninstall (v1.9.0+)**: Each agent card has a smart Uninstall button that adapts to install state — disabled when nothing's installed, single-button (with scope label) when only one scope is installed, or `Uninstall ▾` dropdown listing Project / Global when both are. Lets you remove just our skill from one scope without touching the other.
@@ -93,6 +95,7 @@ If one-click installation is not available for your tool, manually copy the cont
 | Codex | `.agents/skills/` (shared with Antigravity) | `~/.agents/skills/` |
 | Cursor | `.cursor/skills/` | `~/.cursor/skills/` |
 | OpenCode | `.opencode/skills/` | `~/.config/opencode/skills/` |
+| Kimi Code | `.kimi-code/skills/` | `~/.kimi-code/skills/` (or `$KIMI_CODE_HOME/skills/`) |
 
 ### Supported AI Tools
 
@@ -105,6 +108,7 @@ The following tools have been officially tested:
 | **Codex** | ✅ | `$skill` explicit call + implicit intent; auto-discovers `.agents/skills/` |
 | **Cursor** | ✅ | Auto-discovers `.cursor/skills/` and `.agents/skills/`; supports `/skill-name` explicit trigger; visible in Settings → Rules |
 | **OpenCode** | ✅ | Native `.opencode/skills/` workspace and `~/.config/opencode/skills/` global discovery |
+| **Kimi Code** | ✅ | Native `.kimi-code/skills/` project and `~/.kimi-code/skills/` user discovery (follows `$KIMI_CODE_HOME`); `/skill:unity-skills` explicit trigger; also scans `.agents/skills/` |
 
 > ⚠️ **Universal Compatibility**: UnitySkills follows an open skill standard. **Any AI tool that can read markdown files and make HTTP requests** can use UnitySkills — not limited to the tools listed above. Simply copy the `unity-skills~/` directory contents to your tool's skill or prompt location and ensure the tool can reach `http://localhost:8090`.
 

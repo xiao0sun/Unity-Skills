@@ -1,27 +1,29 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System.Linq;
 using System.Reflection;
 using System.Collections.Generic;
 using System.Globalization;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace UnitySkills
 {
     /// <summary>
-    /// Component management skills - add, remove, get, set properties.
-    /// Supports finding by name, instanceId, or path, with advanced type conversion and reference resolution.
+    /// Component management skills: add/remove components, read/write properties.
+    /// Supports locating targets by name / instanceId / path, with fairly thorough type conversion and reference resolution.
     /// </summary>
     public static class ComponentSkills
     {
-        // Cache for component type lookups to improve performance
         private static readonly Dictionary<string, System.Type> _typeCache = new Dictionary<string, System.Type>();
 
-        // Cache for property/field lookups to avoid repeated reflection
-        // NOTE: Not thread-safe - only access from Unity main thread (guaranteed by SkillsHttpServer Producer-Consumer pattern)
+        // Property / field lookup cache, avoids repeated reflection.
+        // Note: not thread-safe — only ever accessed on the Unity main thread
+        // (guaranteed by SkillsHttpServer's producer-consumer model).
         private static readonly Dictionary<string, (PropertyInfo prop, FieldInfo field)> _memberCache =
             new Dictionary<string, (PropertyInfo, FieldInfo)>();
-        
-        // Common third-party namespaces to search
+
+        // Extra namespaces searched when looking up a component type by simple class name (covers common third-party plugins).
         private static readonly string[] ExtendedNamespaces = new[]
         {
             // Unity built-in
@@ -38,7 +40,7 @@ namespace UnitySkills
             "UnityEngine.VFX.",
             "UnityEngine.Tilemaps.",
             "UnityEngine.U2D.",
-            // Cinemachine (multiple versions)
+            // Cinemachine (namespace differs between its two major versions)
             "Cinemachine.",
             "Unity.Cinemachine.",
             // TextMeshPro
@@ -55,7 +57,7 @@ namespace UnitySkills
 
         [UnitySkill("component_add", "Add a component to a GameObject (supports name/instanceId/path). Works with Cinemachine, TextMeshPro, etc.",
             Category = SkillCategory.Component, Operation = SkillOperation.Create,
-            Tags = new[] { "add", "attach", "behaviour" },
+            Tags = new[] { "add", "attach", "behaviour", "rigidbody", "collider", "script" },
             Outputs = new[] { "gameObject", "instanceId", "component", "fullTypeName" },
             RequiresInput = new[] { "gameObject" },
             TracksWorkflow = true,
@@ -75,7 +77,7 @@ namespace UnitySkills
                     availableTypes = GetSimilarTypes(componentType)
                 };
 
-            // Check if component already exists (for single-instance components)
+            // Component doesn't allow multiple instances — skip adding if it already exists.
             if (go.GetComponent(type) != null && !AllowMultiple(type))
                 return new { 
                     warning = $"Component {type.Name} already exists on {go.name}",
@@ -106,9 +108,12 @@ namespace UnitySkills
         [UnitySkill("component_add_batch", "Add components to multiple GameObjects. items: JSON array of {name, componentType, path}",
             Category = SkillCategory.Component, Operation = SkillOperation.Create,
             Tags = new[] { "add", "attach", "behaviour", "batch" },
-            Outputs = new[] { "gameObject", "component" },
+            // The keys declared here are for the outer batch envelope, not the per-item keys inside results[].
+            // Declaring an inner-item key here would make /skills/chain think this skill produces a top-level
+            // `component`, so it would be fed as input to a later step — which would never actually see it.
+            Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object ComponentAddBatch(string items)
         {
             return BatchExecutor.Execute<BatchAddComponentItem>(items, item =>
@@ -123,7 +128,7 @@ namespace UnitySkills
                 if (type == null)
                     return new { error = $"Component type not found: {item.componentType}" };
 
-                // Check if component already exists (for single-instance components)
+                // Component doesn't allow multiple instances — skip adding if it already exists.
                 if (go.GetComponent(type) != null && !AllowMultiple(type))
                     return new { target = go.name, success = true, warning = "Component already exists", component = type.Name };
 
@@ -164,7 +169,7 @@ namespace UnitySkills
             if (type == null)
                 return new { error = $"Component type not found: {componentType}" };
 
-            // Support removing specific component instance by index
+            // Multiple instances of the same type may be attached; use componentIndex to specify which one to remove.
             var components = go.GetComponents(type);
             if (components.Length == 0)
                 return new { error = $"Component not found on {go.name}: {componentType}" };
@@ -191,9 +196,10 @@ namespace UnitySkills
         [UnitySkill("component_remove_batch", "Remove components from multiple GameObjects. items: JSON array of {name, componentType, path}",
             Category = SkillCategory.Component, Operation = SkillOperation.Delete,
             Tags = new[] { "remove", "detach", "destroy", "batch" },
-            Outputs = new[] { "gameObject", "removed", "count" },
+            Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
             RequiresInput = new[] { "gameObject", "component" },
             TracksWorkflow = true, SkipAutoPresnapshot = true,
+            MutatesScene = true,
             RiskLevel = "medium")]
         public static object ComponentRemoveBatch(string items)
         {
@@ -252,9 +258,22 @@ namespace UnitySkills
                     {
                         { "type", c.GetType().Name },
                         { "fullType", c.GetType().FullName },
-                        { "enabled", (c as Behaviour)?.enabled ?? true }
                     };
-                    
+
+                    // Behaviour, Renderer, and Collider/Collider2D each declare their own `enabled`
+                    // (the latter two don't inherit from Behaviour), so each type must be checked individually:
+                    // casting only to Behaviour would miss them and fall back to a default of true, reporting a
+                    // Renderer/Collider that was disabled via component_set_enabled as enabled:true. Types with
+                    // no concept of `enabled` (e.g. Transform) simply omit the field rather than guessing.
+                    if (c is Behaviour behaviour)
+                        info["enabled"] = behaviour.enabled;
+                    else if (c is Renderer renderer)
+                        info["enabled"] = renderer.enabled;
+                    else if (c is Collider collider)
+                        info["enabled"] = collider.enabled;
+                    else if (c is Collider2D collider2D)
+                        info["enabled"] = collider2D.enabled;
+
                     if (includeProperties)
                     {
                         var props = GetComponentPropertiesSummary(c);
@@ -276,10 +295,10 @@ namespace UnitySkills
             };
         }
 
-        [UnitySkill("component_set_property", "Set a property/field on a component. Supports Vector2/3/4, Color, scene references by name/path, project assets by assetPath",
+        [UnitySkill("component_set_property", "Set a property/field on a component. Supports Vector2/3/4, Color, scene references by name/path, project assets by assetPath. Vector and Color values accept both the comma form (\"1,2,3\") and the JSON object form ({\"x\":1,\"y\":2,\"z\":3} / {\"r\":1,\"g\":0,\"b\":0,\"a\":1}); Color also accepts #RRGGBB and named colours. In the object form every vector component is required (a partial {\"y\":2} is rejected, not zero-filled); Color's \"a\" may be omitted and defaults to 1. valueSet echoes the stored value in a round-trippable form.",
             Category = SkillCategory.Component, Operation = SkillOperation.Modify,
             Tags = new[] { "property", "field", "value", "reference" },
-            Outputs = new[] { "gameObject", "component", "property", "valueSet" },
+            Outputs = new[] { "gameObject", "component", "property", "valueSet", "valueType" },
             RequiresInput = new[] { "gameObject", "component" },
             TracksWorkflow = true)]
         public static object ComponentSetProperty(
@@ -318,14 +337,14 @@ namespace UnitySkills
                 var targetType = prop?.PropertyType ?? field.FieldType;
                 object converted;
 
-                // Handle asset references (Project assets: ScriptableObject, Prefab, Material, Texture, etc.)
+                // Project asset reference (ScriptableObject, Prefab, Material, Texture, etc.).
                 if (!string.IsNullOrEmpty(assetPath))
                 {
                     converted = ResolveAssetReference(targetType, assetPath);
                     if (converted == null)
                         return new { error = $"Asset not found or type mismatch: '{assetPath}' (expected {targetType.Name})" };
                 }
-                // Handle scene references (Transform, GameObject, Component references)
+                // In-scene reference (Transform / GameObject / Component).
                 else if (!string.IsNullOrEmpty(referencePath) || !string.IsNullOrEmpty(referenceName))
                 {
                     converted = ResolveReference(targetType, referencePath, referenceName);
@@ -350,23 +369,34 @@ namespace UnitySkills
                     success = true, 
                     gameObject = go.name, 
                     component = componentType,
-                    property = propertyName, 
-                    valueSet = converted?.ToString() ?? "null",
+                    property = propertyName,
+                    valueSet = FormatValue(converted),
                     valueType = targetType.Name
+                };
+            }
+            catch (PropertyValueException ex)
+            {
+                // This is "the value was rejected", not "the skill is broken": declare an explicit error code
+                // so the router sends back "fix the value and retry" instead of SKILL_ERROR + abort.
+                return new
+                {
+                    error = ex.Message,
+                    errorCode = SkillParamUtil.SemanticInvalidCode,
+                    parameter = "value",
                 };
             }
             catch (System.Exception ex)
             {
-                return new { 
+                return new {
                     error = ex.Message,
                 };
             }
         }
 
-        [UnitySkill("component_set_property_batch", "Set properties on multiple components (Efficient). items: JSON array of {name, componentType, propertyName, value, referencePath, referenceName, assetPath}",
+        [UnitySkill("component_set_property_batch","Set properties on multiple components (Efficient). items: JSON array of {name, componentType, propertyName, value, referencePath, referenceName, assetPath}",
             Category = SkillCategory.Component, Operation = SkillOperation.Modify,
             Tags = new[] { "property", "field", "value", "reference", "batch" },
-            Outputs = new[] { "gameObject", "property" },
+            Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
             RequiresInput = new[] { "gameObject", "component" },
             TracksWorkflow = true)]
         public static object ComponentSetPropertyBatch(string items)
@@ -412,7 +442,20 @@ namespace UnitySkills
                 }
                 else
                 {
-                    var valStr = item.value?.ToString();
+                    // Newtonsoft parses JSON numbers back into double/long; calling ToString() directly would
+                    // follow the editor's locale — on a machine using a comma as decimal separator, 1.5 becomes
+                    // "1,5", which ConvertValue (parsing with invariant culture) can't read back. Nested objects
+                    // / arrays are re-serialized so a form like {"x":..,"y":..} reaches ConvertValue unchanged.
+                    string valStr;
+                    if (item.value == null)
+                        valStr = null;
+                    else if (item.value is JToken token)
+                        valStr = token.Type == JTokenType.String
+                            ? token.Value<string>()
+                            : token.ToString(Formatting.None);
+                    else
+                        valStr = SkillParamUtil.FormatScalarR(item.value);
+
                     converted = ConvertValue(valStr, targetType);
                 }
 
@@ -424,7 +467,14 @@ namespace UnitySkills
                     return new { error = $"Property {item.propertyName} is read-only" };
 
                 EditorUtility.SetDirty(comp);
-                return new { target = go.name, success = true, property = item.propertyName };
+                return new
+                {
+                    target = go.name,
+                    success = true,
+                    property = item.propertyName,
+                    valueSet = FormatValue(converted),
+                    valueType = targetType.Name
+                };
             }, item => item.name ?? item.path);
         }
 
@@ -521,7 +571,7 @@ namespace UnitySkills
         [UnitySkill("component_set_serialized_property_batch", "Set Inspector serialized properties on multiple components. items: JSON array of {name, instanceId, path, componentType, propertyPath, value, referenceName, referenceInstanceId, referencePath, assetPath, objectType}",
             Category = SkillCategory.Component, Operation = SkillOperation.Modify,
             Tags = new[] { "serialized", "inspector", "property", "field", "batch" },
-            Outputs = new[] { "gameObject", "propertyPath" },
+            Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
             RequiresInput = new[] { "gameObject", "component" },
             TracksWorkflow = true)]
         public static object ComponentSetSerializedPropertyBatch(string items)
@@ -657,19 +707,18 @@ namespace UnitySkills
         #region Type Finding (Enhanced for Third-Party)
         
         /// <summary>
-        /// Find component type with extensive namespace search.
-        /// Supports Cinemachine, TextMeshPro, and other common plugins.
+        /// Searches broadly across namespaces for a component type, so it can hit common plugins like Cinemachine and TextMeshPro.
         /// </summary>
         public static System.Type FindComponentType(string name)
         {
             if (string.IsNullOrEmpty(name)) return null;
-            
+
             if (_typeCache.TryGetValue(name, out var cached))
                 return cached;
 
             System.Type result = null;
-            
-            // 1. Try exact type name (might be full namespace)
+
+            // 1. First try it as-is as a fully-qualified name.
             result = System.Type.GetType(name);
             if (result != null && typeof(Component).IsAssignableFrom(result))
             {
@@ -677,10 +726,10 @@ namespace UnitySkills
                 return result;
             }
 
-            // 2. Extract simple name
+            // 2. Extract the simple class name.
             var simpleName = name.Contains(".") ? name.Substring(name.LastIndexOf('.') + 1) : name;
 
-            // 3. Try common namespaces
+            // 3. Try prefixing common namespaces.
             foreach (var ns in ExtendedNamespaces)
             {
                 result = TryGetTypeFromAssemblies(ns + simpleName);
@@ -691,7 +740,7 @@ namespace UnitySkills
                 }
             }
 
-            // 4. Search all loaded assemblies by simple name (slowest but most comprehensive)
+            // 4. Fallback: scan all loaded assemblies by simple name (slowest, but broadest coverage).
             result = SkillsCommon.GetAllLoadedTypes()
                 .FirstOrDefault(t =>
                     (t.Name.Equals(simpleName, System.StringComparison.OrdinalIgnoreCase) ||
@@ -714,7 +763,7 @@ namespace UnitySkills
 
         private static System.Type TryGetTypeFromAssemblies(string fullName)
         {
-            // Try common assembly names
+            // Only search these common assemblies, to avoid a full scan.
             var assemblyNames = new[] {
                 "UnityEngine",
                 "UnityEngine.UI",
@@ -777,29 +826,26 @@ namespace UnitySkills
         #region Value Conversion (Enhanced)
 
         /// <summary>
-        /// Convert string value to target type with extensive support.
+        /// Converts a string value to the target type, covering primitive types, common Unity structs, enums, and AnimationCurve.
         /// </summary>
         internal static object ConvertValue(string value, System.Type targetType)
         {
             if (value == null || value.Equals("null", System.StringComparison.OrdinalIgnoreCase))
                 return targetType.IsValueType ? System.Activator.CreateInstance(targetType) : null;
 
-            // Primitives
             if (targetType == typeof(string)) return value;
-            if (targetType == typeof(int)) return int.Parse(value);
+            if (targetType == typeof(int)) return int.Parse(value, CultureInfo.InvariantCulture);
             if (targetType == typeof(float)) return float.Parse(value, CultureInfo.InvariantCulture);
             if (targetType == typeof(double)) return double.Parse(value, CultureInfo.InvariantCulture);
             if (targetType == typeof(bool)) return ParseBool(value);
-            if (targetType == typeof(long)) return long.Parse(value);
+            if (targetType == typeof(long)) return long.Parse(value, CultureInfo.InvariantCulture);
             
-            // Unity Vector types
             if (targetType == typeof(Vector2)) return ParseVector2(value);
             if (targetType == typeof(Vector3)) return ParseVector3(value);
             if (targetType == typeof(Vector4)) return ParseVector4(value);
             if (targetType == typeof(Vector2Int)) return ParseVector2Int(value);
             if (targetType == typeof(Vector3Int)) return ParseVector3Int(value);
             
-            // Unity other types
             if (targetType == typeof(Quaternion)) return ParseQuaternion(value);
             if (targetType == typeof(Color)) return ParseColor(value);
             if (targetType == typeof(Color32)) return ParseColor32(value);
@@ -807,15 +853,12 @@ namespace UnitySkills
             if (targetType == typeof(Bounds)) return ParseBounds(value);
             if (targetType == typeof(LayerMask)) return ParseLayerMask(value);
             
-            // Enums
             if (targetType.IsEnum)
                 return System.Enum.Parse(targetType, value, true);
 
-            // AnimationCurve (simple format)
             if (targetType == typeof(AnimationCurve))
                 return ParseAnimationCurve(value);
 
-            // Fallback
             return System.Convert.ChangeType(value, targetType);
         }
 
@@ -827,18 +870,33 @@ namespace UnitySkills
 
         private static Vector2 ParseVector2(string value)
         {
+            if (SkillParamUtil.LooksLikeJsonObject(value))
+            {
+                var json = ParseJsonObjectFloats(value, new[] { "x", "y" }, new float[] { 0, 0 }, requiredKeyCount: 2);
+                return new Vector2(json[0], json[1]);
+            }
             var parts = ParseFloatArray(value, 2);
             return new Vector2(parts[0], parts[1]);
         }
 
         private static Vector3 ParseVector3(string value)
         {
+            if (SkillParamUtil.LooksLikeJsonObject(value))
+            {
+                var json = ParseJsonObjectFloats(value, new[] { "x", "y", "z" }, new float[] { 0, 0, 0 }, requiredKeyCount: 3);
+                return new Vector3(json[0], json[1], json[2]);
+            }
             var parts = ParseFloatArray(value, 3);
             return new Vector3(parts[0], parts[1], parts[2]);
         }
 
         private static Vector4 ParseVector4(string value)
         {
+            if (SkillParamUtil.LooksLikeJsonObject(value))
+            {
+                var json = ParseJsonObjectFloats(value, new[] { "x", "y", "z", "w" }, new float[] { 0, 0, 0, 0 }, requiredKeyCount: 4);
+                return new Vector4(json[0], json[1], json[2], json[3]);
+            }
             var parts = ParseFloatArray(value, 4);
             return new Vector4(parts[0], parts[1], parts[2], parts[3]);
         }
@@ -857,7 +915,7 @@ namespace UnitySkills
 
         private static Quaternion ParseQuaternion(string value)
         {
-            // Support both euler angles (3 values) and quaternion (4 values)
+            // Accepts both Euler angles (3 values) and a quaternion (4 values).
             var parts = ParseFloatArray(value, -1); // -1 means variable length
             if (parts.Length == 3)
                 return Quaternion.Euler(parts[0], parts[1], parts[2]);
@@ -868,19 +926,26 @@ namespace UnitySkills
 
         private static Color ParseColor(string value)
         {
-            // Support hex format
+            // JSON object form, as consistently documented in the module docs.
+            if (SkillParamUtil.LooksLikeJsonObject(value))
+            {
+                var json = ParseJsonObjectFloats(value, new[] { "r", "g", "b", "a" }, new float[] { 0, 0, 0, 1 }, requiredKeyCount: 3);
+                return new Color(json[0], json[1], json[2], json[3]);
+            }
+
+            // Hex form.
             if (value.StartsWith("#"))
             {
                 if (ColorUtility.TryParseHtmlString(value, out var color))
                     return color;
             }
-            
-            // Support named colors
+
+            // Named color form.
             var namedColor = GetNamedColor(value);
             if (namedColor.HasValue)
                 return namedColor.Value;
 
-            // Support float values
+            // Comma-separated float form.
             var parts = ParseFloatArray(value, -1);
             if (parts.Length == 3)
                 return new Color(parts[0], parts[1], parts[2], 1);
@@ -929,11 +994,10 @@ namespace UnitySkills
 
         private static LayerMask ParseLayerMask(string value)
         {
-            // Try as layer name first
+            // First try parsing as a layer name; fall back to an integer mask.
             int layer = LayerMask.NameToLayer(value);
             if (layer != -1)
                 return 1 << layer;
-            // Try as integer
             if (int.TryParse(value, out var mask))
                 return mask;
             throw new System.ArgumentException($"Invalid layer: {value}");
@@ -951,6 +1015,90 @@ namespace UnitySkills
                 case "constant": return AnimationCurve.Constant(0, 1, 1);
                 default: return AnimationCurve.Linear(0, 0, 1, 1);
             }
+        }
+
+        /// <summary>
+        /// Represents "the caller-supplied value is not something the target property can accept". With this,
+        /// the catch block can return a structured SEMANTIC_INVALID error naming the offending parameter: a bare
+        /// FormatException thrown inside a converter would otherwise be classified as an uncategorized
+        /// SKILL_ERROR, whose matching routing action is abort rather than "fix the value and retry".
+        /// All messages start with "Invalid" so callers outside this file, who only see the text, can still
+        /// reach the same conclusion via the classifier's first-word rule.
+        /// </summary>
+        private sealed class PropertyValueException : System.Exception
+        {
+            public PropertyValueException(string message) : base(message) { }
+        }
+
+        /// <summary>
+        /// Reads a JSON object into an ordered float array: vectors use <c>{"x":1,"y":2,"z":3}</c>,
+        /// colors use <c>{"r":1,"g":0,"b":0,"a":1}</c>. This is the form consistently documented in the module docs.
+        ///
+        /// <para>Key names are case-insensitive and order-independent, but the first <paramref name="requiredKeyCount"/>
+        /// must all be present: vectors are not allowed to give only part of themselves — if <c>{"y":2}</c> were
+        /// treated as <c>(0, 2, 0)</c> and reported success, it would move the object along two axes the caller
+        /// never mentioned, which looks like teleportation. Keys beyond that count can be omitted and fall back to
+        /// their defaults — that's how omitting "a" on a color keeps it opaque. Unrecognized keys are treated as
+        /// errors rather than silently skipped: otherwise {"x":1,"why":2} would leave y at 0 and still report success.</para>
+        /// </summary>
+        private static float[] ParseJsonObjectFloats(string value, string[] keys, float[] defaults, int requiredKeyCount)
+        {
+            JObject obj;
+            try
+            {
+                obj = JObject.Parse(value);
+            }
+            catch (JsonException ex)
+            {
+                throw new PropertyValueException(
+                    $"Invalid JSON object '{value}': {ex.Message}. Expected {{{string.Join(", ", keys.Select(k => $"\"{k}\": <number>"))}}}.");
+            }
+
+            var result = (float[])defaults.Clone();
+            var supplied = new bool[keys.Length];
+
+            foreach (var property in obj.Properties())
+            {
+                int index = System.Array.FindIndex(keys,
+                    k => string.Equals(k, property.Name, System.StringComparison.OrdinalIgnoreCase));
+                if (index < 0)
+                    throw new PropertyValueException(
+                        $"Invalid key '{property.Name}'. Expected only: {string.Join(", ", keys)}.");
+
+                if (property.Value == null || property.Value.Type == JTokenType.Null)
+                    continue;
+
+                try
+                {
+                    result[index] = property.Value.Value<float>();
+                }
+                catch (System.Exception ex)
+                {
+                    throw new PropertyValueException(
+                        $"Invalid value for key '{property.Name}': " +
+                        $"{property.Value.ToString(Formatting.None)} is not a number ({ex.Message}).");
+                }
+                supplied[index] = true;
+            }
+
+            var missing = new List<string>();
+            for (int i = 0; i < requiredKeyCount && i < keys.Length; i++)
+            {
+                if (!supplied[i]) missing.Add(keys[i]);
+            }
+
+            if (missing.Count > 0)
+            {
+                var required = string.Join(", ", keys.Take(requiredKeyCount));
+                var optional = requiredKeyCount < keys.Length
+                    ? $" Optional: {string.Join(", ", keys.Skip(requiredKeyCount))}."
+                    : string.Empty;
+                throw new PropertyValueException(
+                    $"Invalid value '{value}': missing required key(s) {string.Join(", ", missing)}. " +
+                    $"All of these are required: {required}.{optional}");
+            }
+
+            return result;
         }
 
         private static float[] ParseFloatArray(string value, int expectedCount)
@@ -972,7 +1120,9 @@ namespace UnitySkills
             if (expectedCount > 0 && parts.Length != expectedCount)
                 throw new System.ArgumentException($"Expected {expectedCount} values, got {parts.Length}");
             
-            return parts.Select(p => int.Parse(p.Trim())).ToArray();
+            // Must use InvariantCulture here too, same as the float path above: under an editor locale that uses
+            // a comma as the decimal separator, the dot in "1.000" would be read as a thousands separator, changing the value.
+            return parts.Select(p => int.Parse(p.Trim(), CultureInfo.InvariantCulture)).ToArray();
         }
 
         #endregion
@@ -980,12 +1130,11 @@ namespace UnitySkills
         #region Reference Resolution
 
         /// <summary>
-        /// Resolve a reference to a Unity Object by path or name.
-        /// Supports Transform, GameObject, and Component references.
+        /// Resolves an in-scene Unity object reference by path or name, supporting Transform, GameObject, and components.
         /// </summary>
         private static object ResolveReference(System.Type targetType, string referencePath, string referenceName)
         {
-            // Use unified finder (prioritizes path over name internally)
+            // Goes through GameObjectFinder uniformly, which internally prefers path over name.
             GameObject targetGo = GameObjectFinder.Find(name: referenceName, path: referencePath);
 
             if (targetGo == null)
@@ -1002,16 +1151,16 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Resolve a reference to a project asset by asset path.
-        /// Supports any UnityEngine.Object: ScriptableObject, Prefab (GameObject), Material, Texture, AudioClip, etc.
+        /// Resolves a project asset reference by asset path, supporting any UnityEngine.Object:
+        /// ScriptableObject, Prefab (GameObject), Material, Texture, AudioClip, etc.
         /// </summary>
         private static object ResolveAssetReference(System.Type targetType, string assetPath)
         {
-            // Try loading with exact target type first
+            // First try loading exactly as the target type.
             var asset = AssetDatabase.LoadAssetAtPath(assetPath, targetType);
             if (asset != null) return asset;
 
-            // Fallback: load as generic Object and check assignability
+            // Fallback: load as a generic Object, then check assignability.
             asset = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
             if (asset != null && targetType.IsAssignableFrom(asset.GetType()))
                 return asset;
@@ -1023,20 +1172,26 @@ namespace UnitySkills
 
         #region Helpers
 
+        /// <summary>
+        /// How a property value is reported externally. Every number is run through a lossless, round-trippable,
+        /// culture-invariant formatter: naive string interpolation truncates (0.192156866 reports as 0.1921569,
+        /// and writing it back is a different color), and follows the editor's locale — with a comma decimal
+        /// separator it would output "(0,5, 1, 1)", a string no caller can parse back into a vector.
+        /// </summary>
         private static string FormatValue(object val)
         {
             if (val == null) return "null";
-            if (val is Vector2 v2) return $"({v2.x}, {v2.y})";
-            if (val is Vector3 v3) return $"({v3.x}, {v3.y}, {v3.z})";
-            if (val is Vector4 v4) return $"({v4.x}, {v4.y}, {v4.z}, {v4.w})";
-            if (val is Quaternion q) return $"({q.eulerAngles.x}, {q.eulerAngles.y}, {q.eulerAngles.z})";
-            if (val is Color c) return $"({c.r}, {c.g}, {c.b}, {c.a})";
+            if (val is Vector2 v2) return SkillParamUtil.FormatVector2(v2);
+            if (val is Vector3 v3) return SkillParamUtil.FormatVector3(v3);
+            if (val is Vector4 v4) return SkillParamUtil.FormatVector4(v4);
+            if (val is Quaternion q) return SkillParamUtil.FormatVector3(q.eulerAngles);
+            if (val is Color c) return SkillParamUtil.FormatColor(c);
             if (val is UnityEngine.Object obj) return obj.name;
-            return val.ToString();
+            return SkillParamUtil.FormatScalarR(val);
         }
 
         /// <summary>
-        /// Find a property or field by name with caching. Tries exact match first, then case-insensitive.
+        /// Looks up a property or field by name (with caching): exact match first, then falls back to a case-insensitive match.
         /// </summary>
         private static (PropertyInfo prop, FieldInfo field) FindMember(System.Type type, string memberName)
         {
@@ -1050,7 +1205,6 @@ namespace UnitySkills
 
             if (prop == null && field == null)
             {
-                // Case-insensitive fallback
                 prop = type.GetProperties(flags)
                     .FirstOrDefault(p => p.Name.Equals(memberName, System.StringComparison.OrdinalIgnoreCase));
                 field = type.GetFields(flags)
@@ -1080,7 +1234,7 @@ namespace UnitySkills
             var result = new Dictionary<string, object>();
             var type = c.GetType();
             
-            // Get key properties based on component type
+            // Only pick key properties per component type to output, rather than dumping the whole Inspector.
             if (c is Transform t)
             {
                 result["position"] = FormatValue(t.position);

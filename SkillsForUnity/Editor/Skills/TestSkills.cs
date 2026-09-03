@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json.Linq;
@@ -9,7 +9,7 @@ using UnityEngine;
 namespace UnitySkills
 {
     /// <summary>
-    /// Test runner skills.
+    /// Test Runner related skills.
     /// </summary>
     public static class TestSkills
     {
@@ -86,10 +86,10 @@ namespace UnitySkills
             };
         }
 
-        [UnitySkill("test_list", "List available tests via Unity Test Runner async discovery. Returns pendingDiscovery=true + discoveryJobId on first call (cache miss) — poll test_discover_get_result(jobId) then retry test_list.",
+        [UnitySkill("test_list", "List available tests via Unity Test Runner async discovery. Returns pendingDiscovery=true + discoveryJobId on first call (cache miss) — poll test_discover_get_result(jobId) then retry test_list. limit caps how many tests are returned (default 100); count is the number returned, total is how many were discovered, and truncated=true means raise limit to see the rest.",
             Category = SkillCategory.Test, Operation = SkillOperation.Query,
             Tags = new[] { "test", "list", "discover", "enumerate" },
-            Outputs = new[] { "testMode", "count", "tests", "pendingDiscovery", "discoveryJobId", "discoveryStatus" },
+            Outputs = new[] { "testMode", "count", "total", "truncated", "tests", "pendingDiscovery", "discoveryJobId", "discoveryStatus" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object TestList(string testMode = "EditMode", int limit = 100)
@@ -110,7 +110,8 @@ namespace UnitySkills
                 };
             }
 
-            var tests = GetDiscoveredTests(discovery)
+            var discoveredTests = GetDiscoveredTests(discovery);
+            var tests = discoveredTests
                 .Take(Mathf.Max(1, limit))
                 .Select(test => new
                 {
@@ -124,7 +125,10 @@ namespace UnitySkills
             {
                 success = true,
                 testMode,
+                // count is still the returned item count (v1 contract); truncation is reflected via total/truncated.
                 count = tests.Length,
+                total = discoveredTests.Count,
+                truncated = discoveredTests.Count > tests.Length,
                 discoveryMode = TestDiscoveryMode,
                 tests
             };
@@ -149,10 +153,10 @@ namespace UnitySkills
             };
         }
 
-        [UnitySkill("test_discover_get_result", "Get the result of an asynchronous Unity Test Runner discovery job.",
+        [UnitySkill("test_discover_get_result", "Get the result of an asynchronous Unity Test Runner discovery job. limit caps how many tests are returned (default 100); count is the total discovered, returned is how many are in this response, and truncated=true means raise limit to see the rest.",
             Category = SkillCategory.Test, Operation = SkillOperation.Query,
             Tags = new[] { "test", "discover", "result", "poll", "job" },
-            Outputs = new[] { "jobId", "status", "count", "tests" },
+            Outputs = new[] { "jobId", "status", "count", "returned", "truncated", "tests" },
             RequiresInput = new[] { "jobId" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
@@ -184,7 +188,10 @@ namespace UnitySkills
                 status = job.status,
                 testMode = GetMetadataString(job, "testMode"),
                 discoveryMode = TestDiscoveryMode,
+                // count is still the pre-truncation total (v1 contract); truncation is reflected via returned/truncated.
                 count = discoveredTests.Count,
+                returned = tests.Length,
+                truncated = discoveredTests.Count > tests.Length,
                 tests,
                 error = job.error
             };
@@ -535,7 +542,7 @@ public class {testName}
                 testName,
                 jobId = job.jobId,
                 serverAvailability = ServerAvailabilityHelper.CreateTransientUnavailableNotice(
-                    $"已创建测试脚本: {path}。Unity 可能短暂重载脚本域。",
+                    $"Test script created: {path}. Unity may briefly reload the script domain.",
                     alwaysInclude: true)
             };
         }
@@ -580,7 +587,7 @@ public class {testName}
                 testName,
                 jobId = job.jobId,
                 serverAvailability = ServerAvailabilityHelper.CreateTransientUnavailableNotice(
-                    $"已创建测试脚本: {path}。Unity 可能短暂重载脚本域。",
+                    $"Test script created: {path}. Unity may briefly reload the script domain.",
                     alwaysInclude: true)
             };
         }
@@ -696,21 +703,57 @@ public class {testName}
             }
         }
 
+        /// <summary>
+        /// What these errors mean is "the thing this read-only skill is supposed to report doesn't exist in
+        /// this project/scene/mode", not "the skill is broken". A clean project has no CinemachineBrain, no
+        /// NetworkManager, and isn't in PlayMode — a skill like that can only decline to answer; counting that
+        /// as a smoke-test failure would drown out the failures that actually matter.
+        ///
+        /// <para>Matched on skill + a specific error phrase together, never on skill name alone: an entry keyed
+        /// only by name would swallow every future regression in that skill. Anything else the skill says —
+        /// NullReferenceException, a changed error message, a different code path — still counts as a failure.
+        /// This is also why the whitelist is only consulted when "an error object was returned", not inside the
+        /// exception handler above: throwing an exception is never an expected environmental answer, it's the
+        /// skill failing to produce an answer at all.</para>
+        /// </summary>
+        private static readonly Dictionary<string, string[]> _expectedMissingFixtureMarkers =
+            new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            // No Cinemachine rig in the scene.
+            ["cinemachine_get_brain_info"] = new[] { "No Main Camera", "No CinemachineBrain" },
+            ["cinemachine_inspect_vcam"]   = new[] { "GameObject not found" },
+            // No NetworkManager in the scene (NGO is installed but not set up yet). netcode_get_status and
+            // netcode_get_transport_info also report a missing manager first; transport_info's second gate
+            // ("NetworkTransport not assigned") is the same kind of "missing", just one level down.
+            ["netcode_get_manager_info"]   = new[] { "NetworkManager not found" },
+            ["netcode_get_status"]         = new[] { "NetworkManager not found" },
+            ["netcode_get_transport_info"] = new[] { "NetworkManager not found", "NetworkTransport not assigned" },
+            // Read-only skills that only work in PlayMode: EditMode isn't a broken environment, just the wrong
+            // mode, and the smoke probe deliberately never enters PlayMode. The manager/started gates are also
+            // listed here, because on a project that does have a NetworkManager but hasn't started it, they
+            // give the same kind of "nothing to read yet" answer.
+            ["netcode_get_spawn_manager_info"] = new[]
+            {
+                "SpawnManager only accessible in PlayMode", "NetworkManager not found",
+                "NetworkManager is not started", "SpawnManager not initialized"
+            },
+            ["netcode_get_scene_manager_info"] = new[]
+            {
+                "SceneManager info only available in PlayMode", "NetworkManager not found",
+                "NetworkManager is not started", "NetworkSceneManager not initialized"
+            },
+        };
+
         private static bool IsExpectedMissingSceneFixture(string skillName, string error)
         {
-            if (string.IsNullOrEmpty(error)) return false;
+            if (string.IsNullOrEmpty(error) || string.IsNullOrEmpty(skillName)) return false;
+            if (!_expectedMissingFixtureMarkers.TryGetValue(skillName, out var markers)) return false;
 
-            if (string.Equals(skillName, "cinemachine_get_brain_info", StringComparison.OrdinalIgnoreCase))
+            foreach (var marker in markers)
             {
-                return error.IndexOf("No Main Camera", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                       error.IndexOf("No CinemachineBrain", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (error.IndexOf(marker, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
             }
-
-            if (string.Equals(skillName, "cinemachine_inspect_vcam", StringComparison.OrdinalIgnoreCase))
-            {
-                return error.IndexOf("GameObject not found", StringComparison.OrdinalIgnoreCase) >= 0;
-            }
-
             return false;
         }
 
@@ -726,6 +769,10 @@ public class {testName}
 
             var excludedNames = ParseCsv(excludeNamesCsv);
             var metadataIssues = SkillRouter.ValidateMetadata().ToArray();
+            // Must use the filtered snapshot: the probe calls skill.Method directly (see Method.Invoke in
+            // ExecuteSmokeProbe), so it goes through neither Execute nor the exposure-surface gate. Switching
+            // to Unfiltered would turn this into a bypass channel that batch-executes exactly the write skills
+            // this tier is supposed to hold back.
             IEnumerable<SkillRouter.SkillInfo> skills = SkillRouter.GetAllSkillsSnapshot();
 
             if (!string.IsNullOrWhiteSpace(category) &&

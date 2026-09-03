@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -202,7 +202,7 @@ namespace UnitySkills
             };
         }
 
-        // Cached registries: postProcessOnly=true and postProcessOnly=false
+        // Two cached registries, one each for postProcessOnly=true and false
         private static IReadOnlyList<VolumeComponentDescriptor> _registryAll;
         private static IReadOnlyList<VolumeComponentDescriptor> _registryPostProcess;
 

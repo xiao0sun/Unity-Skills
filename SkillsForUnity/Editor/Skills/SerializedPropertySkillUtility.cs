@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -340,7 +340,7 @@ namespace UnitySkills
                         ? "null"
                         : $"{UnityObjectIdUtility.GetEntityId(property.objectReferenceValue)}:{property.objectReferenceValue.GetType().FullName}:{property.objectReferenceValue.name}";
                 case SerializedPropertyType.Enum:
-                    // enumValueIndex is -1 for combined [Flags] masks; fall back to the raw bitmask.
+                    // A combined [Flags] mask leaves enumValueIndex at -1; fall back to the raw bitmask.
                     return property.enumValueIndex >= 0
                         ? property.enumValueIndex.ToString(CultureInfo.InvariantCulture)
                         : $"flags:{property.intValue.ToString(CultureInfo.InvariantCulture)}";
@@ -417,8 +417,8 @@ namespace UnitySkills
                     return true;
                 }
 
-                // Out-of-range numbers are written as a raw bitmask so [Flags] combinations
-                // (e.g. "3" = A|B, "-1" = Everything) stay expressible.
+                // An out-of-range numeric value is written as a raw bitmask, to preserve the
+                // ability to express [Flags] combinations (e.g. "3" = A|B, "-1" = Everything).
                 property.intValue = index;
                 return true;
             }
@@ -477,8 +477,8 @@ namespace UnitySkills
                     return false;
                 }
 
-                // The enumValueIndex round-trip resolves each name to its underlying constant,
-                // so combined masks work without reflecting on the enum type (native enums included).
+                // Round-trips through enumValueIndex to resolve each name to its underlying constant, so combining bitmasks doesn't require reflecting the enum type
+                // (this also works for native enums).
                 property.enumValueIndex = matchIndex;
                 combined |= property.intValue;
             }

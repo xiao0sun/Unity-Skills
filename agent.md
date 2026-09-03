@@ -3,11 +3,11 @@
 > **本文件面向"开发这个项目的 AI"**，非"调用该项目 REST API 的 AI"。
 > 后者请读 `SkillsForUnity/unity-skills~/SKILL.md`。
 
-通过 REST API 让 AI 直接控制 Unity 编辑器。784 个 REST Skills + 29 个 Advisory 模块。
+通过 REST API 让 AI 直接控制 Unity 编辑器。805 个 REST Skills + 28 个 Advisory 模块。
 
 | 项目 | 值 |
 |------|----|
-| 版本 | 2.6.0 |
+| 版本 | 2.8.0 |
 | 技术栈 | C# (Unity Editor Plugin) + Python (Client) |
 | Unity | 2022.3+（已验证 Unity 6 / 6000.x） |
 | 协议 | MIT |
@@ -24,7 +24,7 @@ AI Agent ──HTTP──▶ unity_skills.py ──POST localhost:8090-8100─�
                                                         │
                                               SkillRouter (反射发现 [UnitySkill])
                                                         │
-                                              54 个功能模块 (55 个 *Skills.cs, 784 Skills)
+                                              56 个 *Skills.cs → 54 个分类 (805 Skills)
                                                         │
                                          WorkflowManager (持久化撤销/回滚)
                                          RegistryService (多实例发现)
@@ -58,7 +58,8 @@ Unity-Skills/
 │   │   │   ├── BatchExecutor.cs          # 批量操作框架
 │   │   │   ├── SkillInstaller.cs         # AI 工具一键安装
 │   │   │   ├── UnityCliService.cs        # Unity CLI 检测 + 项目绑定 (Library/UnitySkills/cli_config.json)
-│   │   │   └── *Skills.cs × 55           # 54 个功能模块 (共 784 Skills)
+│   │   │   └── *Skills.cs × 56           # 54 个 SkillCategory 分类 (共 805 Skills)
+│   │   ├── Locales/                      # 独立多语言 JSON 资产 (en.json, zh-CN.json, ru.json)
 │   │   └── UI/                           # Editor UI (USS + UXML + EditorWindow)
 │   │       ├── UnitySkillsWindow.{cs,uxml,uss}    # 主窗口
 │   │       ├── AuditLogWindow.{uxml,uss}          # 审计窗口
@@ -68,7 +69,7 @@ Unity-Skills/
 │   └── unity-skills~/                    # AI Skill 模板（波浪线隐藏，随包分发）
 │       ├── SKILL.md                      # 调用方文档（"用"项目）
 │       ├── scripts/unity_skills.py
-│       ├── skills/                       # 79 个模块文档 (50 REST + 29 advisory)
+│       ├── skills/                       # 82 个模块文档 (54 REST + 28 advisory)
 │       └── references/
 ├── .claude/commands/                     # 自定义命令
 ├── docs/SETUP_GUIDE.md
@@ -142,11 +143,18 @@ public static object SkillName(string name, float x = 0f) { ... }
 - ListView 等控件优先用 Unity 2022.2+ 的事件（如 `selectedIndicesChanged`），避免 obsolete API。
 - 命名空间：业务统一 `UnitySkills`，内部 helper 用 `UnitySkills.Internal`。
 
-### 6. 本地化
+### 6. 本地化 (多语言架构)
 
-- 所有面向用户的字符串走 `SkillsLocalization.Get(key)`。
-- UI 内需 fallback 时用 `PermissionUiHelpers.L(key, enFallback, cnFallback)`——允许 Localization 表暂缺该 key 时显示语种 fallback。
-- **禁止在 .cs 里硬编码中/英文界面文案**。
+- **JSON 解耦架构（硬约束）**：所有多语言文本彻底从 C# 业务代码解耦，统一存放于 `Editor/Locales/` 目录下（`en.json` 英文、`zh-CN.json` 中文、`ru.json` 俄文）。**严禁在 `.cs` 脚本中硬编码多语言静态字典或界面中英文字符串**。
+- **调用接口与性能**：业务与 UI 代码统一调用 `SkillsLocalization.Get(key)` 或 `SkillsLocalization.Get(key, params object[] args)`。底层由 `[InitializeOnLoad]` 在编辑器加载时解析 JSON 并缓存在内存字典中，提供 O(1) 瞬时查表与零运行时 IO。
+- **三语对齐契约**：新增或修改任何 UI 词条时，必须保证 `en.json`、`zh-CN.json`、`ru.json` 三者 100% 键名对齐，严禁漏填。
+- **字库安全（硬约束）**：`Editor/UI/` 与 `Locales/` 涉及的中文字符必须处于 `UnitySkillsCN-UI.asset` 已有字库中，**严禁运行 font baker**。
+
+### 7. 注释语言
+
+- **源码注释一律英文**（`.cs` 的 `//` `///` `/* */`、`.py` 的 `#`）。仅在确有必要处保留中文：逐字引用中文界面文案、上游第三方的中文提示串、或中文本地化键值——保留的中文放在引号内，周围说明文字仍用英文。
+- 这条只约束**注释**。字符串字面量里的中文（Localization 词条值、生成代码模板、面向用户的错误文案）属于产品输出，不在此列，不要改。
+- `Editor/UI/` 与 `Locales/` 另有约束：字体图集扫描器会扫这些文件的字符（含注释），其中文只能减不能增。
 
 ---
 
@@ -170,7 +178,9 @@ public static object SkillName(string name, float x = 0f) { ... }
 
 ---
 
-## Skills 模块 (54 个功能模块 / 55 个 *Skills.cs，784 Skills)
+## Skills 模块 (56 个 *Skills.cs / 54 个 SkillCategory 分类，805 Skills)
+
+> **两个数不一样，不是笔误**：`Editor/Skills/` 下有 **56** 个 `*Skills.cs` 源文件，但 `SkillCategory` 枚举只有 **54** 个分类——`BatchSkills.cs` 不占独立分类（它的 skills 分别登记到 Workflow 与 Validation），`DiagnoseSkills.cs` 归入 Debug。下表按**分类**列，因此是 54 项。
 
 | 模块 | 数量 | 模块 | 数量 | 模块 | 数量 |
 |------|:----:|------|:----:|------|:----:|
@@ -186,17 +196,17 @@ public static object SkillName(string name, float x = 0f) { ... }
 | Prefab | 11 | Shader | 11 | Graphics | 11 |
 | Animator | 10 | Audio | 10 | Cleaner | 10 |
 | Component | 14 | Console | 10 | Debug | 11 |
-| Event | 11 | Light | 10 | Model | 10 |
+| Event | 11 | Light | 11 | Model | 10 |
 | NavMesh | 10 | Optimization | 10 | Profiler | 10 |
 | Scene | 10 | ScriptableObject | 13 | Smart | 10 |
 | Terrain | 10 | Texture | 10 | Validation | 16 |
 | Project | 10 | Sample | 8 | Behavior* | 10 |
-| HybridCLR* | 12 | Addressables* | 8 | | |
+| HybridCLR* | 12 | Addressables* | 8 | QFramework* | 20 |
 
-\*ProBuilder 需 `com.unity.probuilder`，XR 需 `com.unity.xr.interaction.toolkit`，Netcode 需 `com.unity.netcode.gameobjects`，YooAsset 需 `com.tuyoogame.yooasset (≥2.3.15)`，DOTween 需 `DG.Tweening`，PrimeTween 需 `com.kyrylokuzyk.primetween`，Behavior 需 `com.unity.behavior`，HybridCLR 需 `com.code-philosophy.hybridclr`，Addressables 需 `com.unity.addressables`
+\*ProBuilder 需 `com.unity.probuilder`，XR 需 `com.unity.xr.interaction.toolkit`，Netcode 需 `com.unity.netcode.gameobjects`，YooAsset 需 `com.tuyoogame.yooasset (≥2.3.15)`，DOTween 需 `DG.Tweening`，PrimeTween 需 `com.kyrylokuzyk.primetween`，Behavior 需 `com.unity.behavior`，HybridCLR 需 `com.code-philosophy.hybridclr`，Addressables 需 `com.unity.addressables`，QFramework 需 [QFramework](https://github.com/liangxiegame/QFramework)（**无 UPM 包**——Toolkits unitypackage 装进 `Assets/QFramework/` 或单文件 `QFramework.cs`，故检测走反射锚类型而非包 id，且不声明 `RequiresPackages`）
 †Volume / PostProcess / Decal / URP 需 `com.unity.render-pipelines.universal`（URP 未安装时这 4 个模块以同名 stub 返回 `NoURP()` 提示）。
 
-**Advisory 模块 (29)**：architecture, patterns, performance, asmdef, async, inspector, blueprints, adr, project-scout, scene-contracts, script-roles, scriptdesign, testability, bookmark, history, netcode-design, yooasset-design, addressables-design, unitask-design, dotween-design, primetween-design, shadergraph-design, pico-design, yaml-editing, unity-cli, manual-gameobject, manual-component, manual-material, manual-scene — **纯架构/设计指导文档，无 REST Skills，无 C# 实现**；新增 advisory 时只动 `unity-skills~/skills/` 下文档，不要在 Editor/Skills/ 加 stub。
+**Advisory 模块 (28)**：architecture, patterns, performance, asmdef, async, inspector, blueprints, adr, project-scout, scene-contracts, script-roles, scriptdesign, testability, netcode-design, yooasset-design, addressables-design, unitask-design, dotween-design, primetween-design, shadergraph-design, pico-design, qframework-design, yaml-editing, unity-cli, manual-gameobject, manual-component, manual-material, manual-scene — **纯架构/设计指导文档，无 REST Skills，无 C# 实现**；新增 advisory 时只动 `unity-skills~/skills/` 下文档，不要在 Editor/Skills/ 加 stub。
 
 ---
 
@@ -207,5 +217,5 @@ public static object SkillName(string name, float x = 0f) { ... }
 - **正式发布**：`/release [版本号]` 必须依次通过 beta 候选矩阵、main/beta 同步、tag 自身矩阵，最后才创建稳定 GitHub Release 并核对 `releases/latest`；Unity 更新横幅以该稳定 Release 为准。
 - **扩展 Skill**：在 `Editor/Skills/` 已有模块文件内加 `[UnitySkill]` 静态方法（或新增 `XxxSkills.cs`），SkillRouter 启动反射自动发现。新增模块需在 `SkillCategory` 枚举里登记。
 - **新增 UI 窗口**：在 `Editor/UI/` 加 `.cs + .uxml + .uss` 三件套（参考 `UnitySkillsWindow` / `UnitySkillsAuditWindow`）。
-- **自定义命令**：`/skillcount`（数量同步）、`/skillcheck`（C# 与 SKILL.md 一致性）、`/metacheck`（.meta GUID）、`/updateversion`、`/release`。
+- **自定义命令**：`/skillcheck`（C# 与 SKILL.md 一致性审计 + 技能数量同步，原 `/skillcount` 已并入）、`/metacheck`（.meta GUID）、`/updateversion`、`/release`。
 - **Domain Reload 期间**：脚本保存、包安装等会让 REST 服务短暂不可达（503/504 带诊断），客户端等待重试是预期行为——**不要为绕过此现象修改服务端**。`SkillsHttpServer` 已有 EditorPrefs 持久化端口、连续失败 10 次上限、Watchdog 自动重启死亡线程等容错机制。

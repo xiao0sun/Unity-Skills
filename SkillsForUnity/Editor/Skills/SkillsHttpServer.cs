@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -14,18 +14,18 @@ using Newtonsoft.Json.Linq;
 namespace UnitySkills
 {
     /// <summary>
-    /// Production-grade HTTP server for UnitySkills REST API.
+    /// Production-grade HTTP server for the UnitySkills REST API.
     ///
-    /// Architecture: Strict Producer-Consumer Pattern
-    /// - HTTP Thread (Producer): ONLY receives requests and enqueues them. NO Unity API calls.
-    /// - Main Thread (Consumer): Processes ALL logic including routing, rate limiting, and skill execution.
+    /// Architecture: strict producer-consumer model
+    /// - HTTP thread (producer): only responsible for receiving requests and enqueuing them, never calls any Unity API.
+    /// - Main thread (consumer): handles all logic, including routing, rate limiting, and skill execution.
     ///
-    /// Resilience Features:
-    /// - Auto-restart after Domain Reload (script compilation)
-    /// - Persistent state via EditorPrefs
+    /// Resilience capabilities:
+    /// - Automatically restarts after a domain reload (script compilation)
+    /// - Persists state via EditorPrefs
     /// - Graceful shutdown and recovery
     ///
-    /// This ensures 100% thread safety with Unity's single-threaded architecture.
+    /// This is what achieves 100% thread safety with Unity's single-threaded architecture.
     /// </summary>
     [InitializeOnLoad]
     public static class SkillsHttpServer
@@ -34,40 +34,35 @@ namespace UnitySkills
         private static Thread _listenerThread;
         private static Thread _keepAliveThread;
         private static volatile bool _isRunning;
-        // volatile: read from the HTTP thread by the /health fast path.
+        // volatile: read by the /health fast path on the HTTP thread.
         private static volatile int _port = 8090;
         private static readonly string _prefixBase = "http://localhost:";
         private static string _prefix = $"{_prefixBase}{_port}/";
 
-        // Job queues - HTTP thread enqueues, Main thread dequeues and processes.
+        // Job queue — HTTP thread enqueues, main thread dequeues and processes.
         //
-        // Two lanes, both strictly FIFO within themselves:
-        // - light: read-only, millisecond-scale endpoints (liveness / progress polling).
-        //   Drained completely every frame, exempt from the frame time budget, so a
-        //   /health or /jobs/{id} poll never queues behind a multi-second skill.
-        // - heavy: everything that executes skills, builds the reflection caches or writes
-        //   state. Subject to both the per-frame count cap and the millisecond budget.
+        // Two lanes, each strictly FIFO internally:
+        // - light: read-only, millisecond-scale endpoints (liveness probe / progress polling), drained fully each
+        //   frame regardless of the frame budget, so /health or /jobs/{id} polling never queues behind a slow skill.
+        // - heavy: everything that executes a skill, builds the reflection cache, or writes state; bound by a per-frame count cap and a millisecond budget.
         //
-        // Cross-lane ordering is deliberately NOT preserved (that is the whole point);
-        // callers that need ordering must wait for their response before sending the next
-        // request, which is what the Python client already does.
+        // Ordering across lanes is deliberately not guaranteed (the whole point of the split); callers needing order
+        // must wait for the response before sending the next request — exactly what the Python client already does.
         //
-        // ConcurrentQueue rather than Queue+lock: the only place that used the lock for
-        // atomicity was Stop()'s drain, and that runs AFTER the listener thread is joined,
-        // so no concurrent producer can exist at that point.
+        // ConcurrentQueue instead of Queue+lock: the only place relying on a lock for atomicity is Stop()'s drain,
+        // which runs after the listener thread is joined, when there can no longer be concurrent producers.
         private static readonly ConcurrentQueue<RequestJob> _lightQueue = new ConcurrentQueue<RequestJob>();
         private static readonly ConcurrentQueue<RequestJob> _heavyQueue = new ConcurrentQueue<RequestJob>();
-        // Interlocked counters mirror the queue depths: ConcurrentQueue.Count walks segments,
-        // and admission control + /health read the depth on every single request.
+        // Mirror queue depth with Interlocked counters: ConcurrentQueue.Count requires walking segments,
+        // and admission control plus /health need to read the depth on every incoming request.
         private static int _lightQueued = 0;
         private static int _heavyQueued = 0;
         private static bool _updateHooked = false;
         private static int _pendingRequests = 0;
 
-        // Heavy-lane gates, both evaluated before starting each job. The count cap bounds the
-        // burst; the millisecond budget bounds the frame. A single skill can overrun the
-        // budget on its own — the budget cannot interrupt one, only decline to start another,
-        // which is what keeps the editor repainting under a long queue.
+        // Two gates on the heavy lane, checked before starting each job: a count cap bounds burstiness, a millisecond
+        // budget bounds per-frame duration. A single skill can exceed the budget — it can't interrupt a running skill,
+        // only refuse to start the next one — which is why the editor can still repaint under a long queue.
         private const int MaxHeavyJobsPerFrame = 20;
         private const double HeavyFrameBudgetSeconds = 0.012;
 
@@ -77,23 +72,22 @@ namespace UnitySkills
         private static readonly ConcurrentBag<RequestJob> _requestJobPool = new ConcurrentBag<RequestJob>();
         private static int _poolSize;
 
-        // Admission limiting on the listener thread to avoid queue and thread blowups.
+        // Admission-rate-limit on the listener thread, to keep the queue and threads from blowing up.
         private static int _admittedThisSecond = 0;
         private static long _lastAdmissionResetTicks = 0;
         
         // Keep-alive polling interval (ms) for checking pending jobs.
         private const int KeepAlivePollingMs = 50;
 
-        // Configurable interval for unconditional main-thread wakeup.
+        // Interval for unconditionally waking the main thread; configurable.
         private const string PrefKeyKeepAliveInterval = "UnitySkills_KeepAliveIntervalSeconds";
 
-        // Thread-safe cached value for KeepAliveIntervalSeconds (EditorPrefs is main-thread only)
+        // Thread-safe cached copy of KeepAliveIntervalSeconds (EditorPrefs can only be read on the main thread)
         private static long _cachedKeepAliveIntervalTicks = 10L * TimeSpan.TicksPerSecond;
 
         /// <summary>
-        /// How often (seconds) the keep-alive thread forces a main-thread wakeup,
-        /// even when there are no pending jobs. Keeps watchdog and heartbeat alive
-        /// while Unity is unfocused. Default 10s, minimum 1s.
+        /// Interval (seconds) at which the keep-alive thread forcibly wakes the main thread, even when there are no
+        /// pending jobs. Keeps the watchdog and heartbeat running while Unity is unfocused. Defaults to 10 seconds, minimum 1 second.
         /// </summary>
         public static int KeepAliveIntervalSeconds
         {
@@ -104,80 +98,76 @@ namespace UnitySkills
                 _cachedKeepAliveIntervalTicks = (long)Mathf.Max(1, value) * TimeSpan.TicksPerSecond;
             }
         }
-        // Request processing timeout - cached for thread safety (EditorPrefs is main-thread only)
+        // Request processing timeout — cached for thread safety (EditorPrefs can only be read on the main thread)
         private static int _cachedTimeoutMs = 15 * 60 * 1000;
         private static int RequestTimeoutMs => _cachedTimeoutMs;
         internal static void RefreshTimeoutCache() => _cachedTimeoutMs = RequestTimeoutMinutes * 60 * 1000;
         private const int MaxBodySizeBytes = 10 * 1024 * 1024; // 10MB
-        // Heartbeat interval for registry (seconds)
+        // Registry heartbeat interval (seconds)
         private const double HeartbeatInterval = 30.0;
         private static double _lastHeartbeatTime = 0;
 
-        // Watchdog: periodically verify listener thread is alive and restart if not
+        // Watchdog: periodically confirms the listener thread is alive, restarts it if not
         private const double WatchdogInterval = 15.0;
         private static double _lastWatchdogCheck = 0;
 
-        // Safety net: recover server after Domain Reload if delayCall failed to fire
+        // Fallback: recovers the server after a domain reload if delayCall never fires
         private const double SafetyNetInterval = 5.0;
         private static double _lastSafetyNetCheck = 0;
 
-        // KeepAlive: unconditional wakeup interval (ticks; 5s = 50_000_000 ticks)
+        // KeepAlive: unconditional wake interval (ticks; 5 seconds = 50_000_000 ticks)
         private static long _lastForceWakeTicks = 0;
 
         // Statistics
         private static long _totalRequestsProcessed = 0;
         private static long _totalRequestsReceived = 0;
 
-        // Startup diagnostic: counts ProcessJobQueue ticks since Start() for self-test diagnostics
+        // Startup diagnostics: counts ProcessJobQueue ticks since Start() for self-check use
         private static volatile int _pjqTicksSinceStart = -1;
 
         // ===== Main-thread liveness mirror + /health snapshot =====
         //
-        // Everything in this block is written ONLY on the main thread and read from the HTTP
-        // listener thread by SendHealthFastPath. It exists so GET /health can be answered
-        // without entering the job queue: the probe used to hang behind whatever long skill
-        // was running, which made "server dead" and "Unity busy" look identical to a client.
+        // Everything in this block is only ever written on the main thread, read by SendHealthFastPath on the HTTP
+        // listener thread. It exists so GET /health can answer without going through the job queue: previously probes
+        // got stuck behind a long-running skill, making "server is dead" and "Unity is busy" look identical to clients.
 
-        // DateTime.UtcNow.Ticks of the most recent ProcessJobQueue frame. C# does not allow
-        // `volatile long`, so this goes through Interlocked — atomic on 32-bit builds too.
+        // DateTime.UtcNow.Ticks from the most recent ProcessJobQueue frame. C# doesn't allow `volatile long`,
+        // so it's accessed via Interlocked — which is likewise atomic on 32-bit builds.
         private static long _mainThreadTickUtc = 0;
 
-        // Values that require a Unity API / EditorPrefs read, mirrored into plain statics.
+        // Values that need to read Unity API / EditorPrefs, mirrored into plain static fields.
         private static volatile string _snapUnityVersion;
         private static volatile string _snapInstanceId;
         private static volatile string _snapProjectName;
         private static volatile string _snapCurrentMode;
         private static volatile bool _snapPanelApprovalRequired;
-        private static volatile bool _snapGuideMode;
+        private static volatile string _snapSurfaceProfile = SkillsSurfaceProfile.WireFull;
         private static volatile int _snapPendingCount;
         private static volatile int _snapAllowlistCount;
         private static volatile bool _snapAutoStart = true;
         private static volatile int _snapRequestTimeoutMinutes = 15;
         private static volatile bool _snapIsCompiling;
         private static volatile bool _snapIsUpdating;
-        // Until the first full refresh lands, the fast path declines and /health falls back
-        // to the main-thread queue rather than reporting placeholder values.
+        // Before the first full refresh has landed, the fast path always bails out and /health falls back to the
+        // main-thread queue instead of reporting placeholder values.
         private static volatile bool _snapReady;
-        // Set from any thread by the SkillsModeManager.OnChanged / SkillsGuideMode.OnChanged
-        // hooks; consumed on the next main-thread frame. A flag rather than a direct refresh so
-        // every Unity API read in RefreshHealthSnapshot stays on the main thread regardless of
-        // who raised the event.
+        // Set from any thread by the SkillsModeManager.OnChanged / SkillsSurfaceProfile.OnChanged hooks, consumed on
+        // the next main-thread frame. A flag rather than an in-place refresh is used so that every Unity API read
+        // inside RefreshHealthSnapshot stays on the main thread, regardless of which thread raised the event.
         private static volatile bool _healthSnapshotDirty = true;
         private static bool _modeHookInstalled = false;
 
-        // Floor for the expensive half of the snapshot when nothing raised OnChanged. Catches
-        // drift the event cannot see: grant TTL expiry, prefs edited outside the manager.
+        // Floor on refreshing the "expensive half" of the snapshot when there's no OnChanged event at all. Catches
+        // drift that events can't see: an expired grant TTL, or prefs changed directly, bypassing the manager.
         private const double HealthSnapshotInterval = 1.0;
         private static double _lastHealthSnapshot = 0;
 
-        // ===== gzip body cache (HTTP thread) =====
+        // ===== gzip response body cache (HTTP thread) =====
         //
-        // Applies to GET /skills and GET /skills/schema only — the two bodies big enough for
-        // it to matter (~143KB summary, ~618KB full schema). Keyed by ETag, which is a content
-        // hash, so entries are self-invalidating: new content means a new key and the stale
-        // key is simply never requested again. Compression is pure CPU with no Unity API, so
-        // it is legal on the HTTP thread; the ~618KB pass costs tens of ms and only ever runs
-        // on a cache miss.
+        // Only used for GET /skills and GET /skills/schema — the only two response bodies large enough to be worth
+        // compressing (summary ~143KB, full schema ~618KB). Keyed by ETag, a content hash, so entries self-invalidate:
+        // content changes the key, and the old key is never requested again. Compression is pure CPU, never touches
+        // the Unity API, so it's legitimate on the HTTP thread; the 618KB pass takes tens of ms, only on a cache miss.
         private const int GzipMinBytes = 4096;
         private const int MaxGzipCacheEntries = 32;
         private const long MaxGzipCacheBytes = 8L * 1024 * 1024;
@@ -186,10 +176,10 @@ namespace UnitySkills
         private static readonly object _gzipCacheLock = new object();
         private static long _gzipCacheBytes = 0;
 
-        // Shared JSON settings from SkillsCommon (single definition, no duplication)
+        // Reuse SkillsCommon's JSON settings (single definition, no duplication)
         private static readonly JsonSerializerSettings _jsonSettings = SkillsCommon.JsonSettings;
         
-        // Persistence keys for Domain Reload recovery (Project Scoped) — lazy-cached
+        // Persistence key for domain-reload recovery (project-level scope) — lazily cached
         private static string PrefKey(string key) => $"UnitySkills_{RegistryService.InstanceId}_{key}";
 
         private static string _prefServerShouldRun;
@@ -206,9 +196,9 @@ namespace UnitySkills
         private static string PREF_CONSECUTIVE_FAILURES => _prefConsecutiveFailures ??= PrefKey("ConsecutiveRestartFailures");
         private const int MaxConsecutiveFailures = 10;
 
-        // Domain Reload tracking
-        // volatile: read from the HTTP thread (/health fast path) and the ThreadPool
-        // responder (timeout diagnostics); written on the main thread only.
+        // Domain reload tracking
+        // volatile: read by the HTTP thread (/health fast path) and by ThreadPool responders (timeout diagnostics),
+        // only ever written on the main thread.
         private static volatile bool _domainReloadPending = false;
 
         public static bool IsRunning => _isRunning;
@@ -224,8 +214,7 @@ namespace UnitySkills
         }
         
         /// <summary>
-        /// Gets or sets whether the server should auto-start.
-        /// When true, server will automatically restart after Domain Reload.
+        /// Whether the server auto-starts. When true, it automatically restarts after a domain reload.
         /// </summary>
         public static bool AutoStart
         {
@@ -242,8 +231,7 @@ namespace UnitySkills
         private const string PrefKeyPreferredPort = "UnitySkills_PreferredPort";
 
         /// <summary>
-        /// Gets or sets the preferred port for the server.
-        /// 0 = Auto (scan 8090-8100), otherwise use specified port.
+        /// Preferred server port. 0 = automatic (scans 8090-8100), otherwise uses the specified port.
         /// </summary>
         public static int PreferredPort
         {
@@ -254,8 +242,7 @@ namespace UnitySkills
         private const string PrefKeyRequestTimeout = "UnitySkills_RequestTimeoutMinutes";
 
         /// <summary>
-        /// Gets or sets the request timeout in minutes.
-        /// Default 15 minutes. Minimum 1 minute.
+        /// Request timeout (minutes). Defaults to 15 minutes, minimum 1 minute.
         /// </summary>
         public static int RequestTimeoutMinutes
         {
@@ -268,12 +255,11 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Represents a pending HTTP request job.
-        /// Created by HTTP thread, processed by Main thread.
+        /// A pending HTTP request job. Created by the HTTP thread, processed by the main thread.
         /// </summary>
         private class RequestJob
         {
-            // Raw HTTP data (set by HTTP thread)
+            // Raw HTTP data (written by the HTTP thread)
             public HttpListenerContext Context;
             public string HttpMethod;
             public string Path;
@@ -282,18 +268,17 @@ namespace UnitySkills
             public string RequestId;
             public string AgentId;
             public string QueryString;
-            // Conditional-GET / content-negotiation headers. Reading request headers is a
-            // pure string operation, so the HTTP thread captures them at enqueue time.
+            // Headers for conditional GET / content negotiation. A pure string read, so grabbed by the HTTP thread at enqueue time.
             public string IfNoneMatch;
             public string AcceptEncoding;
 
-            // Result (set by Main thread)
+            // Processing result (written by the main thread)
             public string ResponseJson;
             public int StatusCode;
             public bool IsProcessed;
             public int PoolReturned;
-            // Content hash of ResponseJson for the two cacheable GET endpoints; null for
-            // everything else. Drives both the ETag header and the gzip cache key.
+            // Content hash of ResponseJson for the two cacheable GET endpoints, null for every other endpoint.
+            // It also doubles as both the ETag header and the gzip cache key.
             public string ETag;
             public ManualResetEventSlim CompletionSignal = new ManualResetEventSlim(false);
 
@@ -333,7 +318,7 @@ namespace UnitySkills
                 StatusCode = 200;
                 IsProcessed = false;
                 ETag = null;
-                // Note: PoolReturned is managed by ReturnRequestJob/Prepare, not Reset
+                // Note: PoolReturned is maintained by ReturnRequestJob/Prepare, not managed by Reset
                 CompletionSignal.Reset();
             }
         }
@@ -357,9 +342,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Best-effort close for a context the accept loop never handed to a responder.
-        /// Closing an already-closed response is a no-op; leaving it open leaks the socket
-        /// for the lifetime of the editor process.
+        /// Best-effort close for a context that the accept loop never handed off to a responder.
+        /// Closing an already-closed response is a no-op; not closing it leaks the socket until the editor process exits.
         /// </summary>
         private static void CloseContextSafely(HttpListenerContext context)
         {
@@ -411,30 +395,27 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Lane classification for the dual job queue. Light means read-only AND
-        /// millisecond-bounded — the liveness / progress polls an agent fires in a loop while a
-        /// long skill is running. Everything else is heavy: anything that executes a skill,
-        /// writes state, builds the reflection caches, or does unbounded disk work.
+        /// Lane classification for the two-lane queue. "light" = "read-only and millisecond-scale" — the liveness/progress
+        /// polling an agent loops on during a long skill. Everything else is "heavy": execute, write state, build the reflection cache, or unbounded disk I/O.
         ///
-        /// Verified per handler; do not add an endpoint here without re-reading its handler.
-        /// - OPTIONS — a 204 with no handler at all.
-        /// - GET /health, GET / — only ?live=1 probes reach the queue (the rest are answered on
-        ///   the HTTP thread); the handler reads EditorPrefs and two compilation flags.
+        /// Every handler here has been individually verified; don't add an endpoint before re-reading its handler.
+        /// - OPTIONS — straight to 204, has no handler at all.
+        /// - GET /health, GET / — only the ?live=1 probe goes through the queue (everything else is answered on the
+        ///   HTTP thread); that handler reads EditorPrefs and two compile flags.
         /// - GET /compile/status — two EditorApplication flags plus a cached SessionState string.
-        /// - GET /jobs, /jobs/{id}[/logs|/progress] — BatchPersistence.ListJobs / GetJob project
-        ///   an already-loaded in-memory list; no write path is reachable from the GET handler.
-        /// - GET /permission/status — reads mode, allowlist and pending grants. The
-        ///   PendingGrantRequests getter runs a lazy TTL sweep of expired grants, which is the
-        ///   one write in this lane: bounded by MaxLiveGrants, no Unity work, and it only
-        ///   collects the caller's own expired tokens.
+        /// - GET /jobs, /jobs/{id}[/logs|/progress] — BatchPersistence.ListJobs / GetJob just projects an
+        ///   already-loaded in-memory list; the GET handler never reaches any write path.
+        /// - GET /permission/status — reads mode, allowlist, and pending grants. The PendingGrantRequests getter
+        ///   lazily sweeps expired grants, which is the only write in this lane: bounded by MaxLiveGrants, never
+        ///   touches Unity, and only reclaims the caller's own expired tokens.
         ///
-        /// Deliberately heavy despite being read-only:
-        /// - GET /analytics — aggregates telemetry JSONL from disk. Cached 30s per window, but
-        ///   the first call in a window is unbounded I/O, so it fails the millisecond half.
-        /// - GET /skills/recommend — calls SkillRouter.Initialize() (a full reflection scan on
-        ///   a cold domain) and then scores every skill.
-        /// - GET /skills, /skills/schema — a queued one is by definition a cache miss, i.e. the
-        ///   request that builds the multi-hundred-KB manifest.
+        /// The following are read-only but deliberately classified as heavy:
+        /// - GET /analytics — has to aggregate telemetry JSONL from disk. Each window is cached for 30 seconds, but
+        ///   the first call for a given window is unbounded I/O, which fails the "millisecond-scale" half of the test.
+        /// - GET /skills/recommend — calls SkillRouter.Initialize() (a full reflection scan on a cold domain), then
+        ///   scores every skill.
+        /// - GET /skills, /skills/schema — anything that actually reaches the queue is, by definition, a cache
+        ///   miss — i.e. exactly the request that has to build a several-hundred-KB manifest.
         /// </summary>
         private static bool IsLightRequest(string httpMethod, string path)
         {
@@ -454,9 +435,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Dequeues one job and keeps the mirrored depth counter in step. The counter is only
-        /// decremented on a successful take, so a miss against a concurrent producer that has
-        /// incremented but not yet enqueued leaves the count intact.
+        /// Dequeues a job and keeps the mirrored depth counter in sync. Only decrements on a successful take, so a
+        /// race with a concurrent producer that has already incremented but not yet enqueued leaves the count unchanged.
         /// </summary>
         private static bool TryDequeueJob(ConcurrentQueue<RequestJob> queue, ref int counter, out RequestJob job)
         {
@@ -468,9 +448,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Fails every job still queued in one lane with 503 SERVER_STOPPED and releases its
-        /// waiting responder. Safe to call unsynchronized only because Stop() runs it after the
-        /// listener thread has been joined, so no producer can still be enqueueing.
+        /// Fails every job still queued on a lane with 503 SERVER_STOPPED, releasing its waiting responder. Safe to call
+        /// without extra synchronization only because Stop() runs it after the listener thread is joined, when no producer can still be enqueuing.
         /// </summary>
         private static void FailQueuedJobs(ConcurrentQueue<RequestJob> queue, ref int counter)
         {
@@ -488,8 +467,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Parse a pre-serialized error JSON string back into a JObject so it can be
-        /// passed through SendImmediateJsonResponse without double-encoding.
+        /// Parses an already-serialized error JSON string back into a JObject, so it can be emitted through
+        /// SendImmediateJsonResponse without being double-encoded.
         /// </summary>
         private static JObject BuildErrorPayload(string rawJson)
         {
@@ -532,10 +511,9 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Fast-path responder for cached GET /skills and /skills/schema. Runs ON THE HTTP
-        /// LISTENER THREAD — must never touch Unity APIs or SkillsLogger (headers, hashing,
-        /// compression and socket writes only). Adds an ETag header, honors If-None-Match with
-        /// an empty-body 304 reply, and serves a cached gzip body when the client asked for it.
+        /// Fast-path responder for cached GET /skills and /skills/schema. Runs on the HTTP listener thread — must
+        /// never touch the Unity API or SkillsLogger (only headers, hashing, compression, socket writes). Attaches an
+        /// ETag header, answers If-None-Match with an empty-body 304, and serves the cached gzip body when asked.
         /// </summary>
         private static void SendCachedGetResponse(HttpListenerContext context, HttpListenerRequest request, string json, string etag)
         {
@@ -550,15 +528,14 @@ namespace UnitySkills
                 response.Headers.Add("X-Agent-Id", DetectAgent(request));
                 response.Headers.Add("X-Fast-Path", "true");
                 response.Headers.Add("ETag", $"\"{etag}\"");
-                // The same URL now has two possible bodies (identity / gzip); without Vary an
-                // intermediary could hand a gzip body to a client that never asked for one.
+                // The same URL now has two possible response bodies (identity / gzip); without Vary,
+                // an intermediate proxy might hand the gzip body to a client that never asked for compression.
                 response.Headers.Add("Vary", "Accept-Encoding");
 
-                // 304 is decided before compression: an unchanged body should cost zero bytes
-                // and zero CPU, not a gzip pass.
+                // 304 is decided before compression: unchanged content should cost zero bytes and zero CPU, not a wasted gzip pass.
                 if (IfNoneMatchSatisfied(request.Headers["If-None-Match"], etag))
                 {
-                    response.StatusCode = 304; // Not Modified — must not carry a body
+                    response.StatusCode = 304; // Not Modified — must not carry a response body
                     return;
                 }
 
@@ -577,10 +554,9 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Writes a response body as gzip when the client advertised it and a compressed form
-        /// is available, otherwise as plain UTF-8. Shared by the HTTP-thread fast path and the
-        /// main-thread slow path so both negotiate identically. Caller must have already set
-        /// the status code and content type.
+        /// Writes the body as gzip when the client supports it and a compressed body is available, else plain UTF-8.
+        /// Shared by the HTTP-thread fast path and main-thread slow path, so content negotiation is identical between
+        /// them. The caller must have already set the status code and content type.
         /// </summary>
         private static void WriteNegotiatedBody(HttpListenerResponse response, string json, string etag, string acceptEncoding)
         {
@@ -602,9 +578,9 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// True when the client listed gzip (or "*") in Accept-Encoding without disabling it
-        /// via q=0. Deliberately minimal — this only gates two endpoints, and every real
-        /// client (requests, curl, browsers) sends a plain "gzip, deflate".
+        /// Returns true if the client lists gzip (or "*") in Accept-Encoding and hasn't disabled it with q=0.
+        /// Deliberately kept minimal — it only gates two endpoints, and real clients (requests, curl, browsers)
+        /// all just send plain "gzip, deflate".
         /// </summary>
         private static bool AcceptsGzip(string acceptEncoding)
         {
@@ -629,7 +605,7 @@ namespace UnitySkills
                             System.Globalization.NumberStyles.Float,
                             System.Globalization.CultureInfo.InvariantCulture,
                             out double q) && q <= 0)
-                        continue; // explicitly refused — keep scanning for another token
+                        continue; // explicitly rejected — keep scanning the next token
                 }
                 return true;
             }
@@ -637,13 +613,11 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Returns the gzip body for <paramref name="json"/>, compressing and caching on first
-        /// use. Returns null — meaning "send it uncompressed" — for bodies below
-        /// <see cref="GzipMinBytes"/>, for content gzip cannot shrink, and for any failure:
-        /// compression must never be able to fail a request.
+        /// Returns the gzip body of <paramref name="json"/>, compressing and caching it on first use.
+        /// Returns null (meaning "send as-is, uncompressed") when: the size is below <see cref="GzipMinBytes"/>,
+        /// gzip fails to shrink the content, or on any failure — compression must never make a request fail.
         ///
-        /// Pure CPU + string work, safe on the HTTP thread. See the cache declaration for the
-        /// key/eviction rationale.
+        /// Pure CPU and string operations, safe on the HTTP thread. See the cache declaration for key/eviction rationale.
         /// </summary>
         private static byte[] GetOrBuildGzip(string etag, string json)
         {
@@ -658,7 +632,7 @@ namespace UnitySkills
             {
                 byte[] raw = Encoding.UTF8.GetBytes(json);
                 if (raw.Length < GzipMinBytes)
-                    return null; // framing + an extra header would cost more than they save
+                    return null; // the overhead of one extra response header would exceed what compression saves
 
                 using (var ms = new System.IO.MemoryStream(raw.Length / 4 + 256))
                 {
@@ -667,7 +641,7 @@ namespace UnitySkills
                     {
                         gz.Write(raw, 0, raw.Length);
                     }
-                    // Read the length only after the inner using flushed the gzip trailer.
+                    // Must wait for the inner using to flush the gzip trailer before reading the length.
                     if (ms.Length < raw.Length)
                         compressed = ms.ToArray();
                 }
@@ -695,8 +669,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Loose If-None-Match comparison: tolerates quoted values, W/ weak prefixes,
-        /// comma-separated lists and the '*' wildcard.
+        /// Lenient If-None-Match comparison: tolerates quoted values, the W/ weak prefix, comma lists, and '*' wildcard.
         /// </summary>
         private static bool IfNoneMatchSatisfied(string ifNoneMatch, string etag)
         {
@@ -719,11 +692,10 @@ namespace UnitySkills
         // ===== GET /health =====
 
         /// <summary>
-        /// The part of the /health payload that originates from Unity APIs or EditorPrefs.
-        /// Two producers, one shape: <see cref="FromSnapshot"/> (HTTP thread, reads the
-        /// mirrored statics) and <see cref="FromLive"/> (main thread, reads for real). Keeping
-        /// them in a single struct consumed by a single builder is what stops the fast path
-        /// and <c>?live=1</c> from drifting into two different response shapes.
+        /// The part of the /health payload that comes from the Unity API or EditorPrefs.
+        /// Two producers, one shape: <see cref="FromSnapshot"/> (HTTP thread, reads mirrored static fields) and
+        /// <see cref="FromLive"/> (main thread, reads live). Sharing one struct and one builder is what keeps the
+        /// fast path and <c>?live=1</c> from drifting into two different response shapes.
         /// </summary>
         private struct HealthVitals
         {
@@ -732,7 +704,10 @@ namespace UnitySkills
             public string ProjectName;
             public string CurrentMode;
             public bool PanelApprovalRequired;
-            public bool GuideMode;
+            // Wire value of the user-exposed surface tier ("full" / "guide" / "noSceneAuthoring").
+            // The deprecated guideMode boolean is derived from this in BuildHealthJson rather than mirrored
+            // separately, so the two can never disagree.
+            public string SurfaceProfile;
             public int PendingCount;
             public int AllowlistCount;
             public bool AutoRestart;
@@ -740,7 +715,7 @@ namespace UnitySkills
             public bool IsCompiling;
             public bool IsUpdating;
 
-            /// <summary>HTTP-thread safe: plain static reads, zero Unity API.</summary>
+            /// <summary>HTTP-thread safe: reads only plain static fields, zero Unity API.</summary>
             public static HealthVitals FromSnapshot() => new HealthVitals
             {
                 UnityVersion = _snapUnityVersion,
@@ -748,7 +723,7 @@ namespace UnitySkills
                 ProjectName = _snapProjectName,
                 CurrentMode = _snapCurrentMode,
                 PanelApprovalRequired = _snapPanelApprovalRequired,
-                GuideMode = _snapGuideMode,
+                SurfaceProfile = _snapSurfaceProfile,
                 PendingCount = _snapPendingCount,
                 AllowlistCount = _snapAllowlistCount,
                 AutoRestart = _snapAutoStart,
@@ -757,7 +732,7 @@ namespace UnitySkills
                 IsUpdating = _snapIsUpdating,
             };
 
-            /// <summary>MAIN THREAD ONLY — reads Unity APIs, EditorPrefs and the permission collections.</summary>
+            /// <summary>Main thread only — reads the Unity API, EditorPrefs, and permission sets.</summary>
             public static HealthVitals FromLive()
             {
                 return new HealthVitals
@@ -767,11 +742,10 @@ namespace UnitySkills
                     ProjectName = RegistryService.ProjectName,
                     CurrentMode = SkillsModeManager.ModeToWire(SkillsModeManager.CurrentMode),
                     PanelApprovalRequired = SkillsModeManager.PanelApprovalRequired,
-                    GuideMode = SkillsGuideMode.Enabled,
+                    SurfaceProfile = SkillsSurfaceProfile.CurrentWire,
                     PendingCount = SkillsModeManager.PendingGrantRequests.Count,
                     AllowlistCount = SkillsModeManager.AllowlistSkills.Count,
-                    // Qualified: the field names below shadow the enclosing class's
-                    // same-named members inside this nested type.
+                    // Fully qualified: inside this nested type, the fields below would shadow the outer class's same-named members.
                     AutoRestart = SkillsHttpServer.AutoStart,
                     RequestTimeoutMinutes = SkillsHttpServer.RequestTimeoutMinutes,
                     IsCompiling = EditorApplication.isCompiling,
@@ -781,14 +755,11 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// MAIN THREAD ONLY. Mirrors <see cref="HealthVitals"/> into the static fields the
-        /// HTTP-thread /health path reads.
+        /// Main thread only. Mirrors <see cref="HealthVitals"/> into the static fields read by the HTTP thread's /health path.
         ///
-        /// full=false is the per-frame path and touches only the two compilation flags — cheap
-        /// property reads, and the only vitals that actually move frame to frame. full=true
-        /// additionally re-reads EditorPrefs and the permission collections (AllowlistSkills
-        /// sorts and copies, PendingGrantRequests sweeps expiries), which is far too wasteful
-        /// at editor frame rate.
+        /// full=false is the per-frame path, touching only two compilation flags — cheap reads, and the only metrics
+        /// that genuinely change frame to frame. full=true also re-reads EditorPrefs and the permission sets
+        /// (AllowlistSkills sorts/copies, PendingGrantRequests sweeps expired entries) — too wasteful at frame rate.
         /// </summary>
         private static void RefreshHealthSnapshot(bool full)
         {
@@ -806,7 +777,7 @@ namespace UnitySkills
                 _snapProjectName = vitals.ProjectName;
                 _snapCurrentMode = vitals.CurrentMode;
                 _snapPanelApprovalRequired = vitals.PanelApprovalRequired;
-                _snapGuideMode = vitals.GuideMode;
+                _snapSurfaceProfile = vitals.SurfaceProfile;
                 _snapPendingCount = vitals.PendingCount;
                 _snapAllowlistCount = vitals.AllowlistCount;
                 _snapAutoStart = vitals.AutoRestart;
@@ -817,39 +788,44 @@ namespace UnitySkills
             }
             catch (Exception ex)
             {
-                // A stale snapshot is strictly better than a broken editor update loop; the
-                // next frame retries. mainThreadIdleMs still reports the truth either way.
+                // A stale snapshot is strictly better than breaking the editor's update loop; the next frame retries.
+                // Either way, mainThreadIdleMs still reports a truthful value.
                 SkillsLogger.LogVerbose($"Health snapshot refresh failed: {ex.GetType().Name}: {ex.Message}");
             }
         }
 
         /// <summary>
-        /// Marks the expensive half of the health snapshot for refresh on the next main-thread
-        /// frame. Hooked to <see cref="SkillsModeManager.OnChanged"/> and
-        /// <see cref="SkillsGuideMode.OnChanged"/> so mode / grant / allowlist / guide-mode
-        /// changes show up on /health immediately instead of waiting out
-        /// <see cref="HealthSnapshotInterval"/>. Setting a volatile flag (rather than
-        /// refreshing inline) keeps every Unity API read on the main thread no matter which
-        /// thread raised the event.
+        /// Marks the "expensive half" of the health snapshot as needing a refresh on the next main-thread frame.
+        /// Hooked onto <see cref="SkillsModeManager.OnChanged"/> and <see cref="SkillsSurfaceProfile.OnChanged"/>,
+        /// so changes to mode / grants / allowlist / surface profile are reflected in /health immediately, instead
+        /// of waiting out <see cref="HealthSnapshotInterval"/>.
+        /// Setting a volatile flag (rather than refreshing in place) guarantees that no matter which thread raised
+        /// the event, every Unity API read stays on the main thread.
         /// </summary>
         private static void OnPermissionStateChanged() => _healthSnapshotDirty = true;
 
         /// <summary>
-        /// Serializes the /health payload. Callers supply the vitals; everything else here is
-        /// a plain static read that is safe on any thread, so this one method backs both the
-        /// HTTP-thread fast path and the main-thread <c>?live=1</c> path.
+        /// Serializes the /health payload. The caller supplies vitals; everything else is a plain static read safe on
+        /// any thread, which is why this one method backs both the HTTP-thread fast path and the main thread's <c>?live=1</c> path.
         /// </summary>
         private static string BuildHealthJson(HealthVitals v, bool live)
         {
             long tick = Interlocked.Read(ref _mainThreadTickUtc);
             long idleMs = tick == 0
-                ? -1L // the update loop has not ticked yet — age is unknown, not zero
+                ? -1L // the update loop hasn't ticked yet — age is unknown here, not zero
                 : Math.Max(0L, (DateTime.UtcNow.Ticks - tick) / TimeSpan.TicksPerMillisecond);
 
             int lightQueued = Volatile.Read(ref _lightQueued);
             int heavyQueued = Volatile.Read(ref _heavyQueued);
             int queued = lightQueued + heavyQueued;
             int allowlistCount = v.AllowlistCount;
+
+            string profile = v.SurfaceProfile ?? SkillsSurfaceProfile.WireFull;
+            bool isGuide = profile == SkillsSurfaceProfile.WireGuide;
+            string surfaceProfileHint =
+                isGuide ? "Guide profile: the write skills of GameObject / Component / Material / Scene (and the Sample primitives) are hidden and answer SURFACE_EXCLUDED. Read SKILL_GUIDE.md and instruct the user through the Editor steps; read-only skills there and every other module still work."
+                : profile == SkillsSurfaceProfile.WireNoSceneAuthoring ? "noSceneAuthoring profile: scene-authoring write skills are hidden and answer SURFACE_EXCLUDED. Do the rest of the task normally; if it genuinely needs scene authoring, say so and let the user switch the profile back to full."
+                : null;
 
             return JsonConvert.SerializeObject(new
             {
@@ -872,10 +848,19 @@ namespace UnitySkills
                 allowlistCount,
                 // Deprecated alias for allowlistCount, kept for backward compatibility
                 // (mirrors the `granted` / `counts.granted` aliases on /permission/status).
-                // Safe to remove in a future major version once external consumers migrate.
+                // Can be removed in some future major version once external consumers have migrated.
                 grantedCount = allowlistCount,
-                guideMode = v.GuideMode,
-                guideModeHint = "AI should read SKILL_GUIDE.md and guide manual steps for simple tasks instead of calling write skills.",
+                // The slice of the skill surface currently exposed to the user. Authoritative: the agent cannot
+                // change it, and any skill it hides answers SURFACE_EXCLUDED at execution time.
+                surfaceProfile = v.SurfaceProfile,
+                // Deprecated alias for surfaceProfile == "guide", kept for pre-2.7 clients that only understand a
+                // boolean switch. Such clients would read noSceneAuthoring as false, i.e. "nothing is hidden" —
+                // which is exactly why the hint field below needs to spell out the tier explicitly.
+                guideMode = isGuide,
+                // Only carries text when the tier isn't full: there's nothing to say in the full tier, and an
+                // unconditional "prefer manual steps" hint (which is what this field used to always say) would
+                // push the agent away from automation the user has actually already enabled.
+                surfaceProfileHint = surfaceProfileHint,
                 threads = new
                 {
                     listenerAlive = _listenerThread?.IsAlive ?? false,
@@ -893,40 +878,36 @@ namespace UnitySkills
                     totalReceived = Interlocked.Read(ref _totalRequestsReceived),
                 },
 
-                // ---- added in 2.3 (purely additive; no existing field changed meaning) ----
+                // ---- 2.3 additions (purely incremental, doesn't change the semantics of any existing field) ----
                 port = _port,
-                // Milliseconds since the last EditorApplication.update tick reached us. This
-                // is the field that makes a fast-path /health worth having: the server can now
-                // answer instantly AND tell you the main thread is stuck. Single-digit values
-                // are a healthy idle editor; seconds mean "alive, but Unity is busy" (long
-                // skill, modal dialog, import) rather than "server dead".
+                // Milliseconds since the last EditorApplication.update tick reached us. This is exactly what makes the
+                // fast-path /health worthwhile: the server answers instantly while still telling you if the main thread is stuck.
+                // A single-digit value means the editor is idle and healthy; several seconds means "alive but Unity is busy"
+                // (a long skill, a modal dialog, importing) rather than "the server is dead".
                 mainThreadIdleMs = idleMs,
-                // Admitted-but-not-yet-answered requests (queue depth plus in-flight
-                // responders), against the MaxPendingRequests admission limit.
+                // Requests admitted but not yet answered (queue depth plus in-flight responders); the MaxPendingRequests admission cap.
                 pendingRequests = Volatile.Read(ref _pendingRequests),
-                // Per-lane depth of the dual job queue; light is drained every frame.
+                // Depth of each of the two job-queue lanes; light is drained every frame.
                 lightQueued,
                 heavyQueued,
                 domainReloadPending = _domainReloadPending,
-                // True when workflow history failed to load this session: rollback data is
-                // degraded and file-store cleanup is suspended until the history is cleared.
+                // True when this session's workflow history failed to load: rollback data is degraded, and
+                // library cleanup stays paused until the history is cleared.
                 workflowRecoveryMode = WorkflowManager.IsHistoryRecoveryMode,
-                // false = answered on the HTTP thread from a snapshot up to ~1s old.
-                // true  = answered on the main thread with live reads (GET /health?live=1).
+                // false = answered on the HTTP thread from a snapshot up to ~1 second old.
+                // true  = answered after a live read on the main thread (GET /health?live=1).
                 live,
                 note = "If you get 'Connection Refused', Unity may be reloading scripts. Wait 2-3 seconds and retry."
             }, _jsonSettings);
         }
 
         /// <summary>
-        /// HTTP-thread responder for GET /health and GET /. Every value comes from a plain
-        /// static field or the main-thread snapshot, so this touches zero Unity APIs, zero
-        /// EditorPrefs and zero SkillsLogger — the same contract as SendCachedGetResponse.
+        /// HTTP-thread responder for GET /health and GET /. Every value comes from a plain static field or the
+        /// main-thread snapshot — zero Unity API, zero EditorPrefs, zero SkillsLogger — same contract as SendCachedGetResponse.
         ///
-        /// The point is diagnosability under load: on the old main-thread-only path a single
-        /// long skill made the liveness probe itself hang, so a caller could not tell "server
-        /// dead" from "Unity busy". Now it answers immediately and mainThreadIdleMs says which.
-        /// Callers that need strictly live values use GET /health?live=1.
+        /// The point is staying diagnosable under load: on the old "everything through the main thread" path, one
+        /// long-running skill could hang the liveness probe itself, so callers couldn't tell "server is dead" from
+        /// "Unity is busy". Now it answers instantly and mainThreadIdleMs says which; use GET /health?live=1 for a strictly live value.
         /// </summary>
         private static void SendHealthFastPath(HttpListenerContext context, HttpListenerRequest request)
         {
@@ -958,8 +939,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// True for GET /health?live=1 (or live=true) — the opt-in back to the main-thread
-        /// queue, where every field is read live instead of from a snapshot up to ~1s old.
+        /// Returns true for GET /health?live=1 (or live=true) — an explicit opt-in to fall back to the main-thread
+        /// queue, where every field is read live rather than pulled from a snapshot up to ~1 second old.
         /// </summary>
         private static bool WantsLiveHealth(string query)
         {
@@ -972,7 +953,7 @@ namespace UnitySkills
                     value.Equals("true", StringComparison.OrdinalIgnoreCase));
         }
 
-        // Agent detection table - keyword to agent ID mapping
+        // Agent recognition table: keyword -> agent ID mapping
         private static readonly (string keyword, string agentId)[] _agentKeywords = new[]
         {
             ("claude", "ClaudeCode"), ("anthropic", "ClaudeCode"),
@@ -981,6 +962,7 @@ namespace UnitySkills
             ("trae", "Trae"), ("bytedance", "Trae"),
             ("antigravity", "Antigravity"),
             ("opencode", "OpenCode"),
+            ("kimi", "KimiCode"),
             ("windsurf", "Windsurf"), ("codeium", "Windsurf"),
             ("cline", "Cline"), ("roo", "Cline"),
             ("amazon", "AmazonQ"), ("aws", "AmazonQ"),
@@ -989,16 +971,16 @@ namespace UnitySkills
         };
 
         /// <summary>
-        /// Detect AI Agent from User-Agent or X-Agent-Id header
+        /// Recognizes the AI agent from the User-Agent or X-Agent-Id header.
         /// </summary>
         private static string DetectAgent(HttpListenerRequest request)
         {
-            // Priority 1: Explicit X-Agent-Id header
+            // Priority 1: explicit X-Agent-Id header
             var explicitId = request.Headers["X-Agent-Id"];
             if (!string.IsNullOrEmpty(explicitId))
                 return explicitId;
 
-            // Priority 2: Detect from User-Agent via table lookup (OrdinalIgnoreCase avoids ToLowerInvariant allocation)
+            // Priority 2: table lookup against User-Agent (using OrdinalIgnoreCase to avoid ToLowerInvariant's allocation)
             var ua = request.UserAgent ?? "";
 
             foreach (var (keyword, agentId) in _agentKeywords)
@@ -1007,19 +989,18 @@ namespace UnitySkills
                     return agentId;
             }
 
-            // Unknown
+            // Unrecognized
             return string.IsNullOrEmpty(ua) ? "Unknown" : $"Unknown({ua.Substring(0, Math.Min(20, ua.Length))})";
         }
 
         /// <summary>
-        /// Static constructor - called after every Domain Reload.
-        /// This is the key to auto-recovery after script compilation.
+        /// Static constructor — invoked after every domain reload. This is the key to auto-recovery after script compilation.
         /// </summary>
         static SkillsHttpServer()
         {
             try
             {
-                // Register for editor lifecycle events
+                // Register editor lifecycle events
                 EditorApplication.quitting += OnEditorQuitting;
                 AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
                 AssemblyReloadEvents.afterAssemblyReload += OnAfterAssemblyReload;
@@ -1027,13 +1008,11 @@ namespace UnitySkills
 
                 HookUpdateLoop();
 
-                // Check if we should auto-restart after Domain Reload
-                // Use delayed call to ensure Unity is fully initialized
+                // Decide whether to auto-restart after a domain reload; deferred so Unity is fully initialized by then
                 EditorApplication.delayCall += () => ScheduleDelayedCall(1.0, CheckAndRestoreServer);
 
-                // Read after the delayCall hookup: PrefKey() pulls in RegistryService's static
-                // init, and an exception here would be swallowed by the outer catch, silently
-                // taking the Domain Reload recovery hookup above down with it.
+                // Must be read only after the delayCall is hooked: PrefKey() drags in RegistryService's static init, and an
+                // exception here would be swallowed by the outer catch, silently taking the recovery hooks above down with it.
                 _editorLaunchPending = !SessionState.GetBool(PrefKey("EditorLaunchHandled"), false);
             }
             catch (Exception ex)
@@ -1041,16 +1020,16 @@ namespace UnitySkills
                 Debug.LogError("[UnitySkills] SkillsHttpServer init failed: " + ex);
             }
         }
-        
+
         /// <summary>
-        /// Called before scripts are compiled - save state.
+        /// Called before script compilation — saves state.
         /// </summary>
         private static void OnBeforeAssemblyReload()
         {
             _domainReloadPending = true;
 
-            // 关键修复：仅在服务器正在运行时写入 true
-            // 当 _isRunning=false（前次重启失败），不覆写——保留已有的 true 意图
+            // Critical fix: only write true while the server is actually running.
+            // When _isRunning=false (a previous restart failed), don't overwrite — preserve the existing true intent.
             if (_isRunning)
             {
                 EditorPrefs.SetBool(PREF_SERVER_SHOULD_RUN, true);
@@ -1063,33 +1042,33 @@ namespace UnitySkills
             {
                 SkillsLogger.LogVerbose($"Domain Reload detected - server state saved (port {_port}), will auto-restart");
                 EditorPrefs.SetInt(PREF_LAST_PORT, _port);
-                RegistryService.Unregister(); // Unregister temporarily
-                // Actively close HttpListener to release port immediately
+                RegistryService.Unregister(); // temporary unregister
+                // Actively close the HttpListener to release the port immediately
                 _isRunning = false;
                 try { _listener?.Stop(); } catch { }
                 try { _listener?.Close(); } catch { }
-                // Wait for threads to exit so port is fully released
+                // Wait for the threads to exit, to ensure the port is fully released
                 try { _listenerThread?.Join(2000); } catch { }
                 try { _keepAliveThread?.Join(100); } catch { }
             }
         }
-        
+
         /// <summary>
-        /// Called after scripts are compiled - restore state.
+        /// Called after script compilation — restores state.
         /// </summary>
         private static void OnAfterAssemblyReload()
         {
             _domainReloadPending = false;
-            
-            // Restore statistics from before reload
+
+            // Restore the statistics that were in place before the reload
             var savedTotal = EditorPrefs.GetString(PREF_TOTAL_PROCESSED, "0");
             if (long.TryParse(savedTotal, out long parsed))
             {
                 _totalRequestsProcessed = parsed;
             }
-            // CheckAndRestoreServer will be called via delayCall
+            // CheckAndRestoreServer is invoked via delayCall
         }
-        
+
         /// <summary>
         /// Called when compilation starts.
         /// </summary>
@@ -1100,24 +1079,24 @@ namespace UnitySkills
                 SkillsLogger.LogVerbose($"Compilation started - preparing for Domain Reload...");
             }
         }
-        
+
         /// <summary>
-        /// Called when editor is quitting - clean shutdown.
+        /// Called when the editor quits — clean shutdown.
         /// </summary>
         private static void OnEditorQuitting()
         {
-            // Always clear on quit - we don't want auto-start on next Unity session
+            // Always clear on quit — don't want the next Unity session to auto-start
             EditorPrefs.SetBool(PREF_SERVER_SHOULD_RUN, false);
             EditorPrefs.SetInt(PREF_CONSECUTIVE_FAILURES, 0);
             Stop();
         }
-        
+
         // Retry counter for CheckAndRestoreServer
         private static int _restoreRetryCount = 0;
         private static bool _editorLaunchPending;
         private static bool _cliColdStartPending;
         private const int MaxRestoreRetries = 3;
-        private static readonly double[] RestoreRetryDelays = { 1.0, 2.0, 4.0 }; // seconds
+        private static readonly double[] RestoreRetryDelays = { 1.0, 2.0, 4.0 }; // unit: seconds
 
         internal enum AutoStartReason
         {
@@ -1128,19 +1107,18 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Check if server should be restored after Domain Reload.
-        /// Called via EditorApplication.delayCall to ensure Unity is ready.
-        /// Retries up to 3 times with increasing delays (1s, 2s, 4s) if Start() fails.
+        /// Decides whether the server should be restored after a domain reload. Invoked via EditorApplication.delayCall
+        /// to ensure Unity is ready by then. Retries up to 3 times with increasing delays (1s, 2s, 4s) if Start() fails.
         /// </summary>
         private static void CheckAndRestoreServer()
         {
             bool shouldRun = EditorPrefs.GetBool(PREF_SERVER_SHOULD_RUN, false);
-            // batchmode 排除：`unity test` / `run` / `build` 等无头流程同样跑 [InitializeOnLoad]，
-            // 在那里抢占 8090-8100 并向全局注册表广告一个转瞬即逝的实例，会把客户端的多实例
-            // 发现引到一个即将退出的进程上。CLI 冷启动走的是 GUI 启动，不受这条限制。
+            // batchmode is excluded: headless pipelines like `unity test` / `run` / `build` also run [InitializeOnLoad],
+            // and if they grabbed 8090-8100 and advertised a short-lived instance to the global registry, it would steer
+            // clients' multi-instance discovery to a process about to exit. CLI cold start uses the GUI path, so this doesn't apply.
             bool editorLaunchRequested = _editorLaunchPending && StartOnEditorLaunch && !Application.isBatchMode;
-            // Unity CLI 冷启动（--args -unityskills-coldstart + 已绑定）：本会话强制拉起一次，
-            // 无视 AutoStart/shouldRun 偏好；后续 Domain Reload 走常规恢复路径。
+            // Unity CLI cold start (--args -unityskills-coldstart + already bound): force one launch this session,
+            // ignoring the AutoStart/shouldRun preference; subsequent Domain Reloads go through the normal recovery path.
             _cliColdStartPending |= UnityCliService.ConsumeColdStartRequest();
             if (_cliColdStartPending && _restoreRetryCount == 0)
                 SkillsLogger.Log("Unity CLI cold start detected — auto-starting server.");
@@ -1151,7 +1129,7 @@ namespace UnitySkills
                 bool domainReload = reason == AutoStartReason.DomainReload;
                 int failures = domainReload ? EditorPrefs.GetInt(PREF_CONSECUTIVE_FAILURES, 0) : 0;
 
-                // Decay: if last failure was more than 5 minutes ago, reset counter
+                // Decay: reset the counter if the last failure was more than 5 minutes ago
                 if (failures > 0)
                 {
                     string lastFailTimeKey = PrefKey("LastFailTime");
@@ -1172,9 +1150,8 @@ namespace UnitySkills
                         "Please restart manually: Window > UnitySkills > Start Server");
                     EditorPrefs.SetBool(PREF_SERVER_SHOULD_RUN, false);
                     _restoreRetryCount = 0;
-                    // Clear here too, otherwise a pending editor-launch intent survives this early
-                    // return and would fire on a later reload — bypassing the circuit breaker we
-                    // just tripped.
+                    // Must also be cleared here: otherwise a pending "editor launch" intent would survive this
+                    // early return and fire on some later reload — bypassing the circuit breaker we just tripped.
                     CompletePendingAutoStart(reason);
                     return;
                 }
@@ -1186,7 +1163,7 @@ namespace UnitySkills
 
                 if (_isRunning)
                 {
-                    // 启动成功（failures 已在 Start() 中清零）
+                    // Start succeeded (failures was already reset to zero inside Start())
                     _restoreRetryCount = 0;
                     CompletePendingAutoStart(reason);
                 }
@@ -1198,22 +1175,22 @@ namespace UnitySkills
                 }
                 else
                 {
-                    // 本轮所有重试耗尽
+                    // All retries exhausted for this round
                     _restoreRetryCount = 0;
                     CompletePendingAutoStart(reason);
                     if (domainReload)
                     {
                         EditorPrefs.SetInt(PREF_CONSECUTIVE_FAILURES, failures + 1);
                         EditorPrefs.SetString(PrefKey("LastFailTime"), EditorApplication.timeSinceStartup.ToString());
-                        // 域重载路径保留失败计数：用户需要知道离 MaxConsecutiveFailures 上限
-                        // 还有多远，否则排查时看不出熔断即将触发。
+                        // The domain-reload path keeps the failure count: the user needs to know how close they are to the
+                        // MaxConsecutiveFailures cap, otherwise there's no way to see the circuit breaker approaching while debugging.
                         SkillsLogger.LogError(
                             $"[UnitySkills] Server failed to restart (consecutive failures: {failures + 1}/{MaxConsecutiveFailures}). " +
                             "Will retry on next Domain Reload. Manual start: Window > UnitySkills > Start Server");
                     }
                     else
                     {
-                        // EditorLaunch / CliColdStart 每会话只尝试一次，没有跨会话计数可报。
+                        // EditorLaunch / CliColdStart only attempts once per session, so there's no cross-session count to report.
                         SkillsLogger.LogError(
                             $"[UnitySkills] Server auto-start failed ({reason}). Manual start: Window > UnitySkills > Start Server");
                     }
@@ -1252,7 +1229,7 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Schedule a callback after a real delay in seconds using EditorApplication.update polling.
+        /// Uses EditorApplication.update polling to implement a callback delayed by a given number of seconds.
         /// </summary>
         private static void ScheduleDelayedCall(double delaySeconds, Action callback)
         {
@@ -1294,15 +1271,15 @@ namespace UnitySkills
             {
                 HookUpdateLoop();
                 RefreshTimeoutCache();
-                // Cache keep-alive interval for thread-safe access from KeepAliveLoop
+                // Cache the keep-alive interval, for thread-safe reads by the KeepAliveLoop thread
                 _cachedKeepAliveIntervalTicks = (long)KeepAliveIntervalSeconds * TimeSpan.TicksPerSecond;
 
-                // Port Hunting: 8090 -> 8100
+                // Port probing: 8090 -> 8100
                 int startPort = 8090;
                 int endPort = 8100;
                 bool started = false;
 
-                // If preferred port is specified and valid, try it first
+                // Try the preferred port first if a valid one was given
                 if (preferredPort >= startPort && preferredPort <= endPort)
                 {
                     try
@@ -1330,7 +1307,7 @@ namespace UnitySkills
 
                 if (!started)
                 {
-                    // Auto mode: scan ports
+                    // Auto mode: scan ports one by one
                     for (int p = startPort; p <= endPort; p++)
                     {
                         try
@@ -1347,7 +1324,7 @@ namespace UnitySkills
                         }
                         catch
                         {
-                            // Port occupied, try next
+                            // Port is taken, try the next one
                             try { _listener?.Close(); } catch { }
                         }
                     }
@@ -1361,60 +1338,59 @@ namespace UnitySkills
 
                 _isRunning = true;
 
-                // Persist state for Domain Reload recovery
+                // Persist state, for use in domain-reload recovery
                 EditorPrefs.SetBool(PREF_SERVER_SHOULD_RUN, true);
-                EditorPrefs.SetInt(PREF_CONSECUTIVE_FAILURES, 0); // 成功启动，清除失败计数
+                EditorPrefs.SetInt(PREF_CONSECUTIVE_FAILURES, 0); // Started successfully, clear the failure count
 
-                // Register to global registry
+                // Register with the global registry
                 RegistryService.Register(_port);
 
-                // Populate the /health snapshot BEFORE the listener accepts anything, so the
-                // very first probe hits the fast path instead of falling back to the queue.
-                // Register() above must run first — instanceId/projectName come from it.
+                // Populate the /health snapshot before the listener starts accepting, so the first probe takes the fast path
+                // instead of falling back to the queue. The Register() call above must run first — instanceId/projectName come from it.
                 RefreshHealthSnapshot(full: true);
                 if (!_modeHookInstalled)
                 {
                     SkillsModeManager.OnChanged += OnPermissionStateChanged;
-                    SkillsGuideMode.OnChanged += OnPermissionStateChanged;
+                    SkillsSurfaceProfile.OnChanged += OnPermissionStateChanged;
                     _modeHookInstalled = true;
                 }
 
-                // Start listener thread (Producer - ONLY enqueues, no Unity API)
+                // Start the listener thread (producer — only enqueues, never touches the Unity API)
                 _listenerThread = new Thread(ListenLoop) { IsBackground = true, Name = "UnitySkills-Listener" };
                 _listenerThread.Start();
 
-                // Start keep-alive thread (forces Unity to update when not focused)
+                // Start the keep-alive thread (forces Unity to keep updating while unfocused)
                 _keepAliveThread = new Thread(KeepAliveLoop) { IsBackground = true, Name = "UnitySkills-KeepAlive" };
                 _keepAliveThread.Start();
 
-                // These calls are safe here because Start() is called from Main thread
+                // These calls are safe here because Start() is called from the main thread
                 var skillCount = SkillRouter.SkillCount;
                 SkillsLogger.Log($"REST Server started at {_prefix}");
                 SkillsLogger.Log($"{skillCount} skills loaded | Instance: {RegistryService.InstanceId}");
                 SkillsLogger.LogVerbose($"Domain Reload Recovery: ENABLED (AutoStart={AutoStart})");
 
-                // Initialize heartbeat timer so the first heartbeat doesn't fire immediately during startup
+                // Initialize the heartbeat timer, so it doesn't fire immediately during startup
                 _lastHeartbeatTime = EditorApplication.timeSinceStartup;
                 _lastWatchdogCheck = EditorApplication.timeSinceStartup;
 
-                // Start diagnostic counter for self-test
+                // Start the diagnostic counter used for self-test
                 _pjqTicksSinceStart = 0;
 
                 // Force an immediate update so ProcessJobQueue starts processing as soon as possible
                 EditorApplication.QueuePlayerLoopUpdate();
 
-                // Self-test: verify reachability after a short delay to let the update loop stabilize
+                // Self-test: wait a bit for the update loop to settle before verifying reachability
                 ScheduleDelayedCall(1.5, RunSelfTest);
 
-                // Reconnection anchor for /events clients: carries the last compilation
-                // summary because compilation_finished (success) dies with the old domain.
+                // Reconnection anchor for /events clients: carries the previous compilation summary,
+                // since compilation_finished (the success one) disappears along with the old domain.
                 EventChannelService.PublishServerRestored(_port);
             }
             catch (Exception ex)
             {
                 SkillsLogger.LogError($"Failed to start: {ex.Message}");
                 _isRunning = false;
-                // 不清除 PREF_SERVER_SHOULD_RUN — 保留重启意图，下次 Reload 继续尝试
+                // Don't clear PREF_SERVER_SHOULD_RUN — preserve the restart intent so the next Reload tries again
             }
         }
 
@@ -1423,32 +1399,32 @@ namespace UnitySkills
             if (!_isRunning) return;
             _isRunning = false;
 
-            // If permanent stop, clear the auto-restart flag
+            // Clear the auto-restart flag on a permanent stop
             if (permanent)
             {
                 EditorPrefs.SetBool(PREF_SERVER_SHOULD_RUN, false);
                 EditorPrefs.SetInt(PREF_CONSECUTIVE_FAILURES, 0);
             }
 
-            // Unregister from global registry
+            // Unregister from the global registry
             RegistryService.Unregister();
 
             try { _listener?.Stop(); } catch { /* Best-effort cleanup on shutdown */ }
             try { _listener?.Close(); } catch { /* Best-effort cleanup on shutdown */ }
 
-            // Wait for threads to finish
+            // Wait for the threads to finish
             try { _listenerThread?.Join(2000); } catch { }
             try { _keepAliveThread?.Join(2000); } catch { }
             _listenerThread = null;
             _keepAliveThread = null;
 
-            // Admission counter must not survive a stop/restart cycle: responders that were still
-            // in flight may never run their release, and a stale count would eat the budget of the
-            // next server instance. ReleasePendingSlot() clamps at 0, so late releases stay safe.
+            // The admission counter can't carry over a stop/restart: an in-flight responder might never reach its
+            // own release logic, and a leftover count would eat into the next server instance's quota.
+            // ReleasePendingSlot() clamps at 0, so a late release is still safe.
             Interlocked.Exchange(ref _pendingRequests, 0);
 
-            // Signal all pending jobs to complete with error. Runs after the listener thread
-            // has been joined above, so both lanes are quiescent and need no lock.
+            // Notify every pending job that it ended in an error. This runs after joining the listener thread
+            // above, so both lanes are already quiescent and no locking is needed.
             FailQueuedJobs(_lightQueue, ref _lightQueued);
             FailQueuedJobs(_heavyQueue, ref _heavyQueued);
 
@@ -1459,16 +1435,16 @@ namespace UnitySkills
         }
         
         /// <summary>
-        /// Stop server permanently without auto-restart.
+        /// Permanently stops the server; it will no longer auto-restart.
         /// </summary>
         public static void StopPermanent()
         {
             Stop(permanent: true);
         }
-        
+
         /// <summary>
-        /// Keep-alive loop - forces Unity to update when not focused.
-        /// Does NOT call any Unity API directly (uses thread-safe QueuePlayerLoopUpdate).
+        /// The keep-alive loop — forces Unity to keep updating while it's unfocused.
+        /// Never calls any Unity API directly (goes through the thread-safe QueuePlayerLoopUpdate).
         /// </summary>
         private static void KeepAliveLoop()
         {
@@ -1482,12 +1458,12 @@ namespace UnitySkills
 
                     if (hasPendingJobs)
                     {
-                        // Thread-safe call to wake up Unity's main thread
+                        // Wake the Unity main thread in a thread-safe way
                         EditorApplication.QueuePlayerLoopUpdate();
                     }
                     else
                     {
-                        // No pending jobs: still wake up periodically so watchdog and heartbeat can run
+                        // Also wake periodically when there are no pending jobs, so the watchdog and heartbeat can run
                         long nowTicks = DateTime.UtcNow.Ticks;
                         long intervalTicks = _cachedKeepAliveIntervalTicks;
                         if (nowTicks - _lastForceWakeTicks > intervalTicks)
@@ -1500,10 +1476,10 @@ namespace UnitySkills
                 catch (ThreadAbortException) { break; }
                 catch (Exception ex)
                 {
-                    // Unity 6000.3+ QueuePlayerLoopUpdate may surface a benign
-                    // "SetSceneRepaintDirty can only be called from the main thread"
-                    // even though the wake-up itself succeeds. Silence the noise;
-                    // the queue drain is verified by main-thread ProcessJobQueue.
+                    // On Unity 6000.3+, QueuePlayerLoopUpdate sometimes throws a harmless
+                    // "SetSceneRepaintDirty can only be called from the main thread",
+                    // even though the wake-up itself actually succeeded. Suppress the noise here;
+                    // whether the queue actually got drained is verified by the main thread's ProcessJobQueue.
                     if (ex is UnityException && ex.Message != null && ex.Message.Contains("main thread"))
                         SkillsLogger.LogVerbose($"KeepAlive wake-up benign: {ex.Message.Split('\n')[0]}");
                     else
@@ -1513,19 +1489,17 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// HTTP Listener loop (Producer).
-        /// CRITICAL: This runs on a background thread. NO Unity API calls allowed.
-        /// Only enqueues raw request data for main thread processing.
+        /// The HTTP listener loop (producer).
+        /// Critical constraint: this method runs on a background thread, so no Unity API calls are allowed —
+        /// it only enqueues raw request data for the main thread to process.
         ///
-        /// Slot/socket lifecycle: everything after <see cref="TryReservePendingSlot"/> runs inside
-        /// one try/finally so every exit path — including a client that aborts mid-upload while
-        /// the body is being read — releases the pending slot EXACTLY once and closes the context.
-        /// A leaked slot is permanent: MaxPendingRequests leaks turn every later request into a
-        /// 503 QUEUE_FULL until the next domain reload.
+        /// Quota and socket lifecycle: everything after <see cref="TryReservePendingSlot"/> is wrapped in the same
+        /// try/finally, so every exit path — including a client aborting an upload mid-read — releases the
+        /// admission quota exactly once and closes the context. A quota leak is permanent: after leaking
+        /// MaxPendingRequests times, every subsequent request turns into a 503 QUEUE_FULL until the next domain reload.
         ///
-        /// Error backoff is split: an accept (GetContext) failure is listener-level and keeps the
-        /// long backoff for the watchdog, while a per-request failure must not stall the sole
-        /// accept thread for a single broken client.
+        /// Error backoff has two tiers: an accept (GetContext) failure is listener-level, given a long backoff left to
+        /// the watchdog; a single request's failure must never tie up this one accept thread over one bad client.
         /// </summary>
         private static void ListenLoop()
         {
@@ -1539,14 +1513,14 @@ namespace UnitySkills
                 catch (HttpListenerException)
                 {
                     if (!_isRunning) break;
-                    Thread.Sleep(500); // avoid tight exception loop; watchdog will restart if needed
+                    Thread.Sleep(500); // Avoid a tight exception loop; the watchdog restarts if needed
                     continue;
                 }
-                catch (ObjectDisposedException) { break; } // listener destroyed; watchdog will restart
+                catch (ObjectDisposedException) { break; } // Listener already disposed; the watchdog restarts it
                 catch (Exception)
                 {
                     if (!_isRunning) break;
-                    Thread.Sleep(1000); // back off on unknown listener error; watchdog will intervene
+                    Thread.Sleep(1000); // Back off on an unknown listener error; the watchdog steps in
                     continue;
                 }
 
@@ -1557,7 +1531,7 @@ namespace UnitySkills
 
                 try
                 {
-                    // Immediately capture raw data (no Unity API)
+                    // Grab the raw data immediately (never touch the Unity API)
                     var request = context.Request;
 
                     if (!CheckAdmissionRateLimit())
@@ -1583,8 +1557,8 @@ namespace UnitySkills
                         continue;
                     }
 
-                    // Mono's HttpListener surfaces a null Url for a malformed request line;
-                    // every path below dereferences it, so reject early with a real response.
+                    // On a malformed request line, Mono's HttpListener gives a null Url, and every path below
+                    // dereferences it, so reject it early with an actual response.
                     var url = request.Url;
                     if (url == null)
                     {
@@ -1595,19 +1569,17 @@ namespace UnitySkills
                         continue;
                     }
 
-                    // Fast path: GET /skills, GET /skills/schema and GET /health are answered
-                    // directly on this HTTP thread from caches/snapshots the main thread built
-                    // (zero Unity API — see SkillRouter.TryGetCachedGetResponse and
-                    // SendHealthFastPath). A miss falls through to the normal main-thread
-                    // queue, which populates the cache/snapshot for next time.
+                    // Fast path: GET /skills, GET /skills/schema, and GET /health are answered directly on this
+                    // HTTP thread using the cache/snapshot the main thread already built (zero Unity API — see
+                    // SkillRouter.TryGetCachedGetResponse and SendHealthFastPath).
+                    // A miss falls through to the regular main-thread queue, which populates the cache/snapshot for next time.
                     if (request.HttpMethod == "GET")
                     {
                         string fastPath = url.AbsolutePath;
 
-                        // Long-poll: GET /events never enters the main-thread queue. The accept
-                        // loop only hands the context to a ThreadPool waiter — it must NEVER
-                        // block here (this is the sole accept thread). The responder releases
-                        // the pending slot and closes the response on every exit path.
+                        // Long-polling: GET /events never goes through the main-thread queue. The accept loop only hands the context
+                        // off to a ThreadPool waiter — it must never block here (this is the only accept thread). The responder
+                        // releases the admission quota and closes the response on every exit path.
                         if (string.Equals(fastPath, "/events", StringComparison.OrdinalIgnoreCase))
                         {
                             var pollState = new EventsPollState
@@ -1622,10 +1594,8 @@ namespace UnitySkills
                             continue;
                         }
 
-                        // Liveness probe: answered from the main-thread snapshot so a busy or
-                        // blocked main thread can no longer make /health itself hang. Declines
-                        // (falls through to the queue) before the first snapshot exists, and
-                        // whenever the caller asked for live values with ?live=1.
+                        // Liveness probe: answered from the main-thread snapshot, so a busy/blocked main thread can no longer hang
+                        // /health itself. Falls back to the queue before the first snapshot exists, or when the caller asks for ?live=1.
                         if ((fastPath == "/" || string.Equals(fastPath, "/health", StringComparison.OrdinalIgnoreCase)) &&
                             _snapReady && !WantsLiveHealth(url.Query))
                         {
@@ -1634,7 +1604,8 @@ namespace UnitySkills
                         }
 
                         if ((string.Equals(fastPath, "/skills", StringComparison.OrdinalIgnoreCase) ||
-                             string.Equals(fastPath, "/skills/schema", StringComparison.OrdinalIgnoreCase)) &&
+                             string.Equals(fastPath, "/skills/schema", StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(fastPath, "/skills/meta", StringComparison.OrdinalIgnoreCase)) &&
                             SkillRouter.TryGetCachedGetResponse(fastPath, url.Query, out var cachedJson, out var cachedEtag))
                         {
                             SendCachedGetResponse(context, request, cachedJson, cachedEtag);
@@ -1654,8 +1625,7 @@ namespace UnitySkills
                             continue;
                         }
 
-                        // An aborted upload throws IOException here — the finally below is what
-                        // keeps that from leaking the slot and the socket.
+                        // An aborted upload throws IOException here — the finally block below prevents leaking the quota and socket.
                         using (var reader = new System.IO.StreamReader(request.InputStream, Encoding.UTF8))
                         {
                             body = reader.ReadToEnd();
@@ -1676,9 +1646,8 @@ namespace UnitySkills
 
                     Interlocked.Increment(ref _totalRequestsReceived);
 
-                    // Enqueue for main thread processing, split across the two priority lanes.
-                    // MaxQueuedRequests stays a single shared budget so the admission ceiling
-                    // is unchanged; only the service order differs.
+                    // Enqueue for the main thread to process, sorted into one of two priority lanes. MaxQueuedRequests is still a
+                    // single quota shared by both lanes — the admission cap is unchanged, only the service order differs.
                     if (QueuedRequests >= MaxQueuedRequests)
                     {
                         job.StatusCode = 503;
@@ -1693,9 +1662,7 @@ namespace UnitySkills
                     }
                     else if (IsLightRequest(job.HttpMethod, job.Path))
                     {
-                        // Increment before enqueue: the counter may briefly over-report, but it
-                        // can never go negative by a consumer draining an item we have not
-                        // counted yet.
+                        // Increment before enqueuing: the count may briefly run high, but never goes negative from a consumer draining an uncounted item.
                         Interlocked.Increment(ref _lightQueued);
                         _lightQueue.Enqueue(job);
                     }
@@ -1705,17 +1672,16 @@ namespace UnitySkills
                         _heavyQueue.Enqueue(job);
                     }
 
-                    // Queue the responder with an explicit state object to avoid closure-capture races.
+                    // Use an explicit state object to enqueue the responder, avoiding a closure-capture race.
                     var handoffJob = job;
-                    job = null; // Queue owns it now; must not go back to the pool even if QueueUserWorkItem throws
+                    job = null; // Ownership has passed to the queue; must not return the object to the pool even if QueueUserWorkItem throws
                     ThreadPool.QueueUserWorkItem(WaitAndRespondCallback, handoffJob);
                     handedOffToResponder = true;
                 }
                 catch (Exception ex)
                 {
-                    // Per-request failure (aborted upload, malformed body, ...). The finally
-                    // below returns the slot and the socket, so only yield briefly — a long
-                    // sleep here would park the sole accept thread for one broken client.
+                    // A single request's failure (aborted upload, malformed body, ...). The finally block below returns the quota
+                    // and socket, so this just needs to briefly yield — sleeping long here would stall the one accept thread over one bad client.
                     if (!_isRunning) break;
                     SkillsLogger.LogVerbose($"Request dropped: {ex.GetType().Name}: {ex.Message}");
                     Thread.Sleep(50);
@@ -1733,8 +1699,7 @@ namespace UnitySkills
         }
         
         /// <summary>
-        /// Waits for job completion and sends HTTP response.
-        /// Runs on ThreadPool thread - NO Unity API calls.
+        /// Waits for a job to finish and sends the HTTP response. Runs on a ThreadPool thread — no Unity API calls allowed.
         /// </summary>
         private static void WaitAndRespondCallback(object state)
         {
@@ -1758,7 +1723,7 @@ namespace UnitySkills
             bool completed = false;
             try
             {
-                // Wait for main thread to process (with timeout)
+                // Wait for main-thread processing (with a timeout)
                 completed = job.CompletionSignal.Wait(RequestTimeoutMs);
                 
                 if (!completed)
@@ -1781,12 +1746,12 @@ namespace UnitySkills
                         retryAfterSeconds: _domainReloadPending ? 5 : 10);
                 }
                 
-                // Send HTTP response (thread-safe)
+                // Send the HTTP response (thread-safe)
                 SendResponse(job);
             }
             catch (Exception ex)
             {
-                // Best effort - try to send error response
+                // Best effort — try to send an error response
                 try
                 {
                     job.StatusCode = 500;
@@ -1809,11 +1774,11 @@ namespace UnitySkills
         }
         
         /// <summary>
-        /// Sends HTTP response. Thread-safe (no Unity API).
+        /// Sends the HTTP response. Thread-safe (never touches the Unity API).
         ///
-        /// job.ETag is set (by <see cref="ApplyCacheableGetHeaders"/>) only for the two
-        /// cacheable GET endpoints; its presence is what enables the ETag/Vary headers and
-        /// gzip negotiation here, so every other endpoint keeps its exact previous behaviour.
+        /// Only the two cacheable GET endpoints get job.ETag set (by <see cref="ApplyCacheableGetHeaders"/>);
+        /// whether it's present decides whether the ETag/Vary headers and gzip negotiation are enabled here,
+        /// so every other endpoint's behavior is unchanged from before.
         /// </summary>
         private static void SendResponse(RequestJob job)
         {
@@ -1837,8 +1802,8 @@ namespace UnitySkills
 
                 response.StatusCode = job.StatusCode;
 
-                // A 304 arrives here with ResponseJson already cleared, so it never reaches
-                // the body branch and never carries a Content-Encoding.
+                // By the time a 304 reaches here, ResponseJson has already been cleared, so this never falls into
+                // the response-body branch and never carries a Content-Encoding.
                 if (!string.IsNullOrEmpty(job.ResponseJson))
                 {
                     response.ContentType = "application/json; charset=utf-8";
@@ -1852,14 +1817,14 @@ namespace UnitySkills
             }
         }
 
-        // ===== GET /events long-polling =====
+        // ===== GET /events long polling =====
 
         private const int EventsDefaultTimeoutSeconds = 25;
         private const int EventsMinTimeoutSeconds = 1;
         private const int EventsMaxTimeoutSeconds = 55;
         private const int EventsPollIntervalMs = 250;
 
-        /// <summary>Raw request data handed from the accept loop to the long-poll responder.</summary>
+        /// <summary>Raw request data the accept loop hands off to the long-poll responder.</summary>
         private sealed class EventsPollState
         {
             public HttpListenerContext Context;
@@ -1879,9 +1844,9 @@ namespace UnitySkills
             }
             catch
             {
-                // Client disconnected or the listener died mid-poll — reconnecting is the
-                // established protocol; never let this kill the ThreadPool thread noisily.
-                // A throw before WriteEventsResponse means nobody closed the response yet.
+                // Client disconnected, or the listener died mid-poll — reconnection is already the intended
+                // protocol; this must never be allowed to noisily kill the ThreadPool thread.
+                // Throwing here means it happened before WriteEventsResponse, so no one has closed the response yet.
                 CloseContextSafely(poll.Context);
             }
             finally
@@ -1891,14 +1856,12 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// GET /events long-poll responder. Runs ENTIRELY on a ThreadPool thread — zero
-        /// Unity API, zero SessionState, no SkillsLogger (same constraints as
-        /// SendCachedGetResponse). Loops "scan buffer → wait" until events newer than
-        /// 'since' show up, the timeout elapses, or the server stops (domain reload) —
-        /// then writes the response directly. Correctness relies on the 250ms poll; the
-        /// publish signal only reduces latency.
-        /// Query: since (default = current max seq → wait for new events only; 0 = replay
-        /// buffer), timeout (seconds, default 25, clamp 1-55), types (comma-separated filter).
+        /// Long-poll responder for GET /events. Runs entirely on a ThreadPool thread — zero Unity API, zero
+        /// SessionState, no SkillsLogger (same constraints as SendCachedGetResponse). Loops "scan buffer → wait"
+        /// until an event newer than 'since' shows up, it times out, or the server stops (reload) — writes the response directly.
+        /// Correctness relies on the 250ms poll interval; the publish signal only reduces latency.
+        /// Query params: since (default: current max seq, i.e. wait for new events only; 0 replays the buffer),
+        /// timeout (seconds, default 25, clamped to 1-55), types (comma-separated filter).
         /// </summary>
         private static void RespondEventsLongPoll(EventsPollState poll)
         {
@@ -1963,16 +1926,16 @@ namespace UnitySkills
 
             while (true)
             {
-                // Reset BEFORE scanning: a publish landing after the scan re-sets the signal.
-                // Another waiter's Reset can still swallow it, which merely costs one 250ms
-                // poll interval — never correctness.
+                // Must Reset before scanning: a publish that lands after the scan will re-signal.
+                // Another waiter's Reset could still swallow it, but the cost is only one extra 250ms poll
+                // interval of waiting — it never affects correctness.
                 EventChannelService.ResetSignal();
 
                 if (EventChannelService.TryReadEventsAfter(since, typeFilter, out events, out cursor, out oldestSeq))
                     break;
 
-                // Server stopping (domain reload imminent): answer instantly with what we
-                // have (nothing) so the client can reconnect instead of hanging.
+                // The server is stopping (a domain reload is imminent): answer immediately with whatever's on
+                // hand (i.e. empty), so the client reconnects instead of hanging.
                 if (!_isRunning)
                 {
                     timedOut = true;
@@ -1990,8 +1953,8 @@ namespace UnitySkills
                 EventChannelService.WaitSignal(waitMs);
             }
 
-            // since+1 is the first seq the client is missing; anything below oldestSeq was
-            // evicted (ring overflow) or lost to a domain reload.
+            // since+1 is the first seq the client is missing; anything below oldestSeq has already been evicted
+            // (ring buffer overflow) or lost to a domain reload.
             bool dropped = since + 1 < oldestSeq;
 
             var sb = new StringBuilder(128 + events.Count * 256);
@@ -2011,8 +1974,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Writes the /events HTTP response. ThreadPool thread — headers, encoding and
-        /// socket writes only (pure-string sibling of SendCachedGetResponse/SendResponse).
+        /// Writes the /events HTTP response. ThreadPool thread — only headers, encoding, and socket writes
+        /// (the pure-string counterpart of SendCachedGetResponse/SendResponse).
         /// </summary>
         private static void WriteEventsResponse(EventsPollState poll, int statusCode, string json)
         {
@@ -2042,27 +2005,24 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Main thread job processor (Consumer).
-        /// Runs via EditorApplication.update - ALL Unity API calls are safe here.
+        /// Main-thread job processor (consumer).
+        /// Driven by EditorApplication.update — any Unity API call here is safe.
         /// </summary>
         private static void ProcessJobQueue()
         {
-            // Main-thread liveness mirror, written before anything else in the frame. The HTTP
-            // thread subtracts this from "now" to report /health.mainThreadIdleMs, which is
-            // what lets a caller tell "server dead" from "Unity busy". Writing it up front
-            // means a long job inside THIS tick is already counted as idle time by the next
-            // prober, which is the honest reading.
+            // Main-thread liveness mirror, written before anything else this frame. The HTTP thread reports
+            // /health.mainThreadIdleMs by subtracting "now" from it — exactly how a caller tells "server is dead" from
+            // "Unity is busy". Writing it early means the next probe counts a long job in this tick as idle — the honest reading.
             Interlocked.Exchange(ref _mainThreadTickUtc, DateTime.UtcNow.Ticks);
 
-            // Startup diagnostic counter (lightweight volatile increment, stops at 10000)
+            // Startup diagnostic counter (a cheap volatile increment, stops at 10000)
             var diagTick = _pjqTicksSinceStart;
             if (diagTick >= 0 && diagTick < 10000)
                 _pjqTicksSinceStart = diagTick + 1;
 
             double frameStart = EditorApplication.timeSinceStartup;
 
-            // /health snapshot: the cheap half every frame, the expensive half only when the
-            // permission state changed or the 1s floor elapsed.
+            // /health snapshot: the cheap half refreshes every frame, the expensive half only on permission changes or when the 1-second floor expires.
             bool fullSnapshot = _healthSnapshotDirty || !_snapReady ||
                                 frameStart - _lastHealthSnapshot >= HealthSnapshotInterval;
             if (fullSnapshot)
@@ -2072,23 +2032,19 @@ namespace UnitySkills
             }
             RefreshHealthSnapshot(fullSnapshot);
 
-            // Lane 1 — light: drained completely, exempt from the frame budget. These are the
-            // read-only millisecond handlers (see IsLightRequest); starving them behind a slow
-            // skill is exactly the failure the split exists to prevent, and capping them would
-            // reintroduce it at a smaller scale.
+            // Lane 1 — light: drained entirely, not bound by the frame budget. These are the read-only, millisecond-scale
+            // handlers (see IsLightRequest); starving them behind a slow skill is the failure this split prevents.
             while (TryDequeueJob(_lightQueue, ref _lightQueued, out var lightJob))
                 RunJob(lightJob);
 
-            // Lane 2 — heavy: two gates, a count cap AND a wall-clock budget, both checked
-            // BEFORE starting each job. A single skill may legitimately run for seconds; the
-            // budget cannot interrupt one, it only declines to start another, which is what
-            // keeps the editor repainting between bursts.
+            // Lane 2 — heavy: two gates, a count cap and a wall-clock budget, both checked before starting each job.
+            // A single skill legitimately running for several seconds is allowed; the budget can't interrupt it,
+            // it can only refuse to start the next one — which is exactly why the editor can still repaint between bursts.
             int processed = 0;
             while (processed < MaxHeavyJobsPerFrame)
             {
-                // The budget never blocks the FIRST heavy job of a frame. A busy light lane
-                // can legitimately consume the whole 12ms, and letting that zero out the heavy
-                // lane would turn a priority split into starvation of skill execution.
+                // The budget must never block the first heavy job of a frame. A busy light lane could legitimately eat the
+                // whole 12ms, and letting that zero out the heavy lane would turn the priority split into starved skill execution.
                 if (processed > 0 && EditorApplication.timeSinceStartup - frameStart >= HeavyFrameBudgetSeconds)
                     break;
 
@@ -2099,14 +2055,13 @@ namespace UnitySkills
                 processed++;
             }
 
-            // Work left over: request the next tick now instead of waiting up to
-            // KeepAlivePollingMs for the keep-alive thread to notice.
+            // Work remains: request the next tick immediately, instead of waiting up to KeepAlivePollingMs for keep-alive to notice.
             if (Volatile.Read(ref _heavyQueued) > 0)
                 EditorApplication.QueuePlayerLoopUpdate();
 
             double now = EditorApplication.timeSinceStartup;
 
-            // Heartbeat for Registry
+            // Registry heartbeat
             if (_isRunning)
             {
                 if (now - _lastHeartbeatTime > HeartbeatInterval)
@@ -2115,7 +2070,7 @@ namespace UnitySkills
                     RegistryService.Heartbeat(_port);
                 }
 
-                // Watchdog: restart server if listener thread has died
+                // Watchdog: restart the server if the listener thread has died
                 if (now - _lastWatchdogCheck > WatchdogInterval)
                 {
                     _lastWatchdogCheck = now;
@@ -2142,15 +2097,15 @@ namespace UnitySkills
                 }
             }
 
-            // Safety net: recover server after Domain Reload if delayCall failed to fire
+            // Fallback: recovers the server after a domain reload if delayCall never fires
             if (!_isRunning && !_domainReloadPending)
             {
                 if (now - _lastSafetyNetCheck > SafetyNetInterval)
                 {
                     _lastSafetyNetCheck = now;
                     bool shouldRun = EditorPrefs.GetBool(PREF_SERVER_SHOULD_RUN, false);
-                    // 也兜住 editor-launch：首次启动时 shouldRun 恰好是 false（退出时被清），
-                    // 否则新路径会是唯一一条 delayCall 不触发就彻底失效的自启路径。
+                    // Also covers editor-launch: on first startup shouldRun happens to be false (cleared on quit), and without
+                    // this the new path would be the only auto-start path completely broken whenever delayCall doesn't fire.
                     bool editorLaunchRequested = _editorLaunchPending && StartOnEditorLaunch && !Application.isBatchMode;
                     if ((shouldRun && AutoStart) || editorLaunchRequested)
                     {
@@ -2168,9 +2123,9 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Runs one dequeued job to completion and releases its waiting responder. Extracted
-        /// from <see cref="ProcessJobQueue"/> so both lanes share identical error handling and
-        /// bookkeeping. MAIN THREAD ONLY.
+        /// Runs a dequeued job to completion, and releases its waiting responder.
+        /// Factored out of <see cref="ProcessJobQueue"/> so both lanes share exactly the same error handling and
+        /// bookkeeping. Main thread only.
         /// </summary>
         private static void RunJob(RequestJob job)
         {
@@ -2193,21 +2148,19 @@ namespace UnitySkills
                 job.IsProcessed = true;
                 job.CompletionSignal?.Set();
                 Interlocked.Increment(ref _totalRequestsProcessed);
-                // Only invalidate scene cache when request may have mutated state (POST = skill execution)
+                // Only invalidate scene caches for requests that could have changed state (POST = skill execution)
                 if (job.HttpMethod == "POST")
                     GameObjectFinder.InvalidateCache();
             }
         }
 
         /// <summary>
-        /// Main-thread counterpart of the HTTP-thread fast path for GET /skills and
-        /// GET /skills/schema: tags the just-built body with the ETag
-        /// <see cref="SkillRouter.GetEtagForCachedGet"/> derives from the same cache key the
-        /// fast path uses, then collapses the response to an empty-body 304 when the caller's
-        /// If-None-Match already matches.
+        /// Main-thread counterpart to GET /skills and GET /skills/schema, paired with the HTTP-thread fast path:
+        /// stamps the freshly built body with an ETag — <see cref="SkillRouter.GetEtagForCachedGet"/> derives it from
+        /// the same cache key the fast path uses — then collapses it to an empty-body 304 if If-None-Match matches.
         ///
-        /// Only 200 bodies are tagged. An error body must never be handed to the client under
-        /// a content hash it would then cache.
+        /// Only 200 responses get tagged. An error response body must never be handed to the client under a
+        /// content hash, or the client will cache it.
         /// </summary>
         private static void ApplyCacheableGetHeaders(RequestJob job, string path)
         {
@@ -2217,7 +2170,7 @@ namespace UnitySkills
             job.ETag = SkillRouter.GetEtagForCachedGet(path, job.QueryString, job.ResponseJson);
             if (job.ETag != null && IfNoneMatchSatisfied(job.IfNoneMatch, job.ETag))
             {
-                job.StatusCode = 304; // Not Modified — must not carry a body
+                job.StatusCode = 304; // Not Modified — must not carry a response body
                 job.ResponseJson = null;
             }
         }
@@ -2234,21 +2187,20 @@ namespace UnitySkills
             
             string path = job.Path;
 
-            // Health check. Reached only when the HTTP-thread fast path declined: either the
-            // caller asked for ?live=1, or the first snapshot has not been taken yet. Same
-            // payload shape either way — BuildHealthJson is the single source of that shape.
+            // Health check. Only reached when the HTTP-thread fast path bails out: either the caller asked for ?live=1,
+            // or the first snapshot hasn't been taken yet. Both share the same shape — BuildHealthJson is its sole source.
             if (path == "/" || string.Equals(path, "/health", StringComparison.OrdinalIgnoreCase))
             {
-                // Reading live also refreshes the mirror, so the next fast-path probe is current.
+                // The live read also refreshes the mirror, so the next fast-path probe picks up the latest values.
                 RefreshHealthSnapshot(full: true);
                 job.StatusCode = 200;
                 job.ResponseJson = BuildHealthJson(HealthVitals.FromLive(), live: true);
                 return;
             }
 
-            // Compilation feedback loop — authoritative "did my last script edit compile?" query.
-            // Runs on the main-thread path (like /health) so it can read live editor state and the
-            // last result, which survives the domain reload a successful compile triggers.
+            // Compile-feedback loop closure — authoritatively answers "did the script I just changed compile?".
+            // Goes through the main-thread path (same as /health) so it can read live editor state as well as the
+            // last result, the latter of which survives the domain reload a successful compile triggers.
             if (string.Equals(path, "/compile/status", StringComparison.OrdinalIgnoreCase) && job.HttpMethod == "GET")
             {
                 string lastCompilation = CompilationResultService.GetLastCompilationJson();
@@ -2263,9 +2215,9 @@ namespace UnitySkills
                 return;
             }
 
-            // Execution telemetry aggregation — "which skills are called / failing / slow?".
-            // Main-thread path (like /health): reads the telemetry EditorPref + the JSONL files.
-            // Results are cached 30s per window inside SkillTelemetryService to bound disk reads.
+            // Execution telemetry aggregation — answers "which skills are being called / failing / slow".
+            // Goes through the main-thread path (same as /health): reads the telemetry EditorPref and JSONL files.
+            // Results are cached per window for 30 seconds inside SkillTelemetryService, to cap disk reads.
             if (string.Equals(path, "/analytics", StringComparison.OrdinalIgnoreCase) && job.HttpMethod == "GET")
             {
                 var analyticsQs = SkillRouter.ParseQueryString(job.QueryString);
@@ -2275,32 +2227,46 @@ namespace UnitySkills
                 return;
             }
 
-            // Get skills manifest (with optional filtering).
-            // A request only reaches the main thread when the HTTP-thread fast path missed,
-            // i.e. this is the call that builds the cache. ApplyCacheableGetHeaders gives it
-            // the same ETag the fast path will serve from here on, so a client that keeps
-            // sending If-None-Match gets a 304 from the very next request.
+            // Fetches the skill manifest (optionally filtered).
+            // A request only reaches the main thread when the HTTP-thread fast path missed, so this call is responsible
+            // for building the cache. ApplyCacheableGetHeaders stamps it with the same ETag the fast path will use from
+            // here on, so a client that keeps sending If-None-Match starts getting 304s from the next request onward.
+            // The empty-query special case has been pushed down into SkillRouter: which tier a bare request should get
+            // (/skills picks brief, /skills/schema picks full) is now the same decision shared with the HTTP-thread fast
+            // path, so the two can never give different answers for the same URL.
+            // A rejected ?category= / ?operation= value comes back as an error response body, and must never be treated
+            // as a manifest: returning 200 would misreport it, and tagging it with an ETag would be far worse than ugly —
+            // the client's next If-None-Match would hit and get a bodiless 304, i.e. the rejection vanishes and the query
+            // looks accepted. Keeping bad spellings out of _etagCache also stops a run of typos evicting genuine entries.
             if (string.Equals(path, "/skills", StringComparison.OrdinalIgnoreCase) && job.HttpMethod == "GET")
             {
-                job.StatusCode = 200;
-                job.ResponseJson = string.IsNullOrEmpty(job.QueryString)
-                    ? SkillRouter.GetManifest()
-                    : SkillRouter.GetFilteredManifest(job.QueryString);
-                ApplyCacheableGetHeaders(job, path);
+                job.ResponseJson = SkillRouter.GetFilteredManifest(job.QueryString, out bool manifestRejected);
+                job.StatusCode = manifestRejected ? 400 : 200;
+                if (!manifestRejected)
+                    ApplyCacheableGetHeaders(job, path);
                 return;
             }
 
             if (string.Equals(path, "/skills/schema", StringComparison.OrdinalIgnoreCase) && job.HttpMethod == "GET")
             {
+                job.ResponseJson = SkillRouter.GetFilteredSchema(job.QueryString, out bool schemaRejected);
+                job.StatusCode = schemaRejected ? 400 : 200;
+                if (!schemaRejected)
+                    ApplyCacheableGetHeaders(job, path);
+                return;
+            }
+
+            // Session constants (category/operation enums, reserved parameter names, the tracked-skills list)
+            // plus the field defaults that ?wire=v2 omits. Cached and ETagged the same as the two endpoints above.
+            if (string.Equals(path, "/skills/meta", StringComparison.OrdinalIgnoreCase) && job.HttpMethod == "GET")
+            {
                 job.StatusCode = 200;
-                job.ResponseJson = string.IsNullOrEmpty(job.QueryString)
-                    ? SkillRouter.GetSchema()
-                    : SkillRouter.GetFilteredSchema(job.QueryString);
+                job.ResponseJson = SkillRouter.GetMeta();
                 ApplyCacheableGetHeaders(job, path);
                 return;
             }
 
-            // Skill recommendation by intent
+            // Recommend skills by intent
             if (string.Equals(path, "/skills/recommend", StringComparison.OrdinalIgnoreCase) && job.HttpMethod == "GET")
             {
                 job.StatusCode = 200;
@@ -2316,14 +2282,14 @@ namespace UnitySkills
                 return;
             }
 
-            // Cross-skill aggregated execution (each step runs the full Execute pipeline)
+            // Cross-skill aggregate execution (each step runs the full Execute pipeline)
             if (string.Equals(path, "/skills/batch", StringComparison.OrdinalIgnoreCase) && job.HttpMethod == "POST")
             {
                 HandleSkillsBatchRequest(job);
                 return;
             }
 
-            // Job query (lightweight GET, bypasses skill router for high-frequency progress polling)
+            // Job queries (a light GET, bypasses the skill router for high-frequency progress polling)
             if (job.HttpMethod == "GET" &&
                 (string.Equals(path, "/jobs", StringComparison.OrdinalIgnoreCase) ||
                  path.StartsWith("/jobs/", StringComparison.OrdinalIgnoreCase)))
@@ -2332,13 +2298,13 @@ namespace UnitySkills
                 return;
             }
             
-            // Execute / DryRun / Plan skill
+            // Execute / DryRun / Plan a skill
             if (path.StartsWith("/skill/", StringComparison.OrdinalIgnoreCase) && job.HttpMethod == "POST")
             {
                 if (RejectIfCompiling(job))
                     return;
 
-                // Extract skill name (preserve original case) and validate
+                // Extract the skill name (preserving original casing) and validate it
                 string skillName = job.Path.Substring(7);
                 if (skillName.Contains("/") || skillName.Contains("\\") || skillName.Contains(".."))
                 {
@@ -2393,7 +2359,7 @@ namespace UnitySkills
             }
 
 
-            // Permission system: mode + grant token + audit log.
+            // Permission system: mode + grant tokens + audit log.
             if (path.StartsWith("/permission/", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(path, "/permission", StringComparison.OrdinalIgnoreCase))
             {
@@ -2402,7 +2368,7 @@ namespace UnitySkills
             }
 
 
-            // Not found
+            // No route matched
             job.StatusCode = 404;
             job.ResponseJson = SkillErrorResponse.Build(
                 SkillErrorCode.NotFound,
@@ -2411,14 +2377,21 @@ namespace UnitySkills
                     endpoints = new[]
                     {
                         "GET /skills",
+                        "GET /skills?full=1",
                         "GET /skills/schema",
+                        "GET /skills/meta",
                         "GET /skills/recommend",
                         "GET /skills/chain",
                         "POST /skills/batch",
+                        "POST /skills/batch?mode=dryRun|transactional",
                         "POST /skill/{name}",
                         "POST /skill/{name}?mode=dryRun",
                         "POST /skill/{name}?mode=plan",
                         "POST /skill/{name}?dryRun=true",
+                        "GET /jobs",
+                        "GET /jobs/{id}",
+                        "GET /jobs/{id}/progress",
+                        "GET /jobs/{id}/logs",
                         "GET /health",
                         "GET /compile/status",
                         "GET /events",
@@ -2438,11 +2411,10 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Resolves ?mode= / ?dryRun= from the parsed query string. Returns false (and writes an
-        /// INVALID_MODE error response to the job) when either parameter is present with an
-        /// unrecognized value — the request must NOT be executed in that case. Without this
-        /// guard, an agent that misspells the mode (e.g. ?mode=dry_run, ?dryRun=1) believes it
-        /// is previewing while the server silently executes for real.
+        /// Parses ?mode= / ?dryRun= from the already-parsed query string. Returns false when either parameter is
+        /// present but its value can't be recognized (writes an INVALID_MODE error to the job) — the request must
+        /// never execute in that case. Without this guard, an agent that misspells the mode (e.g. ?mode=dry_run,
+        /// ?dryRun=1) would think it was previewing, while the server had already silently executed for real.
         /// </summary>
         private static bool TryResolveRequestMode(RequestJob job, Dictionary<string, string> qs, string skillName, out SkillRouter.RequestMode mode)
         {
@@ -2484,7 +2456,7 @@ namespace UnitySkills
                     return true;
                 }
                 if (dryRunVal.Equals("false", StringComparison.OrdinalIgnoreCase))
-                    return true; // explicit false = execute for real
+                    return true; // Explicit false = execute for real
 
                 job.StatusCode = 400;
                 job.ResponseJson = SkillErrorResponse.Build(
@@ -2505,12 +2477,11 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Resolves ?diff= for POST /skill/{name}. A semantic sceneDiff is only meaningful for a
-        /// real execution, so it is silently ignored under ?mode=dryRun / ?mode=plan (nothing is
-        /// executed, nothing to diff). An unrecognized value is rejected with 400 (mirroring
-        /// TryResolveRequestMode) rather than silently ignored, so an agent that misspells ?diff
-        /// never believes it requested a diff while the server quietly omits it. Returns false
-        /// (and writes a 400) only on an invalid value; captureDiff is set otherwise.
+        /// Parses ?diff= for POST /skill/{name}. A semantic sceneDiff is only meaningful for a real execution, so
+        /// it's silently ignored under ?mode=dryRun / ?mode=plan (nothing executed, so there's nothing to diff).
+        /// An unrecognized value is rejected with 400 (consistent with TryResolveRequestMode) rather than silently
+        /// ignored, so an agent that misspells ?diff doesn't think it got a diff while the server quietly dropped it.
+        /// Only returns false when the value is invalid (and writes a 400); every other case leaves captureDiff set.
         /// </summary>
         private static bool TryResolveDiff(RequestJob job, Dictionary<string, string> qs, string skillName, SkillRouter.RequestMode mode, out bool captureDiff)
         {
@@ -2541,15 +2512,14 @@ namespace UnitySkills
                 return false;
             }
 
-            // Diff only applies to a real execution; a dryRun/plan preview has nothing to diff.
+            // diff only applies to a real execution; dryRun/plan previews have nothing to compare against.
             captureDiff = requested && mode == SkillRouter.RequestMode.Execute;
             return true;
         }
 
         /// <summary>
-        /// Writes a 503 COMPILING response when Unity is compiling or a Domain Reload is
-        /// pending. Returns true when the request was rejected. Shared by POST /skill/{name}
-        /// and POST /skills/batch (the latter does not match the "/skill/" prefix check).
+        /// Writes a 503 COMPILING response when Unity is compiling or a domain reload is pending; returns true if the
+        /// request was rejected. Shared by POST /skill/{name} and POST /skills/batch (which misses the "/skill/" prefix check).
         /// </summary>
         private static bool RejectIfCompiling(RequestJob job)
         {
@@ -2575,10 +2545,9 @@ namespace UnitySkills
         // ===== Execution telemetry =====
 
         /// <summary>
-        /// Records one POST /skill/{name} outcome to <see cref="SkillTelemetryService"/>. Uses a
-        /// lightweight string probe (not JObject.Parse — this is the hot single-skill path) to
-        /// classify ok + extract errorCode. Fully isolated: a telemetry failure never changes the
-        /// business response the caller already computed.
+        /// Records the result of a POST /skill/{name} call into <see cref="SkillTelemetryService"/>. Determines ok
+        /// and extracts errorCode with a lightweight string probe (not JObject.Parse — this is the single-skill hot path).
+        /// Fully isolated: a telemetry failure must never alter the business response already computed by the caller.
         /// </summary>
         private static void RecordSkillTelemetry(SkillRouter.RequestMode mode, string skillName, string agentId, string responseJson, long durationMs)
         {
@@ -2594,10 +2563,9 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Records one /skills/batch step outcome. The batch loop already holds each step's parsed
-        /// payload, so ok/errorCode are passed in directly (no string probing). A null/blank skill
-        /// name (a malformed step) is logged as "(malformed)". mode is batch_step /
-        /// batch_step_dryRun per the dryRun flag.
+        /// Records the result of one step in /skills/batch. The batch loop already holds each step's parsed payload,
+        /// so ok/errorCode are passed directly (no string probe needed). A null/blank skill name (malformed step) is
+        /// recorded as "(malformed)". mode is batch_step or batch_step_dryRun, depending on the dryRun flag.
         /// </summary>
         private static void RecordBatchStep(string skillName, string agentId, bool dryRun, bool ok, string errorCode, long durationMs)
         {
@@ -2613,11 +2581,10 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Classifies a skill response by scanning the raw JSON string — cheap enough for the hot
-        /// path and tolerant of nested content. An error envelope (<c>"status":"error"</c>) is a
-        /// failure and its <c>"errorCode"</c> is extracted. For a dryRun preview, a
-        /// <c>"valid":false</c> verdict is a failure reported as DRYRUN_INVALID (an unknown-skill
-        /// dryRun comes back as an error envelope and is caught by the first check).
+        /// Determines the skill outcome by scanning the raw JSON string — cheap enough for the hot path and tolerant
+        /// of nested content. An error envelope (<c>"status":"error"</c>) counts as a failure, its <c>"errorCode"</c> is extracted.
+        /// For a dryRun preview, a <c>"valid":false</c> verdict counts as a failure and reports DRYRUN_INVALID
+        /// (a dryRun against an unknown skill returns an error envelope, caught by the first check).
         /// </summary>
         private static void ProbeOutcome(string json, bool isDryRun, out bool ok, out string errorCode)
         {
@@ -2641,9 +2608,9 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Extracts the value of the first <c>"errorCode":"..."</c> field. Returns null when the
-        /// field is absent or is JSON null (<c>"errorCode":null</c> does not match the quoted
-        /// probe), so the telemetry line records a null errorCode rather than a wrong one.
+        /// Extracts the value of the first <c>"errorCode":"..."</c> field. Returns null when the field is missing
+        /// or is JSON null (<c>"errorCode":null</c> doesn't match the quoted probe pattern), so the telemetry row
+        /// records a null errorCode rather than a wrong value.
         /// </summary>
         private static string ExtractErrorCode(string json)
         {
@@ -2660,55 +2627,47 @@ namespace UnitySkills
         private const int MaxBatchSteps = 50;
 
         /// <summary>
-        /// POST /skills/batch — executes several skills sequentially inside one main-thread job,
-        /// saving one HTTP round-trip + main-thread wakeup per step.
+        /// POST /skills/batch — executes multiple skills sequentially within a single main-thread job,
+        /// saving one HTTP round trip and one main-thread wake-up per step.
         ///
-        /// Body: {"steps":[{"skill":"gameobject_create","args":{...}}, ...], "continueOnError":false}
-        /// - Each step runs the FULL SkillRouter.Execute pipeline (permission gate, semantic
-        ///   validation, undo, audit) exactly like a standalone POST /skill/{name}; each step
-        ///   gets its own undo group (no merging).
-        /// - Default is fail-fast: the first failed step stops the batch and the remaining steps
-        ///   are reported as "skipped". With continueOnError=true failed steps are recorded and
-        ///   the batch continues. Authorization-type responses (MODE_RESTRICTED /
-        ///   CONFIRMATION_REQUIRED) ALWAYS interrupt regardless of continueOnError — they cannot
-        ///   be skipped; the step's full response (incl. grant token) is returned so the caller
-        ///   can complete the grant flow and re-submit the remaining steps.
-        /// - Static $param slots: a body-level "params":{"name":value,...} object fills
-        ///   placeholder nodes in a step's structured args. Any object whose ONLY key is "$param"
-        ///   (e.g. {"$param":"height"}), or exactly {"$param":"name","default":X}, at any depth,
-        ///   is replaced by params[name] when present, else its "default", else the step fails
-        ///   SEMANTIC_INVALID (details.param names the missing slot). $param is a pure static
-        ///   substitution with no step-order dependency, so it is resolved BEFORE $ref and
-        ///   identically in dryRun and execute (real values always exist — a missing slot fails a
-        ///   dry-run too, surfacing gaps before replay). $param and $ref are orthogonal: a step
-        ///   may use both, but a single node is one or the other, never both
-        ///   ({"$param":..,"$ref":..} is rejected SEMANTIC_INVALID). Any $ref left after
-        ///   substitution goes through the $ref stage below.
-        /// - Inter-step references: inside a step's structured args, any object whose ONLY
-        ///   key is "$ref" (e.g. {"$ref":"$0.instanceId"}), at any depth, is replaced before that
-        ///   step executes. "$N" is the 0-based index of an EARLIER successful step; the part
-        ///   after the dot is a Newtonsoft SelectToken path into that step's unwrapped result
-        ///   ("$0" alone = the whole result, "$1.items[0].path" digs into arrays). Unresolvable
-        ///   refs (malformed / index out of range / forward reference / referenced step not
-        ///   successful / path with no match) fail the step with SEMANTIC_INVALID and then follow
-        ///   the normal fail-fast / continueOnError rules. Refs inside string-typed args are NOT
-        ///   resolved — only structured JSON args are scanned.
-        /// - ?mode=dryRun validates every step without executing anything and never interrupts,
-        ///   so an agent can preview the whole sequence in one call. $ref params carry no real
-        ///   value in a dry-run: they are stripped from the validation body and checked
-        ///   structurally only (index range, ordering, referenced skill's declared Outputs); such
-        ///   steps carry refsValidated + findings in validation.warnings. ?mode=plan is not
-        ///   supported.
-        /// - ?mode=transactional makes the batch all-or-nothing: unknown skills and steps whose
-        ///   skill declares MayTriggerReload are rejected up front with 400 (a domain reload
-        ///   wipes the editor undo stack, so the rollback promise could not be kept), and
-        ///   continueOnError=true is rejected as contradictory. When any step fails — including
-        ///   authorization interrupts, whose grant token is still returned — every already
-        ///   executed step is reverted via Undo.RevertAllDownToGroup and re-labelled
-        ///   status:"rolled_back" (steps of MutatesAssets skills get
-        ///   rollbackReliability:"partial": AssetDatabase disk writes are not fully covered by
-        ///   the undo stack). The response then reports status:"rolled_back" + rolledBack:true.
-        ///   Transactional mode composes freely with $ref references.
+        /// Request body: {"steps":[{"skill":"gameobject_create","args":{...}}, ...], "continueOnError":false}
+        /// - Each step runs the full SkillRouter.Execute pipeline (permission gate, semantic validation, undo, audit),
+        ///   identical to calling POST /skill/{name} individually; each step gets its own undo group, never merged.
+        /// - Fails fast by default: the first failing step terminates the batch, remaining steps reported "skipped".
+        ///   With continueOnError=true, a failing step is recorded and the batch continues. A grant-related response
+        ///   (MODE_RESTRICTED / CONFIRMATION_REQUIRED) always interrupts regardless of continueOnError — these can't
+        ///   be skipped; the full response (with the grant token) is returned so the caller can resume after granting.
+        /// - Static $param slots: a request-body-level "params":{"name":value,...} object fills placeholder nodes in
+        ///   a step's structured args. At any depth, an object whose only key is "$param" (e.g. {"$param":"height"}),
+        ///   or shaped exactly {"$param":"name","default":X}, is replaced by params[name] when present, else its
+        ///   "default", else that step fails SEMANTIC_INVALID (details.param names the missing slot).
+        ///   $param is purely static and order-independent, resolved before $ref, and behaves the same under dryRun
+        ///   and execute (a missing slot fails in dry-run too, exposing gaps before replay).
+        ///   $param and $ref are mutually orthogonal: a step may use both, but a single node may only be one or the
+        ///   other, never both ({"$param":..,"$ref":..} is SEMANTIC_INVALID). Any $ref left after substitution is
+        ///   handled by the $ref stage below.
+        /// - Cross-step references: at any depth within a step's structured args, an object whose only key is "$ref"
+        ///   (e.g. {"$ref":"$0.instanceId"}) is substituted before that step executes. "$N" is the 0-based index of
+        ///   an earlier, successful step; after the dot is a Newtonsoft SelectToken path into that step's unwrapped
+        ///   result (bare "$0" = whole result, "$1.items[0].path" reaches into arrays).
+        ///   An unresolvable reference (malformed / out-of-range / forward reference / referenced step didn't
+        ///   succeed / path matches nothing) fails that step with SEMANTIC_INVALID, then falls through to the normal
+        ///   fail-fast / continueOnError rules. References inside string-typed args are not resolved — only structured JSON args are scanned.
+        /// - ?mode=dryRun validates every step but executes nothing, and never halts, so an agent can preview the
+        ///   whole sequence in one call. $ref parameters carry no real value during a dry run: they're stripped from
+        ///   the validation body and only get a structural check (index range, ordering, the referenced skill's
+        ///   declared Outputs); such steps carry refsValidated and findings in validation.warnings. ?mode=plan isn't supported.
+        /// - ?mode=transactional makes the whole batch all-or-nothing: an unknown skill, or a step whose skill
+        ///   declares MayTriggerReload, is rejected up front with 400 (a reload clears the undo stack, breaking the
+        ///   rollback promise), and continueOnError=true is rejected as self-contradictory. If any step fails —
+        ///   including a grant interruption, whose token is still returned — every executed step is rolled back via
+        ///   Undo.RevertAllDownToGroup and re-marked status:"rolled_back" (a MutatesAssets step gets
+        ///   rollbackReliability:"partial": AssetDatabase disk writes aren't fully covered by the undo stack). The
+        ///   response then reports status:"rolled_back" and rolledBack:true. transactional composes freely with $ref.
+        /// - Both modes can equally be specified in the body ("mode":"dryRun"/"transactional", "dryRun":true). These
+        ///   two keys are parsed independently, query string wins on conflict — see TryApplyBatchBodyMode — the
+        ///   response echoes the mode that actually took effect ("mode":"dryRun"|"transactional"|"execute", plus the
+        ///   legacy "dryRun" boolean), the only way for the caller to confirm which of the four spellings won.
         /// </summary>
         private static void HandleSkillsBatchRequest(RequestJob job)
         {
@@ -2716,6 +2675,8 @@ namespace UnitySkills
                 return;
 
             var qs = SkillRouter.ParseQueryString(job.QueryString);
+            if (RejectUnknownBatchQueryParams(job, qs))
+                return;
             if (!TryResolveBatchRequestMode(job, qs, out bool dryRun, out bool transactional))
                 return;
             var batchMode = dryRun ? SkillRouter.RequestMode.DryRun : SkillRouter.RequestMode.Execute;
@@ -2723,6 +2684,22 @@ namespace UnitySkills
                 return;
 
             if (!TryParseBody(job, out var body)) return;
+
+            if (RejectUnknownBatchBodyKeys(job, body))
+                return;
+            if (!TryApplyBatchBodyMode(job, body, qs, ref dryRun, ref transactional))
+                return;
+            if (dryRun)
+            {
+                // The request body might only turn this into a preview at this point — the ?diff= parsed above
+                // was based only on the mode in the query string, and a preview has nothing to compare against.
+                captureDiff = false;
+                // Nor is there anything to fence or roll back. This only happens when the two keys come from different
+                // places (?mode=transactional plus body {"dryRun":true}), since one 'mode' value can't request both; if
+                // transactional stayed on, ExecuteBatchCore would open an undo fence and roll back to it on the first
+                // invalid step — touching the user's undo stack for a request that executed nothing.
+                transactional = false;
+            }
 
             if (!(body.TryGetValue("steps", StringComparison.OrdinalIgnoreCase, out var stepsToken) && stepsToken is JArray steps) || steps.Count == 0)
             {
@@ -2753,10 +2730,17 @@ namespace UnitySkills
                 return;
             }
 
-            bool continueOnError = body.TryGetValue("continueOnError", StringComparison.OrdinalIgnoreCase, out var coeToken)
-                && coeToken.Type == JTokenType.Boolean && coeToken.ToObject<bool>();
+            bool continueOnError = false;
+            if (body.TryGetValue("continueOnError", StringComparison.OrdinalIgnoreCase, out var coeToken)
+                && coeToken != null && coeToken.Type != JTokenType.Null
+                && !TryReadBatchBool(coeToken, out continueOnError))
+            {
+                WriteBatchTypeMismatch(job, "continueOnError", coeToken,
+                    "Use JSON true/false; the strings \"true\"/\"false\" are accepted too. Until 2.7 any other type was silently read as false, so a batch the caller believed would continue past failures actually stopped at the first one.");
+                return;
+            }
 
-            // Body-level "params" fills $param slots inside step args (static, mode-agnostic).
+            // The request-body-level "params" fills $param slots in step args (static, independent of mode).
             JObject batchParams = null;
             if (body.TryGetValue("params", StringComparison.OrdinalIgnoreCase, out var paramsToken) && paramsToken is JObject paramsObj)
                 batchParams = paramsObj;
@@ -2770,13 +2754,11 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Core sequential executor behind POST /skills/batch: $param substitution,
-        /// inter-step $ref resolution, then the FULL single-skill pipeline per step
-        /// (SkillRouter.Execute — permission gate, undo, audit), with fail-fast /
-        /// continueOnError / authorization-interrupt semantics and optional transactional
-        /// rollback. Callers must pass a validated non-empty steps array (and, for
-        /// transactional, run RejectTransactionalPrecheck first). Returns the response body
-        /// ({status, executed, failed, results, ...}) as a JObject.
+        /// The sequential execution core behind POST /skills/batch: $param substitution, cross-step $ref resolution,
+        /// then step-by-step runs of the full single-skill pipeline (SkillRouter.Execute — permission gate, undo,
+        /// audit), with fail-fast / continueOnError / grant-interruption semantics and optional transactional rollback.
+        /// The caller must pass an already-validated, non-empty steps array (transactional mode must also have run
+        /// RejectTransactionalPrecheck). Returns the response body as a JObject ({status, executed, failed, results, ...}).
         /// </summary>
         internal static JObject ExecuteBatchCore(JArray steps, JObject batchParams, bool continueOnError,
             bool dryRun, bool transactional, string agentId, bool captureDiff = false)
@@ -2784,15 +2766,14 @@ namespace UnitySkills
             int txStartGroup = -1;
             if (transactional)
             {
-                // Fence the whole batch in the undo timeline. Each step still opens (and
-                // collapses) its own undo group inside Execute; on failure everything above
-                // this fence is reverted in one shot.
+                // Plants a fence on the undo timeline for the whole batch. Each step still opens (and collapses)
+                // its own undo group inside Execute; on failure, everything above this fence is rolled back at once.
                 Undo.IncrementCurrentGroup();
                 txStartGroup = Undo.GetCurrentGroup();
             }
 
             var results = new List<JObject>(steps.Count);
-            // Unwrapped result of each successful step, resolvable by later steps via $ref.
+            // Each successful step's already-unwrapped result, for later steps to reference via $ref.
             var stepResults = new JToken[steps.Count];
             int executedCount = 0;
             int failedCount = 0;
@@ -2841,9 +2822,8 @@ namespace UnitySkills
                 }
 
                 // ---- Static $param substitution (resolved before $ref) ----
-                // Pure static replacement from the body-level "params" object, so dryRun and
-                // execute resolve it identically (real values exist either way). Any $ref left
-                // in the substituted args is handled by the $ref stage below.
+                // Purely static substitution, drawn from the request-body-level "params" object, so the result is identical
+                // between dryRun and execute (the real value is present in both). Any $ref left after substitution is handled by the $ref stage below.
                 if (argsToken is JContainer)
                 {
                     var paramNodes = FindBatchParamNodes(argsToken, out var paramRefConflict);
@@ -2904,11 +2884,11 @@ namespace UnitySkills
                     }
                 }
 
-                // ---- Inter-step $ref references ----
-                List<BatchRefNode> refNodes = null;          // dryRun bookkeeping
-                HashSet<string> strippedRefParams = null;    // dryRun: params removed from the validation body
-                bool wholeArgsFromRef = false;               // dryRun: the args root itself is a $ref
-                List<string> refWarnings = null;             // dryRun: structural findings
+                // ---- Cross-step $ref references ----
+                List<BatchRefNode> refNodes = null;          // for dryRun bookkeeping
+                HashSet<string> strippedRefParams = null;    // dryRun: params already stripped from the validation body
+                bool wholeArgsFromRef = false;               // dryRun: the args root node is itself a $ref
+                List<string> refWarnings = null;             // dryRun: structural-check findings
                 if (argsToken is JContainer)
                 {
                     if (dryRun)
@@ -2920,11 +2900,10 @@ namespace UnitySkills
                             foreach (var refNode in refNodes)
                                 ValidateBatchRefStructural(refNode.RefString, i, steps, refWarnings);
 
-                            // References carry no real value during a dry-run. Params holding a
-                            // $ref are removed from the validation body — leaving the placeholder
-                            // objects in would only produce TYPE_MISMATCH noise. The resulting
-                            // MISSING_PARAM / semantic gaps are reconciled after DryRun returns
-                            // (see AdjustDryRunPayloadForRefs).
+                            // References carry no real value during a dry run. A parameter holding a $ref is
+                            // removed from the validation body — leaving the placeholder object in would just
+                            // produce TYPE_MISMATCH noise. The resulting MISSING_PARAM and semantic gaps are
+                            // corrected uniformly after DryRun returns (see AdjustDryRunPayloadForRefs).
                             strippedRefParams = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                             foreach (var refNode in refNodes)
                             {
@@ -2949,8 +2928,7 @@ namespace UnitySkills
                     }
                     else
                     {
-                        // Resolve against earlier step results on a deep copy; the original
-                        // request body is never mutated.
+                        // Resolve on a deep copy using earlier steps' results; the original request body is never mutated.
                         var argsClone = argsToken.DeepClone();
                         var cloneRefs = FindBatchRefNodes(argsClone);
                         if (cloneRefs.Count > 0)
@@ -3007,10 +2985,12 @@ namespace UnitySkills
                             catch { batchDiff.HadWritableSteps = true; }
                         }
                         stepJson = SkillRouter.Execute(stepSkillName, argsJson);
-                        // Steps share one POST job, so the per-request invalidation in
-                        // ProcessJobQueue never runs between them — without this, a step
-                        // can't find objects created by an earlier step in the same batch.
-                        GameObjectFinder.InvalidateCache();
+                        // Every step shares the same POST job, so the per-request cache invalidation in ProcessJobQueue doesn't run
+                        // between steps — without this line, a step couldn't find an object created earlier in the same batch.
+                        // A ReadOnly step is side-effect-free by contract and can't stale the cache, so it's skipped; every other
+                        // step — including one whose name doesn't resolve to a known skill — still triggers invalidation.
+                        if (!SkillRouter.TryGetSkill(stepSkillName, out var stepSkill) || !stepSkill.ReadOnly)
+                            GameObjectFinder.InvalidateCache();
                         SkillsLogger.LogAgent(agentId, $"{stepSkillName} (batch {i + 1}/{steps.Count})");
                     }
                 }
@@ -3033,14 +3013,13 @@ namespace UnitySkills
 
                 if (dryRun)
                 {
-                    // $ref params were stripped from the validation body — reconcile the payload
-                    // (missingParams filter, semantic downgrade, refsValidated) BEFORE reading
-                    // its 'valid' verdict.
+                    // $ref parameters have already been stripped from the validation body — the payload must be corrected before
+                    // reading its 'valid' verdict (filter missingParams, downgrade semantic errors, attach refsValidated).
                     if (refNodes != null && refNodes.Count > 0)
                         AdjustDryRunPayloadForRefs(stepPayload, refNodes, strippedRefParams, wholeArgsFromRef, refWarnings);
 
-                    // DryRun responses carry status:"dryRun" + valid:bool; unknown skills come
-                    // back as status:"error". Validation failures never halt a dry-run batch.
+                    // A DryRun response carries status:"dryRun" and valid:bool; an unknown skill returns status:"error".
+                    // A validation failure never halts a dry-run batch.
                     bool stepValid = string.Equals(stepStatus, "dryRun", StringComparison.OrdinalIgnoreCase) &&
                         stepPayload["valid"]?.Type == JTokenType.Boolean && stepPayload["valid"].ToObject<bool>();
                     if (stepValid)
@@ -3062,9 +3041,8 @@ namespace UnitySkills
                     failedCount++;
                     results.Add(new JObject { ["index"] = i, ["skill"] = stepSkillName, ["status"] = "error", ["error"] = stepPayload });
 
-                    // Authorization-type responses can never be skipped: the caller must handle
-                    // the grant/confirmation flow, so the batch stops here even with
-                    // continueOnError=true. The full payload above carries the grant token.
+                    // A grant-related response must never be skipped: the caller has to complete the grant/confirmation flow,
+                    // so the batch stops here even if continueOnError=true. The full payload above carries the grant token.
                     string errorCode = stepPayload["errorCode"]?.ToString();
                     bool authorizationRequired =
                         string.Equals(errorCode, "MODE_RESTRICTED", StringComparison.OrdinalIgnoreCase) ||
@@ -3077,7 +3055,7 @@ namespace UnitySkills
                 }
 
                 // status:"success" (or any non-error shape) — unwrap the inner result;
-                // the entry-level status field already expresses success.
+                // the entry-level status field has already expressed success.
                 executedCount++;
                 var unwrappedResult = stepPayload.TryGetValue("result", out var innerResult) ? innerResult : stepPayload;
                 stepResults[i] = unwrappedResult;
@@ -3096,9 +3074,8 @@ namespace UnitySkills
             bool rolledBack = false;
             if (transactional && failedCount > 0)
             {
-                // All-or-nothing: any failure (incl. authorization interrupts — the failed
-                // step's entry above still carries the grant token untouched) reverts every
-                // step executed since the batch fence, without leaving redo entries.
+                // All-or-nothing: any failure (including a grant interruption — the failed step's entry still carries the
+                // grant token as-is) rolls back every step executed since the batch fence, leaving no redo entries.
                 Undo.RevertAllDownToGroup(txStartGroup);
                 GameObjectFinder.InvalidateCache();
                 rolledBack = true;
@@ -3110,8 +3087,8 @@ namespace UnitySkills
                         continue;
                     entry["status"] = "rolled_back";
                     revertedSteps++;
-                    // AssetDatabase disk writes are not fully covered by the undo stack —
-                    // flag those rollbacks as partial instead of over-promising.
+                    // AssetDatabase's disk writes aren't fully covered by the undo stack —
+                    // mark this kind of rollback as partial rather than over-promising.
                     string entrySkill = entry["skill"]?.ToString();
                     if (!string.IsNullOrEmpty(entrySkill) &&
                         SkillRouter.TryGetSkill(entrySkill, out var entryInfo) && entryInfo.MutatesAssets)
@@ -3125,6 +3102,11 @@ namespace UnitySkills
             var response = new JObject
             {
                 ["status"] = failedCount == 0 ? "completed" : (transactional ? "rolled_back" : "partial"),
+                // Echoes back the mode that actually took effect, not whichever single key requested it. ?mode= and
+                // ?dryRun=/body "dryRun" are each parsed independently, either can come from the URL or payload (see
+                // TryApplyBatchBodyMode), so "which of my four spellings won" can't be derived from the request alone —
+                // a caller who thinks it sent a preview must be able to see that it actually got one.
+                ["mode"] = dryRun ? "dryRun" : (transactional ? "transactional" : "execute"),
                 ["dryRun"] = dryRun,
             };
             if (transactional)
@@ -3140,20 +3122,20 @@ namespace UnitySkills
             return response;
         }
 
-        /// <summary>One $param name aggregated across a step sequence (macro-library introspection).</summary>
+        /// <summary>A $param name aggregated across the whole step sequence (for macro-library introspection).</summary>
         internal sealed class BatchParamDeclaration
         {
             public string Name;
             public bool HasDefault;      // every node referencing this name carries an inline default
-            public JToken DefaultValue;  // first inline default seen (display only)
+            public JToken DefaultValue;  // the first inline default seen (for display only)
         }
 
         /// <summary>
-        /// Aggregates the $param slots declared across a whole step sequence, keyed by name and in
-        /// first-occurrence order. A name counts as having a default only when EVERY node
-        /// referencing it carries an inline "default" — a single bare {"$param":"x"} slot makes the
-        /// value mandatory. Malformed slots (non-string $param name) are skipped here; execution
-        /// reports them per step. String-typed args are not scanned, mirroring execution.
+        /// Aggregates the $param slots declared across the whole step sequence, keyed by name, in first-seen order.
+        /// A name only counts as having a default if every node that references it carries an inline "default" —
+        /// even a single bare {"$param":"x"} slot makes that value required.
+        /// A malformed slot ($param name isn't a string) is skipped here, and reported per-step at execution time.
+        /// Consistent with the execution stage, doesn't scan string-typed args.
         /// </summary>
         internal static List<BatchParamDeclaration> CollectBatchParamDeclarations(JArray steps)
         {
@@ -3209,10 +3191,10 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Resolves ?mode= / ?dryRun= for /skills/batch. Batch accepts dryRun/transactional
-        /// (single-skill requests accept dryRun/plan instead — see TryResolveRequestMode, which
-        /// keeps rejecting 'transactional' so its INVALID_MODE validValues stay accurate).
-        /// Returns false (and writes the error response) on any unrecognized value.
+        /// Parses ?mode= / ?dryRun= for /skills/batch. Batch accepts dryRun/transactional
+        /// (a single-skill request accepts dryRun/plan — see TryResolveRequestMode, which keeps rejecting
+        /// 'transactional' so its INVALID_MODE validValues stays accurate).
+        /// Any unrecognized value returns false (and writes an error response).
         /// </summary>
         private static bool TryResolveBatchRequestMode(RequestJob job, Dictionary<string, string> qs, out bool dryRun, out bool transactional)
         {
@@ -3258,7 +3240,7 @@ namespace UnitySkills
                     return true;
                 }
                 if (dryRunVal.Equals("false", StringComparison.OrdinalIgnoreCase))
-                    return true; // explicit false = execute for real
+                    return true; // Explicit false = execute for real
 
                 job.StatusCode = 400;
                 job.ResponseJson = SkillErrorResponse.Build(
@@ -3279,11 +3261,280 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Transactional batches promise all-or-nothing via the editor undo stack, so anything
-        /// that would break that promise is rejected up front (400 SEMANTIC_INVALID) instead of
-        /// failing mid-flight: unknown/malformed steps, skills that may trigger a domain reload
-        /// (a reload wipes the undo stack), and continueOnError=true (a transaction is
-        /// fail-fast by definition). Returns true when the batch was rejected.
+        /// The full set of top-level request-body keys POST /skills/batch recognizes, and the full set of query
+        /// keys it reads (see TryResolveBatchRequestMode and TryResolveDiff).
+        /// Anything else is rejected rather than ignored: a silently-dropped key is exactly what causes an agent
+        /// to believe it requested a preview, or requested async execution, and got neither.
+        /// </summary>
+        private static readonly string[] BatchBodyParams = { "steps", "params", "continueOnError", "dryRun", "mode" };
+        private static readonly string[] BatchQueryParams = { "mode", "dryRun", "diff" };
+
+        private static bool IsKnownBatchParam(string[] allowed, string name)
+        {
+            foreach (var candidate in allowed)
+            {
+                if (string.Equals(candidate, name, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Rejects an unrecognized query parameter on /skills/batch (400 UNKNOWN_PARAM). Returns true if rejected.
+        /// </summary>
+        private static bool RejectUnknownBatchQueryParams(RequestJob job, Dictionary<string, string> qs)
+        {
+            var unknown = new List<object>();
+            foreach (var key in qs.Keys)
+            {
+                if (IsKnownBatchParam(BatchQueryParams, key))
+                    continue;
+
+                var entry = new Dictionary<string, object> { ["parameter"] = key };
+                var hint = BatchParamHint(key);
+                if (hint != null)
+                    entry["hint"] = hint;
+                unknown.Add(entry);
+            }
+
+            if (unknown.Count == 0)
+                return false;
+
+            job.StatusCode = 400;
+            job.ResponseJson = SkillErrorResponse.Build(
+                SkillErrorCode.UnknownParam,
+                "Unknown query parameter(s) on POST /skills/batch — the batch was NOT executed.",
+                skill: "skills_batch",
+                details: new
+                {
+                    unknownParams = unknown,
+                    allowedParams = BatchQueryParams,
+                    location = "queryString",
+                },
+                retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+            return true;
+        }
+
+        /// <summary>
+        /// Rejects an unrecognized top-level request-body key on /skills/batch (400 UNKNOWN_PARAM), consistent
+        /// with what CollectUnknownParameters does for single-skill args.
+        /// This runs before the 'steps' check, so a typo like "step" is reported as an "unknown key" itself,
+        /// rather than as a missing 'steps'. Returns true if the request was rejected.
+        /// </summary>
+        private static bool RejectUnknownBatchBodyKeys(RequestJob job, JObject body)
+        {
+            var unknown = new List<object>();
+            foreach (var property in body.Properties())
+            {
+                if (IsKnownBatchParam(BatchBodyParams, property.Name))
+                    continue;
+
+                var entry = new Dictionary<string, object> { ["parameter"] = property.Name };
+                var hint = BatchParamHint(property.Name);
+                if (hint != null)
+                    entry["hint"] = hint;
+                unknown.Add(entry);
+            }
+
+            if (unknown.Count == 0)
+                return false;
+
+            job.StatusCode = 400;
+            job.ResponseJson = SkillErrorResponse.Build(
+                SkillErrorCode.UnknownParam,
+                "Unknown top-level field(s) in the /skills/batch body — the batch was NOT executed.",
+                skill: "skills_batch",
+                details: new
+                {
+                    unknownParams = unknown,
+                    allowedParams = BatchBodyParams,
+                    location = "body",
+                    hint = "Per-step fields ('skill', 'args') live inside each element of 'steps', not at the top level.",
+                },
+                retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+            return true;
+        }
+
+        /// <summary>
+        /// Gives targeted hints for the handful of /skills/batch keys agents actually get wrong: the singular "step",
+        /// promoting a step's own fields to the top level, treating transactional as a boolean, and runAsync — this
+        /// endpoint never had that parameter, since it runs every step in the same main-thread job.
+        /// Returns null when there's nothing specific to say.
+        /// </summary>
+        private static string BatchParamHint(string name)
+        {
+            switch (name.ToLowerInvariant())
+            {
+                case "step":
+                    return "Did you mean 'steps'? It takes an array of {skill, args} objects.";
+                case "skill":
+                case "args":
+                    return "'skill' and 'args' belong to an element of 'steps', not to the top level: {\"steps\":[{\"skill\":\"...\",\"args\":{...}}]}.";
+                case "transactional":
+                    return "All-or-nothing execution is a mode, not a flag: use '?mode=transactional' (or body \"mode\":\"transactional\").";
+                case "runasync":
+                case "async":
+                    return "POST /skills/batch is always synchronous — it runs every step in one main-thread job and returns all results. For a long-running background batch use the batch_execute skill's 'runAsync' parameter (POST /skill/batch_execute) and poll job_status / GET /jobs/{id}.";
+                case "continueonfailure":
+                case "ignoreerrors":
+                    return "Did you mean 'continueOnError'?";
+                case "diff":
+                    return "'diff' is a query parameter, not a body field: POST /skills/batch?diff=1.";
+                default:
+                    return null;
+            }
+        }
+
+        /// <summary>
+        /// Reads a boolean that the client may have quoted. JSON true/false is accepted as-is, and the strings
+        /// "true"/"false" are also parsed; anything else fails, so the caller can report TYPE_MISMATCH instead of
+        /// silently falling back to a default.
+        /// </summary>
+        private static bool TryReadBatchBool(JToken token, out bool value)
+        {
+            value = false;
+            if (token == null)
+                return false;
+            if (token.Type == JTokenType.Boolean)
+            {
+                value = token.ToObject<bool>();
+                return true;
+            }
+            if (token.Type == JTokenType.String)
+                return bool.TryParse(token.ToString().Trim(), out value);
+            return false;
+        }
+
+        private static void WriteBatchTypeMismatch(RequestJob job, string parameter, JToken token, string hint)
+        {
+            string receivedType = token.Type.ToString().ToLowerInvariant();
+            job.StatusCode = 400;
+            job.ResponseJson = SkillErrorResponse.Build(
+                SkillErrorCode.TypeMismatch,
+                $"'{parameter}' must be a boolean — received {receivedType}. The batch was NOT executed.",
+                skill: "skills_batch",
+                details: new
+                {
+                    parameter,
+                    expectedType = "boolean",
+                    receivedType,
+                    received = token is JContainer ? token.ToString(Formatting.None) : token.ToString(),
+                    hint,
+                },
+                retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+        }
+
+        /// <summary>
+        /// Applies the request-body-level "mode"/"dryRun" on top of what the query string already resolved.
+        ///
+        /// <para>"mode" and "dryRun" are two independent keys, each parsed independently, query string wins on
+        /// conflict. In the past one "has the query already decided" flag gated both, so a URL's
+        /// <c>?mode=transactional</c> would silently drop a body <c>{"dryRun":true}</c>, actually executing a batch
+        /// the caller meant to preview — the worst possible failure for a preview, invisible in the response.</para>
+        ///
+        /// <para>Priority order: for the same key, the URL wins over the payload; within the same slot, "mode"
+        /// wins over "dryRun" (on the query-string side, this is what TryResolveBatchRequestMode's early return
+        /// already implements). Across the two keys, dryRun is monotonic — any surviving explicit <c>dryRun:true</c>
+        /// makes the request a preview, and <c>dryRun:false</c> never cancels <c>mode:"dryRun"</c>, because "don't
+        /// decide preview from this key" and "execute for real" aren't the same statement.
+        /// Biasing toward preview is the only direction where the worst case is just a wasted call.</para>
+        ///
+        /// <para>Even a value that loses the priority contest is still validated, so a typo is never swallowed.
+        /// Returns false (and writes a 400) on an invalid value or type.</para>
+        /// </summary>
+        private static bool TryApplyBatchBodyMode(RequestJob job, JObject body, Dictionary<string, string> qs,
+            ref bool dryRun, ref bool transactional)
+        {
+            bool queryOwnsMode = HasQueryValue(qs, "mode");
+            bool queryOwnsDryRun = HasQueryValue(qs, "dryRun");
+            bool bodyModeApplied = false;
+
+            if (body.TryGetValue("mode", StringComparison.OrdinalIgnoreCase, out var modeToken)
+                && modeToken != null && modeToken.Type != JTokenType.Null)
+            {
+                if (modeToken.Type != JTokenType.String)
+                {
+                    string receivedType = modeToken.Type.ToString().ToLowerInvariant();
+                    job.StatusCode = 400;
+                    job.ResponseJson = SkillErrorResponse.Build(
+                        SkillErrorCode.TypeMismatch,
+                        $"Body 'mode' must be a string — received {receivedType}. The batch was NOT executed.",
+                        skill: "skills_batch",
+                        details: new
+                        {
+                            parameter = "mode",
+                            expectedType = "string",
+                            receivedType,
+                            validValues = new[] { "dryRun", "transactional" },
+                        },
+                        retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                    return false;
+                }
+
+                string modeValue = modeToken.ToString().Trim();
+                bool bodyDryRunMode = modeValue.Equals("dryRun", StringComparison.OrdinalIgnoreCase);
+                bool bodyTransactional = modeValue.Equals("transactional", StringComparison.OrdinalIgnoreCase);
+                if (!bodyDryRunMode && !bodyTransactional)
+                {
+                    bool isPlan = modeValue.Equals("plan", StringComparison.OrdinalIgnoreCase);
+                    job.StatusCode = 400;
+                    job.ResponseJson = SkillErrorResponse.Build(
+                        SkillErrorCode.InvalidMode,
+                        isPlan
+                            ? "Batch supports mode 'dryRun' (validates every step without executing) and 'transactional' (all-or-nothing with rollback); 'plan' is not available for /skills/batch."
+                            : $"Unknown mode '{modeValue}' — the batch was NOT executed.",
+                        skill: "skills_batch",
+                        details: new
+                        {
+                            received = modeValue,
+                            validValues = new[] { "dryRun", "transactional" },
+                            location = "body",
+                            hint = "Set body \"mode\":\"dryRun\" to validate without executing, \"transactional\" for all-or-nothing execution with rollback, or omit it to execute fail-fast.",
+                        },
+                        retryStrategy: SkillErrorResponse.RetryFixAndRetry);
+                    return false;
+                }
+
+                // This key only belongs to the request body when the URL didn't write 'mode'.
+                if (!queryOwnsMode)
+                {
+                    bodyModeApplied = true;
+                    transactional = bodyTransactional;
+                    dryRun = dryRun || bodyDryRunMode;
+                }
+            }
+
+            if (body.TryGetValue("dryRun", StringComparison.OrdinalIgnoreCase, out var dryRunToken)
+                && dryRunToken != null && dryRunToken.Type != JTokenType.Null)
+            {
+                if (!TryReadBatchBool(dryRunToken, out bool bodyDryRun))
+                {
+                    WriteBatchTypeMismatch(job, "dryRun", dryRunToken,
+                        "Use JSON true/false (or the strings \"true\"/\"false\") in the body, or '?dryRun=true' / '?mode=dryRun' in the query string.");
+                    return false;
+                }
+
+                // Skip if a request-body-level 'mode' already spoke for this slot; that's priority within the
+                // same slot, not a reason to ignore the URL's own dryRun key.
+                if (!queryOwnsDryRun && !bodyModeApplied)
+                    dryRun = dryRun || bodyDryRun;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// Whether the query string carries a usable value for this key — the same "present and non-blank" test
+        /// the ?mode= / ?dryRun= parsers use, so "?dryRun=" counts as "the caller didn't decide" in both places.
+        /// </summary>
+        private static bool HasQueryValue(Dictionary<string, string> qs, string key) =>
+            qs.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value);
+
+        /// <summary>
+        /// A transactional batch relies on the editor's undo stack to promise "all or nothing", so anything that
+        /// would break that promise is rejected up front (400 SEMANTIC_INVALID) rather than failing mid-execution:
+        /// unknown/malformed steps, a skill that might trigger a domain reload (wipes the undo stack), and
+        /// continueOnError=true (a transaction is fail-fast by definition). Returns true if the batch was rejected.
         /// </summary>
         private static bool RejectTransactionalPrecheck(RequestJob job, JArray steps, bool continueOnError)
         {
@@ -3337,10 +3588,10 @@ namespace UnitySkills
         // ===== Static $param substitution (batch) =====
 
         /// <summary>
-        /// A {"$param":"name"} / {"$param":"name","default":X} slot found inside a step's args.
-        /// ParamName is null when the $param value is not a JSON string (reported as malformed at
-        /// resolve time). Unlike BatchRefNode there is no TopLevelParam: $param carries a real
-        /// value in every mode, so nothing is stripped from the dry-run validation body.
+        /// A {"$param":"name"} / {"$param":"name","default":X} slot found within a step's args.
+        /// ParamName is null when $param's value isn't a JSON string (reported as malformed at execution time).
+        /// Unlike BatchRefNode, there's no TopLevelParam here: $param carries a real value under every mode, so
+        /// nothing needs to be stripped from the dry-run validation body.
         /// </summary>
         private sealed class BatchParamNode
         {
@@ -3351,10 +3602,10 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// An object node is a parameter node iff "$param" is its ONLY property (a bare slot), or
-        /// its EXACTLY two properties are "$param" + "default" (a slot with a fallback). Objects
-        /// that merely contain "$param" among other keys are payload data and stay untouched —
-        /// mirrors IsBatchRefNode. paramName is null when the $param value is not a JSON string.
+        /// An object node is a param node if and only if "$param" is its sole property (a bare slot), or it has
+        /// exactly two properties, "$param" + "default" (a slot with a fallback). An object merely containing
+        /// "$param" among other keys is payload data and is left alone — consistent with IsBatchRefNode.
+        /// paramName is null when $param's value isn't a JSON string.
         /// </summary>
         private static bool IsBatchParamNode(JObject obj, out string paramName, out bool hasDefault, out JToken defaultValue)
         {
@@ -3391,9 +3642,9 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Collects every $param slot in a step's args (any depth). paramRefConflict is set to the
-        /// first node carrying BOTH "$param" and "$ref" (a node is one or the other, never both)
-        /// so the caller can reject it SEMANTIC_INVALID; the search stops at that node.
+        /// Collects every $param slot at any depth within a step's args.
+        /// When a node carries both "$param" and "$ref" (a node can only be one or the other, never both), it's
+        /// recorded in paramRefConflict for the caller to reject with SEMANTIC_INVALID, and the search stops there.
         /// </summary>
         private static List<BatchParamNode> FindBatchParamNodes(JToken argsRoot, out JObject paramRefConflict)
         {
@@ -3443,9 +3694,9 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Resolves one slot's value: the batch "params" object wins when it holds the name
-        /// (case-sensitive), else the node's inline "default", else the step fails
-        /// SEMANTIC_INVALID ("not provided and no default"). A non-string $param name is malformed.
+        /// Resolves a single slot's value: if the batch's "params" object holds that name, it wins (case-sensitive),
+        /// otherwise the node's inline "default" is used, otherwise that step fails with SEMANTIC_INVALID
+        /// ("not provided and no default"). A $param name that isn't a string is judged malformed.
         /// </summary>
         private static bool TryResolveBatchParam(BatchParamNode node, JObject batchParams, out JToken value, out string reason)
         {
@@ -3471,13 +3722,12 @@ namespace UnitySkills
             return false;
         }
 
-        // ===== Inter-step $ref references (batch) =====
+        // ===== Cross-step $ref references (batch) =====
 
         /// <summary>
-        /// A {"$ref":"$N.path"} node found inside a step's args. RefString is null when the
-        /// $ref value is not a JSON string (reported as malformed at resolve time).
-        /// TopLevelParam is the args property whose subtree contains the node, or null when
-        /// the node IS the args root.
+        /// A {"$ref":"$N.path"} node found within a step's args. RefString is null when $ref's value isn't a JSON
+        /// string (reported as malformed at execution time).
+        /// TopLevelParam is the args property whose subtree contains this node; null when the node is itself the args root.
         /// </summary>
         private sealed class BatchRefNode
         {
@@ -3487,8 +3737,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// An object node is a reference iff "$ref" is its ONLY property; objects that merely
-        /// contain a "$ref" key among others are payload data and stay untouched.
+        /// An object node is a reference if and only if "$ref" is its sole property;
+        /// an object that merely contains "$ref" among many other keys is payload data and is left alone.
         /// </summary>
         private static bool IsBatchRefNode(JObject obj, out string refString)
         {
@@ -3542,8 +3792,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Parses "$N", "$N.path" or "$N[…]" — N is the 0-based step index; the remainder is a
-        /// Newtonsoft SelectToken path into that step's unwrapped result.
+        /// Parses "$N", "$N.path", or "$N[…]" — N is the 0-based step index, and the rest is a Newtonsoft
+        /// SelectToken path into that step's already-unwrapped result.
         /// </summary>
         private static bool TryParseBatchRef(string refString, out int stepIndex, out string selectPath, out string parseError)
         {
@@ -3590,10 +3840,9 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Resolves one reference against the unwrapped results of already-executed steps.
-        /// Fails (with a structured reason) on: malformed ref, index outside the batch,
-        /// forward reference (N >= current step), referenced step not completed successfully,
-        /// or a SelectToken path with no match.
+        /// Resolves a single reference against the already-executed steps' unwrapped results.
+        /// Fails (with a structured reason) when: the reference is malformed, the index is out of range for this
+        /// batch, it's a forward reference (N >= current step), the referenced step didn't succeed, or the SelectToken path matches nothing.
         /// </summary>
         private static bool TryResolveBatchRef(string refString, JToken[] stepResults, int currentIndex, int stepCount,
             out JToken resolved, out string reason, out int referencedStep)
@@ -3647,10 +3896,9 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Dry-run structural validation of one reference (no real values exist to resolve):
-        /// index in range and pointing at an earlier step, referenced skill known, first path
-        /// segment present in the referenced skill's declared Outputs. All findings are
-        /// warnings — Outputs metadata may be incomplete, and a dry-run batch never halts.
+        /// Does a dry-run structural validation of a single reference (no real value to resolve yet): the index is
+        /// in range and points to an earlier step, the referenced skill is known, and the path's first segment
+        /// appears among the referenced skill's declared Outputs. Findings are only warnings — Outputs metadata may be incomplete, and a dry-run batch never halts.
         /// </summary>
         private static void ValidateBatchRefStructural(string refString, int currentIndex, JArray steps, List<string> warnings)
         {
@@ -3682,10 +3930,10 @@ namespace UnitySkills
                 return;
             var outputs = SkillRouter.GetEffectiveOutputs(refSkill);
             if (outputs == null || outputs.Length == 0)
-                return; // no declared outputs to check against
+                return; // No declared Outputs to compare against
             string firstSegment = FirstSelectTokenSegment(selectPath);
             if (firstSegment == null)
-                return; // "[0]…" indexes into the result root; nothing to name-check
+                return; // "[0]…" indexes into the result root — there's no name to validate
 
             foreach (var output in outputs)
             {
@@ -3704,12 +3952,10 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Post-processes a step's DryRun payload after its $ref params were stripped from the
-        /// validation body: drops MISSING_PARAM entries caused by the stripping, downgrades the
-        /// step's semanticErrors to warnings (semantic checks ran without the reference values,
-        /// so both pass and fail verdicts would be guesses), recomputes 'valid' from what is
-        /// left, and attaches refsValidated so callers see which params got structural-only
-        /// treatment.
+        /// Post-processes a step's DryRun payload after its $ref parameters are stripped from the validation body:
+        /// drops the MISSING_PARAM entries stripping produced, downgrades that step's semanticErrors to warnings
+        /// (the check ran without a reference value, so pass/fail is only a guess), recomputes 'valid' from what's
+        /// left, and attaches refsValidated so the caller can see which parameters only got a structural check.
         /// </summary>
         private static void AdjustDryRunPayloadForRefs(JObject stepPayload, List<BatchRefNode> refNodes,
             HashSet<string> strippedParams, bool wholeArgsFromRef, List<string> refWarnings)
@@ -3727,7 +3973,7 @@ namespace UnitySkills
             stepPayload["refsValidated"] = refsValidated;
 
             if (!(stepPayload["validation"] is JObject validation))
-                return; // error payload (unknown skill etc.) — refsValidated attached, nothing to adjust
+                return; // An error payload (unknown skill, etc.) — refsValidated is already attached, nothing more to correct
 
             var addedWarnings = new List<string>(refWarnings);
 
@@ -3771,9 +4017,8 @@ namespace UnitySkills
         private static bool IsNullOrEmptyJArray(JToken token) => !(token is JArray arr) || arr.Count == 0;
 
         /// <summary>
-        /// Routes GET /jobs and GET /jobs/{id}[/logs] to BatchPersistence without going
-        /// through the skill router. Designed for high-frequency progress polling: the
-        /// caller pings GET /jobs/{id} every 200-500 ms and gets a fresh snapshot.
+        /// Routes GET /jobs and GET /jobs/{id}[/logs] directly to BatchPersistence, bypassing the skill router.
+        /// Designed for high-frequency progress polling: a caller pings GET /jobs/{id} every 200-500ms to get the latest snapshot.
         /// </summary>
         private static void HandleJobsRequest(RequestJob job)
         {
@@ -3990,7 +4235,7 @@ namespace UnitySkills
                 }
                 if (string.Equals(path, "/permission/revoke", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Deprecated alias: forwards to allowlist/remove logic, response includes deprecated=true.
+                    // Deprecated alias: forwards to the allowlist/remove logic, response carries deprecated=true.
                     HandlePermissionRevoke(job);
                     return;
                 }
@@ -4046,14 +4291,14 @@ namespace UnitySkills
             }
 
             job.StatusCode = 200;
-            // 字段重命名：`granted` → `allowlist`。`granted` 字段作为兼容别名保留一个版本，
-            // 下个 minor 版本会移除——客户端应迁移到 `allowlist` 字段。
+            // Field rename: `granted` → `allowlist`. The `granted` field is kept as a compatibility alias for one
+            // version, and will be removed in the next minor version — clients should migrate to the `allowlist` field.
             job.ResponseJson = JsonConvert.SerializeObject(new
             {
                 mode = SkillsModeManager.ModeToWire(SkillsModeManager.CurrentMode),
                 panelApprovalRequired = SkillsModeManager.PanelApprovalRequired,
                 allowlist = allowlist,
-                granted = allowlist, // deprecated alias — remove in next minor
+                granted = allowlist, // deprecated alias — removed in the next minor version
                 pending = pending.Select(p => new
                 {
                     token = p.Token,
@@ -4094,8 +4339,8 @@ namespace UnitySkills
                 return;
             }
 
-            // args 字段可选——方案 B 优先用 entry 缓存的原 argsJson。
-            // body 携带 args 时按现有规则参与哈希校验；未携带时直接读 entry 缓存（TryPeekArgsJson）。
+            // The args field is optional — Approach B prefers the entry's cached original argsJson. When the body
+            // carries args, it participates in hash validation under the existing rules; else the entry cache is read directly (TryPeekArgsJson).
             bool argsProvided = body.TryGetValue("args", StringComparison.OrdinalIgnoreCase, out var argsToken)
                                 && argsToken != null && argsToken.Type != JTokenType.Null;
             string argsJson;
@@ -4105,27 +4350,27 @@ namespace UnitySkills
             }
             else
             {
-                // 直接从 entry 取缓存的原 argsJson —— 既对零参 skill 工作，也对带参 skill 工作，
-                // 让 AI 调 grant 时只需提供 token，符合"一步执行"语义。
-                // entry 不存在/过期时回退 "{}"，让下方 TryGrantAndReturnArgs 返回 Invalid 给出明确错误。
+                // Read the cached original argsJson directly from the entry — works for both zero-arg and parameterized
+                // skills, so an AI calling grant only needs the token, matching "one-step execution" semantics. Falls back
+                // to "{}" when the entry doesn't exist/has expired, so TryGrantAndReturnArgs below returns Invalid with a clear error.
                 argsJson = SkillsModeManager.TryPeekArgsJson(token) ?? "{}";
             }
 
-            // 注意：HandlePermissionGrant 由 ProcessJobQueue 在主线程 (EditorApplication.update) 调用，
-            // 所以 TryGrantAndReturnArgs 设置的 ThreadStatic one-shot 令牌、以及后续的 SkillRouter.Execute
-            // 都在同一个主线程内执行——线程安全前提成立，无需额外 dispatch。
+            // Note: HandlePermissionGrant is called by ProcessJobQueue on the main thread (EditorApplication.update), so
+            // the ThreadStatic one-shot token set by TryGrantAndReturnArgs, and the subsequent SkillRouter.Execute, both
+            // run on that same main thread — the thread-safety precondition holds, no extra dispatch needed.
             var (outcome, cachedSkill, cachedArgs) = SkillsModeManager.TryGrantAndReturnArgs(skill, token, argsJson);
             switch (outcome)
             {
                 case GrantOutcome.Granted:
                 {
-                    // 方案 B 一步执行：one-shot 令牌已由 TryGrantAndReturnArgs 设置在当前线程，
-                    // SkillRouter.Execute → CheckAccess 会立刻消费该令牌、单次放行。
+                    // Approach B one-step execution: the one-shot token was already set on the current thread by
+                    // TryGrantAndReturnArgs, and SkillRouter.Execute → CheckAccess consumes it immediately for a single pass.
                     //
-                    // 但消费点不是必经之路：Execute 的四道参数校验（UnknownParam / MissingParam /
-                    // TypeMismatch / SemanticInvalid）都在权限门之前早退，任何一道早退——以及这里
-                    // catch 到的异常——都会让令牌留在主线程上，被后续同名 skill 的请求带着别的参数
-                    // 命中。finally 无条件清除是唯一能覆盖全部路径的位置。
+                    // But the consumption point isn't guaranteed to be reached: Execute's four parameter-validation checks
+                    // (UnknownParam / MissingParam / TypeMismatch / SemanticInvalid) all early-return before the permission
+                    // gate, and any of those — or an exception caught here — would leave the token on the main thread, to be
+                    // picked up by a later request for the same-named skill with different args. finally's unconditional clear covers every path.
                     string execJson;
                     try
                     {
@@ -4148,7 +4393,7 @@ namespace UnitySkills
 
                     SkillsAuditLog.Append("grant_executed", new { skill = cachedSkill, token });
 
-                    // 尝试把 execJson 内联为 JSON 对象，方便上层直接读字段；失败兜底为字符串。
+                    // Try to inline execJson as a JSON object so callers upstream can read fields directly; falls back to a string on failure.
                     object resultPayload;
                     try { resultPayload = JObject.Parse(execJson); }
                     catch
@@ -4224,8 +4469,8 @@ namespace UnitySkills
             bool all = body.TryGetValue("all", StringComparison.OrdinalIgnoreCase, out var allToken)
                 && allToken.Type == JTokenType.Boolean && allToken.ToObject<bool>();
 
-            // Deprecated alias: forwards to AllowlistRemove / ClearAllowlist. Response carries
-            // `deprecated: true` so clients can migrate to /permission/allowlist/remove.
+            // Deprecated alias: forwards to AllowlistRemove / ClearAllowlist. The response carries `deprecated: true`,
+            // to help clients migrate to /permission/allowlist/remove.
             if (all)
             {
                 int before = SkillsModeManager.AllowlistSkills.Count;
@@ -4391,7 +4636,7 @@ namespace UnitySkills
                 return string.Empty;
             if (argsToken == null || argsToken.Type == JTokenType.Null) return string.Empty;
             if (argsToken.Type == JTokenType.String) return argsToken.ToString();
-            // Re-serialize without _confirm so hashing matches the SkillRouter-side normalization.
+            // Strip _confirm and re-serialize, so the hash matches SkillRouter-side normalization.
             if (argsToken is JObject obj)
             {
                 var clone = (JObject)obj.DeepClone();
@@ -4426,7 +4671,7 @@ namespace UnitySkills
 
             ThreadPool.QueueUserWorkItem(_ =>
             {
-                // 1. Reachability test with retry using raw TCP (bypasses .NET HTTP client stack entirely)
+                // 1. Reachability test with raw TCP and retries (completely bypasses the .NET HTTP client stack)
                 var hosts = new[] { "localhost", "127.0.0.1" };
                 foreach (var host in hosts)
                 {
@@ -4439,7 +4684,7 @@ namespace UnitySkills
 
                     for (int attempt = 1; attempt <= 3 && !success && _isRunning; attempt++)
                     {
-                        if (attempt > 1) Thread.Sleep(attempt * 1500); // 3s, 4.5s backoff
+                        if (attempt > 1) Thread.Sleep(attempt * 1500); // Back off 3s, 4.5s
 
                         foreach (var address in connectAddresses)
                         {
@@ -4463,7 +4708,7 @@ namespace UnitySkills
                                 else if (response.Length > 0)
                                 {
                                     var firstLine = response.Split('\n')[0].Trim();
-                                    // Retry localhost on other loopback addresses before logging a warning.
+                                    // Before warning, retry localhost against other loopback addresses first.
                                     if (string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) &&
                                         firstLine.IndexOf("400", StringComparison.OrdinalIgnoreCase) >= 0)
                                     {
@@ -4494,7 +4739,7 @@ namespace UnitySkills
                     }
                 }
 
-                // 2. Port scan: report occupied ports in 8090-8100
+                // 2. Port scan: report which ports in 8090-8100 are occupied
                 var occupied = new List<string>();
                 for (int p = 8090; p <= 8100; p++)
                 {
@@ -4534,7 +4779,7 @@ namespace UnitySkills
                 }
                 catch
                 {
-                    // Fall back to known loopback addresses below.
+                    // Fall back to the known loopback addresses below.
                 }
 
                 addresses.Sort((left, right) =>

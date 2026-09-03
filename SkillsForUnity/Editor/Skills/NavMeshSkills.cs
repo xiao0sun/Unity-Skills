@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEngine.AI;
 using UnityEditor;
 using UnityEditor.AI;
@@ -6,19 +6,21 @@ using UnityEditor.AI;
 namespace UnitySkills
 {
     /// <summary>
-    /// NavMesh skills - baking, pathfinding.
+    /// NavMesh skills: baking and pathfinding.
     /// </summary>
     public static class NavMeshSkills
     {
-        [UnitySkill("navmesh_bake", "Bake the NavMesh (Synchronous). Warning: Can be slow.",
+        [UnitySkill("navmesh_bake", "Bake the NavMesh (Synchronous). Warning: blocks the Editor, can be slow on large scenes.",
             Category = SkillCategory.NavMesh, Operation = SkillOperation.Execute,
             Tags = new[] { "navmesh", "bake", "pathfinding", "navigation" },
-            Outputs = new[] { "success", "message" })]
+            Outputs = new[] { "success", "message" },
+            LongRunning = true, MutatesScene = true)]
         public static object NavMeshBake()
         {
-            // CS0618 豁免：UnityEditor.AI.NavMeshBuilder 仍是编辑器全局烘焙的唯一入口；
-            // 推荐替代 UnityEngine.AI.NavMeshBuilder 是运行时增量构建 API（非等价），
-            // 组件化 NavMeshSurface 则需引入 AI Navigation 包依赖——均超出本 skill 语义。
+            // CS0618 exemption: UnityEditor.AI.NavMeshBuilder is still the only entry point for a global editor
+            // bake; the recommended replacement UnityEngine.AI.NavMeshBuilder is a runtime incremental-build API
+            // (not equivalent), and componentized NavMeshSurface requires taking a dependency on the AI
+            // Navigation package — both are out of scope for this skill's semantics.
 #pragma warning disable 0618
             UnityEditor.AI.NavMeshBuilder.BuildNavMesh();
 #pragma warning restore 0618
@@ -32,7 +34,7 @@ namespace UnitySkills
             MutatesScene = true, RiskLevel = "high")]
         public static object NavMeshClear()
         {
-            // CS0618 豁免：同 NavMeshBake——旧 API 是全局清除的唯一等价入口。
+            // CS0618 exemption: same as NavMeshBake — the legacy API is the only equivalent entry point for a global clear.
 #pragma warning disable 0618
             UnityEditor.AI.NavMeshBuilder.ClearAllNavMeshes();
 #pragma warning restore 0618
@@ -150,9 +152,15 @@ namespace UnitySkills
             if (err != null) return err;
             var obs = go.GetComponent<NavMeshObstacle>();
             if (obs == null) return new { error = $"No NavMeshObstacle on {go.name}" };
+
+            // Must resolve before any write: otherwise an invalid shape would be silently dropped while
+            // size/carving in the same call still get written, and the response would still report success.
+            if (!SkillParamUtil.TryParseOptionalEnum<NavMeshObstacleShape>(shape, "shape", out var s, out var shapeError))
+                return shapeError;
+
             WorkflowManager.SnapshotObject(obs);
             Undo.RecordObject(obs, "Set NavMeshObstacle");
-            if (!string.IsNullOrEmpty(shape) && System.Enum.TryParse<NavMeshObstacleShape>(shape, true, out var s)) obs.shape = s;
+            if (s.HasValue) obs.shape = s.Value;
             if (sizeX.HasValue || sizeY.HasValue || sizeZ.HasValue)
             {
                 var sz = obs.size;

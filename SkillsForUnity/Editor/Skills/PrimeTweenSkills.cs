@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -12,9 +12,8 @@ using UnitySkills.Internal;
 namespace UnitySkills
 {
     /// <summary>
-    /// PrimeTween Free diagnostics, API discovery, and runtime-script generation.
-    /// All PrimeTween access is reflective so UnitySkills continues to compile
-    /// when the optional package is not installed.
+    /// PrimeTween Free diagnostics, API discovery, and runtime script generation.
+    /// All access to PrimeTween goes through reflection, so UnitySkills still compiles when this optional package isn't installed.
     /// </summary>
     public static class PrimeTweenSkills
     {
@@ -377,6 +376,28 @@ namespace UnitySkills
                 return enumValue.ToString();
             }
 
+            // Newer PrimeTween versions changed UpdateType to a struct, so the enum branch above no
+            // longer matches -- the anonymous-object serializer has no public property to walk on a
+            // struct with none, and would silently emit "{}". So value types fall back to ToString();
+            // reference types still pass through as-is, since ToString() isn't guaranteed meaningful.
+            if (value is ValueType && !(value is string) && !value.GetType().IsPrimitive)
+            {
+                var type = value.GetType();
+                var text = value.ToString();
+                if (text != type.ToString())
+                {
+                    return text;
+                }
+
+                // ValueType.ToString()'s default implementation only gives the type name, with no
+                // visible state. PrimeTween's UpdateType stores the real value in an internal enum
+                // field (enumValue), so for this kind of "fake enum" struct, dig down to that field's name.
+                var enumField = type
+                    .GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    .FirstOrDefault(field => field.FieldType.IsEnum);
+                return enumField != null ? enumField.GetValue(value).ToString() : text;
+            }
+
             return value;
         }
 
@@ -722,3 +743,5 @@ namespace UnitySkills
         }
     }
 }
+
+// Producer:Betsy

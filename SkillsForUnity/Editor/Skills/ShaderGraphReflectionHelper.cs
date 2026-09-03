@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
@@ -2238,7 +2238,7 @@ namespace UnitySkills
             }
             catch
             {
-                // Some nodes do not expose this path in the same way across versions.
+                // Some nodes don't expose this call path the same way across versions.
             }
         }
 
@@ -2609,7 +2609,7 @@ namespace UnitySkills
             }
             catch
             {
-                // Ignore filesystem probing failures.
+                // Filesystem probing failure can be ignored.
             }
 
             return false;

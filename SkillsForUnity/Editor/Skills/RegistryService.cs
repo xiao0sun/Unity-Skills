@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -11,8 +11,7 @@ using Newtonsoft.Json;
 namespace UnitySkills
 {
     /// <summary>
-    /// Handles registration of this Unity instance to a global file.
-    /// Allows clients to discover active Unity instances and their ports.
+    /// Registers this Unity instance in a global file so clients can discover active Unity instances and their ports.
     /// </summary>
     [InitializeOnLoad]
     public static class RegistryService
@@ -39,7 +38,7 @@ namespace UnitySkills
                     Directory.CreateDirectory(GlobalConfigDir);
 
                 EditorApplication.quitting += Unregister;
-                // Assembly reload cleanup handled by SkillsHttpServer calling Stop()
+                // Cleanup on assembly reload is handled by SkillsHttpServer calling Stop(); no duplicate hook is registered here
             }
             catch (Exception ex)
             {
@@ -72,7 +71,7 @@ namespace UnitySkills
 
                     registry[ProjectPath] = info;
 
-                    // Clean up stale entries (older than 120 seconds or dead process)
+                    // Clean up stale entries: heartbeat older than 120 seconds, or the process is dead
                     var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                     var keysToRemove = registry
                         .Where(k => k.Value.pid != info.pid &&
@@ -90,8 +89,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Unity CLI 绑定变化时同步注册表条目（面板 Bind/Unbind 调用）。
-        /// 条目尚不存在（服务器未启动过）时不落任何数据 —— Register 时会带上最新绑定状态。
+        /// Syncs the registry entry when the Unity CLI binding changes (called by the panel's Bind/Unbind).
+        /// If the entry doesn't exist yet (server never started), no data is written -- Register will carry the latest binding state.
         /// </summary>
         public static void UpdateCliBinding(bool bound, string cliPath)
         {
@@ -147,7 +146,8 @@ namespace UnitySkills
                     }
                     else
                     {
-                        // First heartbeat before Register — write full entry
+                        // The heartbeat arrived before Register, so a full entry needs to be written here
+                        UnityCliService.GetRegistryBinding(out var cliBound, out var cliPath);
                         registry[ProjectPath] = new InstanceInfo
                         {
                             id = InstanceId,
@@ -156,7 +156,9 @@ namespace UnitySkills
                             port = port,
                             pid = System.Diagnostics.Process.GetCurrentProcess().Id,
                             last_active = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                            unityVersion = Application.unityVersion
+                            unityVersion = Application.unityVersion,
+                            cliBound = cliBound,
+                            cliPath = cliPath
                         };
                     }
 
@@ -180,15 +182,15 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Atomic read-modify-write with cross-process file locking.
-        /// Uses FileStream(FileShare.None) for mutual exclusion and .tmp file for atomic writes.
+        /// Atomic read-modify-write with a cross-process file lock: mutual exclusion via FileStream(FileShare.None),
+        /// with atomicity of the write itself guaranteed by a .tmp file.
         /// </summary>
         private static void AtomicReadModifyWrite(Action<Dictionary<string, InstanceInfo>> modifier)
         {
             const int maxRetries = 5;
             const int retryDelayMs = 100;
 
-            // Recover from interrupted writes: if .tmp exists and main file is missing/empty, restore from .tmp
+            // Recovers from an interrupted write: if .tmp exists while the main file is missing or empty, restore from .tmp
             var tmpFile = RegistryFile + ".tmp";
             if (File.Exists(tmpFile) && (!File.Exists(RegistryFile) || new FileInfo(RegistryFile).Length == 0))
             {
@@ -200,7 +202,6 @@ namespace UnitySkills
                 FileStream lockStream = null;
                 try
                 {
-                    // Acquire exclusive lock on the registry file
                     lockStream = new FileStream(
                         RegistryFile,
                         FileMode.OpenOrCreate,
@@ -220,7 +221,7 @@ namespace UnitySkills
 
                     modifier(registry);
 
-                    // Write to .tmp file first for atomic replacement
+                    // Write .tmp first, then swap it in wholesale, to guarantee atomicity
                     var newJson = JsonConvert.SerializeObject(registry, Formatting.Indented);
                     File.WriteAllText(tmpFile, newJson, Encoding.UTF8);
 
@@ -236,7 +237,7 @@ namespace UnitySkills
                 }
                 catch (IOException) when (attempt < maxRetries - 1)
                 {
-                    // File locked by another process, retry
+                    // File is held by another process; back off and retry
                     System.Threading.Thread.Sleep(retryDelayMs * (attempt + 1));
                 }
                 finally
@@ -249,8 +250,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Computes a stable hash string from input using SHA256 (first 4 bytes).
-        /// Unlike GetHashCode(), this is deterministic across processes and runtimes.
+        /// Computes a stable hash string from the first 4 bytes of SHA256.
+        /// Unlike GetHashCode(), it is deterministic across processes and across runtimes.
         /// </summary>
         private static string ComputeStableHash(string input)
         {
@@ -281,8 +282,8 @@ namespace UnitySkills
             public int pid;
             public long last_active;
             public string unityVersion;
-            // Unity CLI 绑定：AI 客户端跨项目发现"可冷启动"的实例用。
-            // 详情契约在 <project>/Library/UnitySkills/cli_config.json。
+            // Unity CLI binding: used by AI clients to discover "cold-startable" instances across projects.
+            // The detailed contract lives in <project>/Library/UnitySkills/cli_config.json.
             public bool cliBound;
             public string cliPath;
         }

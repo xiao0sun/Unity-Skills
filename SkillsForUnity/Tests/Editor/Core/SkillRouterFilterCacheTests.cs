@@ -1,18 +1,17 @@
-using System.Reflection;
+﻿using System.Reflection;
 using NUnit.Framework;
 
 namespace UnitySkills.Tests.Core
 {
     /// <summary>
-    /// Covers the P0 fix that bounds SkillRouter's per-query filtered manifest/schema cache:
+    /// Covers the P0 fix that bounds SkillRouter's query-sharded manifest/schema cache:
     /// unrecognized query keys (typos, cache-busting nonces, client tracking params) are stripped
-    /// before they reach the cache key, and the cache hard-caps at MaxCacheEntries and
-    /// self-clears instead of growing without bound.
+    /// before they enter the cache key; the cache hard-caps at MaxCacheEntries and self-clears
+    /// instead of growing unbounded.
     ///
-    /// SkillRouter's cache fields are private and process-global (no test-only reset hook), so
-    /// this fixture reads the live field via reflection for the growth assertion rather than
-    /// asserting an absolute count — other tests in the same run may have already populated
-    /// unrelated entries.
+    /// SkillRouter's cache field is private and process-global (no test-only reset hook), so growth
+    /// assertions read the live field via reflection and compare only relative deltas, never absolute
+    /// counts — other test cases in the same run may already have written unrelated entries.
     /// </summary>
     [TestFixture]
     public class SkillRouterFilterCacheTests
@@ -39,7 +38,7 @@ namespace UnitySkills.Tests.Core
         [Test]
         public void GetFilteredManifest_VaryingUnrecognizedKeyValues_DoNotMintNewCacheEntries()
         {
-            // Prime the shared key once so its entry (if any) already exists before measuring.
+            // Warm up the shared key first, so its entry (if any) already exists before measuring.
             SkillRouter.GetFilteredManifest("category=Camera");
             int before = GetFilteredOutputCacheCount();
 
@@ -56,9 +55,9 @@ namespace UnitySkills.Tests.Core
         [Test]
         public void GetFilteredManifest_CacheReachesCap_ClearsInsteadOfThrowing()
         {
-            // "tags" is a recognized filter key with an unbounded value domain, so distinct tag
-            // values each mint a real cache entry — enough of them drives the cache past its
-            // internal cap and exercises the Count>=cap -> Clear() eviction path.
+            // "tags" is a recognized filter key with an unbounded value domain, so every distinct tag
+            // really does mint a new cache entry; pumping in enough of them pushes the cache past its
+            // internal cap and exercises the Count>=cap -> Clear() path.
             Assert.DoesNotThrow(() =>
             {
                 for (int i = 0; i < 300; i++)

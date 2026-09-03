@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -8,7 +8,7 @@ namespace UnitySkills
 {
     /// <summary>
     /// AI Config Tab — one card per supported Agent (Claude Code / Codex /
-    /// Antigravity / Cursor / OpenCode) plus a Custom Agent card.
+    /// Antigravity / Cursor / OpenCode / Kimi Code) plus a Custom Agent card.
     /// Cards are built dynamically so adding a new agent only requires one
     /// entry in _agentConfigs.
     /// </summary>
@@ -113,6 +113,15 @@ namespace UnitySkills
                     isGlobInstalled = () => SkillInstaller.IsOpenCodeGlobalInstalled,
                     installFunc = SkillInstaller.InstallOpenCode,
                     uninstallFunc = SkillInstaller.UninstallOpenCode
+                },
+                new AgentConfig
+                {
+                    id = "kimicode", brandClass = "brand-kimicode",
+                    nameDisplay = "Kimi Code",
+                    isProjInstalled = () => SkillInstaller.IsKimiCodeProjectInstalled,
+                    isGlobInstalled = () => SkillInstaller.IsKimiCodeGlobalInstalled,
+                    installFunc = SkillInstaller.InstallKimiCode,
+                    uninstallFunc = SkillInstaller.UninstallKimiCode
                 }
             };
         }
@@ -132,13 +141,11 @@ namespace UnitySkills
         {
             bool projInstalled = cfg.isProjInstalled();
             bool globInstalled = cfg.isGlobInstalled();
-            // Show "Installed" badge if either scope has been installed.
             bool anyInstalled = projInstalled || globInstalled;
 
             var card = new VisualElement();
             card.AddToClassList("agent-card");
 
-            // Head
             var head = new VisualElement();
             head.AddToClassList("agent-card-head");
             head.style.flexDirection = FlexDirection.Row;
@@ -169,7 +176,6 @@ namespace UnitySkills
 
             card.Add(head);
 
-            // Actions row
             var actions = new VisualElement();
             actions.AddToClassList("agent-card-actions");
             actions.style.flexDirection = FlexDirection.Row;
@@ -213,6 +219,7 @@ namespace UnitySkills
             if (!projInstalled && !globInstalled)
             {
                 btn.text = SkillsLocalization.Get("uninstall");
+                btn.tooltip = btn.text;
                 btn.SetEnabled(false);
                 return btn;
             }
@@ -222,16 +229,18 @@ namespace UnitySkills
                 // Show a "▾" affordance so the user knows it opens a menu rather than
                 // immediately wiping one scope.
                 btn.text = SkillsLocalization.Get("uninstall") + " ▾";
+                btn.tooltip = btn.text;
                 btn.clicked += () => ShowUninstallMenu(btn, cfg);
                 return btn;
             }
 
             // Exactly one scope installed → directly uninstall it.
             bool targetGlobal = globInstalled;
-            string scopeKey = targetGlobal ? "agent_install_global" : "agent_install_project";
-            // Compose a clear label like "Uninstall Project" / "卸载 全局" so the user
-            // sees which scope this single click will affect.
-            btn.text = SkillsLocalization.Get("uninstall") + " " + SkillsLocalization.Get(scopeKey);
+            string actionKey = targetGlobal ? "agent_uninstall_global" : "agent_uninstall_project";
+            // Use a localized action label that identifies the affected scope.
+            btn.text = SkillsLocalization.Get(actionKey);
+            // Keep the full action name available when the equal-width layout ellipsizes it.
+            btn.tooltip = btn.text;
             btn.clicked += () => OnUninstallClick(cfg, targetGlobal);
             return btn;
         }
@@ -240,11 +249,11 @@ namespace UnitySkills
         {
             var menu = new GenericMenu();
             menu.AddItem(
-                new GUIContent(SkillsLocalization.Get("uninstall") + " " + SkillsLocalization.Get("agent_install_project")),
+                new GUIContent(SkillsLocalization.Get("agent_uninstall_project")),
                 false,
                 () => OnUninstallClick(cfg, isGlobal: false));
             menu.AddItem(
-                new GUIContent(SkillsLocalization.Get("uninstall") + " " + SkillsLocalization.Get("agent_install_global")),
+                new GUIContent(SkillsLocalization.Get("agent_uninstall_global")),
                 false,
                 () => OnUninstallClick(cfg, isGlobal: true));
             menu.DropDown(anchor.worldBound);
@@ -271,7 +280,6 @@ namespace UnitySkills
 
             card.Add(head);
 
-            // Path row
             var pathRow = new VisualElement();
             pathRow.AddToClassList("setting-row");
             pathRow.style.flexDirection = FlexDirection.Row;
@@ -301,7 +309,6 @@ namespace UnitySkills
             pathRow.Add(browseBtn);
             card.Add(pathRow);
 
-            // Name row
             var nameRow = new VisualElement();
             nameRow.AddToClassList("setting-row");
             nameRow.style.flexDirection = FlexDirection.Row;

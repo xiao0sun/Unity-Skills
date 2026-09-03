@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System.Linq;
 using System.Collections.Generic;
@@ -7,14 +7,15 @@ using UnitySkills.Internal;
 namespace UnitySkills
 {
     /// <summary>
-    /// Optimization skills - texture compression settings, etc.
+    /// Optimization skills: batch operations like texture compression settings.
     /// </summary>
     public static class OptimizationSkills
     {
         [UnitySkill("optimize_textures", "Optimize texture settings (maxSize, compression). Returns list of modified textures.",
             Category = SkillCategory.Optimization, Operation = SkillOperation.Execute | SkillOperation.Modify,
             Tags = new[] { "optimization", "texture", "compression", "crunch" },
-            Outputs = new[] { "count", "message", "modified" })]
+            Outputs = new[] { "count", "message", "modified" },
+            MutatesAssets = true)]
         public static object OptimizeTextures(int maxTextureSize = 2048, bool enableCrunch = true, int compressionQuality = 50, string filter = "", int limit = 0)
         {
             var guids = AssetDatabase.FindAssets("t:Texture2D " + filter);
@@ -38,9 +39,7 @@ namespace UnitySkills
 
                 if (importer.textureCompression != TextureImporterCompression.Compressed)
                 {
-                    // Only enforce if it was uncompressed or custom? 
-                    // Let's be careful not to break UI textures.
-                    // Usually we only optimize "Default" texture type or 3D models.
+                    // Only compress the Default type, to avoid breaking textures like UI ones that have special import requirements
                     if (importer.textureType == TextureImporterType.Default) 
                     {
                          importer.textureCompression = TextureImporterCompression.Compressed;
@@ -77,18 +76,15 @@ namespace UnitySkills
         [UnitySkill("optimize_mesh_compression", "Set mesh compression for 3D models",
             Category = SkillCategory.Optimization, Operation = SkillOperation.Execute | SkillOperation.Modify,
             Tags = new[] { "optimization", "mesh", "compression", "model" },
-            Outputs = new[] { "count", "compression", "modified" })]
+            Outputs = new[] { "count", "compression", "modified" },
+            MutatesAssets = true)]
         public static object OptimizeMeshCompression(string compressionLevel = "Medium", string filter = "")
         {
-            ModelImporterMeshCompression comp;
-            switch (compressionLevel.ToLower())
-            {
-                case "off": comp = ModelImporterMeshCompression.Off; break;
-                case "low": comp = ModelImporterMeshCompression.Low; break;
-                case "medium": comp = ModelImporterMeshCompression.Medium; break;
-                case "high": comp = ModelImporterMeshCompression.High; break;
-                default: comp = ModelImporterMeshCompression.Medium; break;
-            }
+            // Must not fall back to Medium on an invalid value: that would silently reimport
+            // every model in the project at a compression level nobody asked for, which is the
+            // most expensive possible outcome of an enum parse failure. Reject outright instead.
+            if (!SkillParamUtil.TryParseRequiredEnum<ModelImporterMeshCompression>(compressionLevel, "compressionLevel", out var comp, out var compError))
+                return compError;
 
             var guids = AssetDatabase.FindAssets("t:Model " + filter);
             var modified = new List<object>();
@@ -174,18 +170,23 @@ namespace UnitySkills
             return new { success = true, threshold = $"{thresholdKB}KB", count = large.Count, assets = large };
         }
 
-        [UnitySkill("optimize_set_static_flags", "Set static flags on GameObjects. flags: Everything/Nothing/BatchingStatic/OccludeeStatic/OccluderStatic/NavigationStatic/ReflectionProbeStatic", TracksWorkflow = true,
+        [UnitySkill("optimize_set_static_flags", "Set static flags on GameObjects. flags: comma-separated, from ContributeGI/OccluderStatic/OccludeeStatic/BatchingStatic/ReflectionProbeStatic plus the deprecated NavigationStatic/OffMeshLinkGeneration. Everything = the five non-deprecated flags (the two navigation ones must be named explicitly); Nothing = clear all", TracksWorkflow = true,
             Category = SkillCategory.Optimization, Operation = SkillOperation.Modify,
             Tags = new[] { "optimization", "static", "flags", "batching" },
             Outputs = new[] { "gameObject", "flags", "affectedCount" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" },
+            MutatesScene = true)]
         public static object OptimizeSetStaticFlags(string name = null, int instanceId = 0, string path = null, string flags = "Everything", bool includeChildren = false)
         {
             var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
             if (error != null) return error;
 
-            if (!System.Enum.TryParse<StaticEditorFlags>(flags, true, out var staticFlags))
-                return new { error = $"Invalid flags: {flags}" };
+            // StaticEditorFlags doesn't declare Everything or Nothing members, so a plain enum
+            // parse would reject this skill's own documented default value, "Everything".
+            // TryParseFlagsParam adds these two aliases, accepts a comma-separated list of the
+            // real members, and rejects values carrying undeclared bits.
+            if (!SkillParamUtil.TryParseFlagsParam<StaticEditorFlags>(flags, "flags", out var staticFlags, out var flagsError))
+                return flagsError;
 
             var targets = new List<GameObject> { go };
             if (includeChildren)
@@ -219,13 +220,14 @@ namespace UnitySkills
         [UnitySkill("optimize_audio_compression", "Batch set audio compression. compressionFormat: PCM/Vorbis/ADPCM. loadType: DecompressOnLoad/CompressedInMemory/Streaming", TracksWorkflow = true,
             Category = SkillCategory.Optimization, Operation = SkillOperation.Execute | SkillOperation.Modify,
             Tags = new[] { "optimization", "audio", "compression", "batch" },
-            Outputs = new[] { "count", "compressionFormat", "loadType", "modified" })]
+            Outputs = new[] { "count", "compressionFormat", "loadType", "modified" },
+            MutatesAssets = true)]
         public static object OptimizeAudioCompression(string compressionFormat = "Vorbis", string loadType = "CompressedInMemory", float quality = 0.5f, string filter = "")
         {
-            if (!System.Enum.TryParse<AudioCompressionFormat>(compressionFormat, true, out var cf))
-                return new { error = $"Invalid compressionFormat: {compressionFormat}" };
-            if (!System.Enum.TryParse<AudioClipLoadType>(loadType, true, out var lt))
-                return new { error = $"Invalid loadType: {loadType}" };
+            if (!SkillParamUtil.TryParseRequiredEnum<AudioCompressionFormat>(compressionFormat, "compressionFormat", out var cf, out var cfError))
+                return cfError;
+            if (!SkillParamUtil.TryParseRequiredEnum<AudioClipLoadType>(loadType, "loadType", out var lt, out var ltError))
+                return ltError;
 
             var guids = AssetDatabase.FindAssets("t:AudioClip " + filter);
             var modified = new List<object>();
@@ -279,16 +281,43 @@ namespace UnitySkills
             return new { success = true, duplicateGroups = duplicates.Length, groups = duplicates, note = "Comparison is approximate (color/texture similarity). Manual review recommended." };
         }
 
+        /// <summary>
+        /// The color component of the duplicate-material identification key.
+        ///
+        /// <para>Cannot use <c>HasProperty</c> as the guard: it returns true for a same-named
+        /// property of <em>any</em> type. The many hidden/Decal shaders in URP projects
+        /// ("Hidden/…", plus decal shaders where <c>_Color</c> isn't a color type) make
+        /// <c>GetColor</c> throw the native error "Material doesn't have a color property".
+        /// That error is engine-logged rather than thrown, so no outer <c>try/catch</c> can
+        /// catch it — a purely read-only analysis would flood the console red, one line per
+        /// material scanned across the whole project.</para>
+        ///
+        /// <para><c>Material.HasColor</c> asks the question that actually needs asking
+        /// ("does a property of type Color exist under this name"), and is the official guard
+        /// provided for this scenario. Every Unity version this package supports has this API —
+        /// not just checked against docs, but verified in practice against the
+        /// UnityEngine.CoreModule shipped with 2022.3 and 6000.3. The catch is kept as a
+        /// fallback for when a shader is mid-reimport.</para>
+        /// </summary>
         private static string TryGetMaterialColorString(Material mat)
         {
             foreach (var prop in new[] { "_Color", "_BaseColor" })
             {
-                if (!mat.HasProperty(prop)) continue;
+                if (!HasReadableColor(mat, prop)) continue;
                 try { return mat.GetColor(prop).ToString(); }
-                catch { /* property exists but is not a readable color */ }
+                catch { /* shader was swapped out mid-scan */ }
             }
             return "none";
         }
+
+        /// <summary>
+        /// The guard itself is pulled out separately as a testable seam: the property that must
+        /// hold is that a same-named property of the wrong type returns false here, while
+        /// <c>HasProperty</c> returns true — this can be asserted against any built-in shader
+        /// without triggering the console error described above.
+        /// </summary>
+        internal static bool HasReadableColor(Material mat, string propertyName) =>
+            mat != null && !string.IsNullOrEmpty(propertyName) && mat.HasColor(propertyName);
 
         [UnitySkill("optimize_analyze_overdraw", "Analyze transparent objects that may cause overdraw",
             Category = SkillCategory.Optimization, Operation = SkillOperation.Analyze,
@@ -321,7 +350,8 @@ namespace UnitySkills
             Category = SkillCategory.Optimization, Operation = SkillOperation.Modify | SkillOperation.Create,
             Tags = new[] { "optimization", "lod", "level-of-detail", "performance" },
             Outputs = new[] { "gameObject", "lodLevels", "distances" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" },
+            MutatesScene = true)]
         public static object OptimizeSetLodGroup(string name = null, int instanceId = 0, string path = null, string lodDistances = "0.6,0.3,0.1")
         {
             var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);

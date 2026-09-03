@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System;
 using System.Linq;
@@ -9,9 +9,9 @@ using UnitySkills.Internal;
 namespace UnitySkills
 {
     /// <summary>
-    /// XR Interaction Toolkit skills — setup, interactors, interactables, locomotion, and UI.
+    /// XR Interaction Toolkit skills — rig setup, interactors, interactables, locomotion, and UI.
     /// Requires com.unity.xr.interaction.toolkit (2.x or 3.x).
-    /// All XRI API calls use reflection for cross-version compatibility.
+    /// All XRI API calls go through reflection for cross-version compatibility.
     /// </summary>
     public static class XRSkills
     {
@@ -21,7 +21,7 @@ namespace UnitySkills
 #endif
 
         // ==================================================================================
-        // Setup & Validation (5 skills)
+        // Setup and validation (5 skills)
         // ==================================================================================
 
         [UnitySkill("xr_check_setup", "Comprehensive XR project setup validation: checks XRI package, XR Origin, InteractionManager, EventSystem, InputSystem, controllers",
@@ -50,7 +50,7 @@ namespace UnitySkills
             if (managers.Length > 1)
                 issues.Add($"Multiple XRInteractionManagers found ({managers.Length}). Typically only one is needed.");
 
-            // 3. XR Origin
+            // 3. XR Origin root node
             var origins = XRReflectionHelper.FindComponentsOfXRType("XROrigin");
             info["xrOriginCount"] = origins.Length;
             if (origins.Length == 0)
@@ -83,13 +83,13 @@ namespace UnitySkills
                     issues.Add("EventSystem exists but lacks XRUIInputModule. Fix via xr_setup_event_system.");
             }
 
-            // 6. Interactors & Interactables
+            // 6. Interactors and interactables
             var interactors = XRReflectionHelper.FindComponentsOfXRType("XRBaseInteractor");
             var interactables = XRReflectionHelper.FindComponentsOfXRType("XRBaseInteractable");
             info["interactorCount"] = interactors.Length;
             info["interactableCount"] = interactables.Length;
 
-            // 7. Locomotion
+            // 7. Locomotion system
             var teleportProvider = XRReflectionHelper.FindFirstOfXRType("TeleportationProvider");
             var moveProvider = XRReflectionHelper.FindFirstOfXRType("ActionBasedContinuousMoveProvider")
                                ?? XRReflectionHelper.FindFirstOfXRType("ContinuousMoveProvider");
@@ -101,7 +101,7 @@ namespace UnitySkills
             info["hasContinuousMove"] = moveProvider != null;
             info["hasTurnProvider"] = turnProvider != null;
 
-            // 8. Collider validation — most common XR setup error
+            // 8. Collider validation — the most common XR setup mistake
             var colliderIssues = new List<string>();
             foreach (var interactor in interactors)
             {
@@ -444,7 +444,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Interactor Skills (4 skills)
+        // Interactor skills (4)
         // ==================================================================================
 
         [UnitySkill("xr_add_ray_interactor", "Add XRRayInteractor to a controller GameObject (with LineRenderer and line visual)", TracksWorkflow = true,
@@ -651,7 +651,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Interactable Skills (4 skills)
+        // Interactable skills (4)
         // ==================================================================================
 
         [UnitySkill("xr_add_grab_interactable", "Make an object grabbable (adds XRGrabInteractable + Rigidbody + Collider if needed)", TracksWorkflow = true,
@@ -689,7 +689,7 @@ namespace UnitySkills
 
             if (go.GetComponent<Collider>() == null)
             {
-                // Auto-detect best collider based on mesh
+                // Automatically pick the most suitable collider based on the mesh
                 var meshFilter = go.GetComponent<MeshFilter>();
                 if (meshFilter != null && meshFilter.sharedMesh != null)
                     go.AddComponent<MeshCollider>().convex = true;
@@ -710,7 +710,7 @@ namespace UnitySkills
             XRReflectionHelper.SetProperty(comp, "smoothPositionAmount", smoothPositionAmount);
             XRReflectionHelper.SetProperty(comp, "smoothRotationAmount", smoothRotationAmount);
 
-            // Create and set custom attach transform if offset specified
+            // When offset is specified, create and set a custom attach transform
             if (!string.IsNullOrEmpty(attachTransformOffset))
             {
                 var offsets = ParseVector3(attachTransformOffset);
@@ -762,7 +762,7 @@ namespace UnitySkills
 
             Undo.RegisterCreatedObjectUndo(comp, "Add XRSimpleInteractable");
 
-            // Ensure collider exists for interaction detection
+            // Interaction detection depends on a collider; make sure one exists
             if (go.GetComponent<Collider>() == null)
                 go.AddComponent<BoxCollider>();
 
@@ -886,7 +886,7 @@ namespace UnitySkills
                 }
             }
 
-            // Also find TeleportationArea/Anchor since they are interactables
+            // TeleportationArea/Anchor are interactables too; include them in the lookup
             foreach (var typeName in new[] { "TeleportationArea", "TeleportationAnchor" })
             {
                 var found = XRReflectionHelper.FindComponentsOfXRType(typeName);
@@ -915,7 +915,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Locomotion Skills (5 skills)
+        // Locomotion skills (5)
         // ==================================================================================
 
         [UnitySkill("xr_setup_teleportation", "Set up TeleportationProvider on XR Origin for teleport locomotion", TracksWorkflow = true,
@@ -928,7 +928,7 @@ namespace UnitySkills
 #if !XRI
             return NoXRI();
 #else
-            // Find XR Origin
+            // Locate the XR Origin
             GameObject go;
             if (string.IsNullOrEmpty(name) && instanceId == 0 && string.IsNullOrEmpty(path))
             {
@@ -991,7 +991,7 @@ namespace UnitySkills
             if (!string.IsNullOrEmpty(matchOrientation))
                 XRReflectionHelper.SetEnumProperty(comp, "matchOrientation", matchOrientation);
 
-            // Ensure collider for raycast detection
+            // Raycast detection depends on a collider; make sure one exists
             if (go.GetComponent<Collider>() == null)
             {
                 var meshFilter = go.GetComponent<MeshFilter>();
@@ -1054,8 +1054,6 @@ namespace UnitySkills
             // Add a small collider for raycast detection
             var collider = go.AddComponent<BoxCollider>();
             collider.size = new Vector3(1, 0.01f, 1);
-
-            // Add visual indicator
             var visual = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             visual.name = "Anchor Visual";
             visual.transform.SetParent(go.transform, false);
@@ -1066,7 +1064,7 @@ namespace UnitySkills
                 renderer.sharedMaterial = new Material(Shader.Find("Sprites/Default"));
                 renderer.sharedMaterial.color = new Color(0, 0.8f, 1, 0.5f);
             }
-            // Remove auto-generated collider from visual primitive
+            // Remove the collider the visualization primitive comes with
             var visualCollider = visual.GetComponent<Collider>();
             if (visualCollider != null)
                 UnityEngine.Object.DestroyImmediate(visualCollider);
@@ -1101,7 +1099,7 @@ namespace UnitySkills
 #if !XRI
             return NoXRI();
 #else
-            // Find XR Origin
+            // Locate the XR Origin
             GameObject go;
             if (string.IsNullOrEmpty(name) && instanceId == 0 && string.IsNullOrEmpty(path))
             {
@@ -1119,7 +1117,7 @@ namespace UnitySkills
 
             Undo.RecordObject(go, "Setup Continuous Move");
 
-            // Try ActionBased first, then generic
+            // Try ActionBased first, then fall back to the generic type
             var comp = XRReflectionHelper.AddXRComponent(go, "ActionBasedContinuousMoveProvider")
                     ?? XRReflectionHelper.AddXRComponent(go, "ContinuousMoveProvider");
 
@@ -1161,7 +1159,7 @@ namespace UnitySkills
 #if !XRI
             return NoXRI();
 #else
-            // Find XR Origin
+            // Locate the XR Origin
             GameObject go;
             if (string.IsNullOrEmpty(name) && instanceId == 0 && string.IsNullOrEmpty(path))
             {
@@ -1218,7 +1216,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Advanced Skills (4 skills)
+        // Advanced skills (4)
         // ==================================================================================
 
         [UnitySkill("xr_setup_ui_canvas", "Make a Canvas XR-compatible by adding TrackedDeviceGraphicRaycaster", TracksWorkflow = true,
@@ -1244,7 +1242,7 @@ namespace UnitySkills
             if (canvas.renderMode != RenderMode.WorldSpace)
             {
                 canvas.renderMode = RenderMode.WorldSpace;
-                // Set reasonable defaults for world-space XR canvas
+                // Set sensible defaults for world-space XR canvases
                 var rt = canvas.GetComponent<RectTransform>();
                 if (rt != null)
                 {
@@ -1311,7 +1309,7 @@ namespace UnitySkills
 
             var changed = new List<string>();
 
-            // Haptic properties vary by version but try common names
+            // Haptic property names differ across versions; try common naming conventions one by one
             if (XRReflectionHelper.SetProperty(comp, "playHapticsOnSelectEntered", true))
                 changed.Add("playHapticsOnSelectEntered");
             if (XRReflectionHelper.SetProperty(comp, "hapticSelectEnterIntensity", selectIntensity))
@@ -1471,7 +1469,7 @@ namespace UnitySkills
             Undo.RecordObject(comp, "Configure Interaction Layers");
             WorkflowManager.SnapshotObject(comp);
 
-            // Try to set interaction layers via InteractionLayerMask
+            // Try setting the interaction layer via InteractionLayerMask
             var ilmType = XRReflectionHelper.ResolveXRType("InteractionLayerMask");
             if (ilmType != null)
             {
@@ -1486,7 +1484,7 @@ namespace UnitySkills
                     }
                     catch
                     {
-                        // Fallback: try setting by integer value
+                        // Fallback: assign using an integer value instead
                         if (int.TryParse(layers, out int layerMask))
                             XRReflectionHelper.SetProperty(comp, "interactionLayers", layerMask);
                     }
@@ -1507,7 +1505,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Helpers
+        // Helper methods
         // ==================================================================================
 
         private static Vector3? ParseVector3(string csv)
@@ -1532,7 +1530,7 @@ namespace UnitySkills
             var legacyType = XRReflectionHelper.FindTypeInAssemblies("UnityEngine.XR.TrackedPoseDriver");
             if (legacyType != null) return legacyType;
 
-            // Fallback: UnityEngine.SpatialTracking.TrackedPoseDriver
+            // One more fallback: UnityEngine.SpatialTracking.TrackedPoseDriver
             return XRReflectionHelper.FindTypeInAssemblies("UnityEngine.SpatialTracking.TrackedPoseDriver");
         }
     }

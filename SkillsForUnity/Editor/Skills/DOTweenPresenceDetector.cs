@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -10,14 +10,13 @@ using UnityEngine;
 namespace UnitySkills
 {
     /// <summary>
-    /// Auto-detects DOTween and DOTween Pro installation and maintains
-    /// DOTWEEN / DOTWEEN_PRO Scripting Define Symbols accordingly.
+    /// Auto-detects whether DOTween and DOTween Pro are installed, and maintains
+    /// the DOTWEEN / DOTWEEN_PRO Scripting Define Symbols accordingly.
     ///
-    /// Runs once per editor session. If the user installs DOTween, the macro
-    /// is added automatically and a recompile is requested so DOTweenSkills
-    /// become available without any manual configuration. If the user removes
-    /// DOTween, the macro is removed so the UnitySkills.Editor assembly
-    /// continues to compile cleanly.
+    /// Runs once per editor session only. Once the user installs DOTween, the define gets
+    /// added automatically and a recompile is requested; DOTweenSkills works with zero manual
+    /// configuration. Once the user removes DOTween, the define gets stripped so
+    /// the UnitySkills.Editor assembly still compiles cleanly.
     /// </summary>
     internal static class DOTweenPresenceDetector
     {
@@ -32,8 +31,8 @@ namespace UnitySkills
             if (SessionState.GetBool(SessionDoneKey, false))
                 return;
 
-            // Mark as done before doing any work so an exception can never cause
-            // this method to re-request compilation on every subsequent domain reload.
+            // Set the done flag before doing the work: otherwise an exception mid-way would make
+            // this method re-request a compile on every subsequent domain reload.
             SessionState.SetBool(SessionDoneKey, true);
 
             try

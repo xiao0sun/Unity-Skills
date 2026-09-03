@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System.Linq;
 using System.Collections.Generic;
@@ -7,31 +7,31 @@ using UnitySkills.Internal;
 namespace UnitySkills.Internal
 {
     /// <summary>
-    /// Shared PNG downscale + base64 encoding for screenshot skills that support
-    /// <c>returnImage=true</c> (camera_screenshot, camera_sceneview_screenshot, scene_screenshot) —
-    /// lets AI clients without filesystem access (e.g. remote/MCP) consume pixel data directly
-    /// from the REST response instead of reading the file saved at <c>path</c>.
+    /// PNG downsampling + base64 encoding shared by the screenshot skills that support
+    /// <c>returnImage=true</c> (camera_screenshot, camera_sceneview_screenshot, scene_screenshot):
+    /// lets AI clients without filesystem access (e.g. remote / MCP) pull pixels directly from the
+    /// REST response instead of having to read the file saved at <c>path</c>.
     /// </summary>
     internal static class ScreenshotImageEncoder
     {
         internal const int MinMaxDimension = 256;
         internal const int MaxMaxDimension = 4096;
 
-        // Encoded PNG->base64 grows ~1.33x; this cap keeps responses well clear of
-        // SkillsHttpServer's own 10MB request-body ceiling (MaxBodySizeBytes).
+        // PNG to base64 inflates size by roughly 1.33x; this cap keeps the response well below
+        // SkillsHttpServer's own 10MB request body cap (MaxBodySizeBytes).
         internal const int MaxBase64Bytes = 8 * 1024 * 1024;
 
         internal static int ClampMaxDimension(int maxDimension) =>
             Mathf.Clamp(maxDimension, MinMaxDimension, MaxMaxDimension);
 
         /// <summary>
-        /// Base64-encodes an already-captured PNG, downscaling first if either dimension exceeds
-        /// <paramref name="maxDimension"/>. Reuses <paramref name="pngBytes"/> unchanged when no
-        /// resize is needed (no decode/re-encode round trip).
-        /// Returns the fields to merge into the caller's response (imageBase64/imageWidth/
-        /// imageHeight/imageBytes) on success. On failure returns null and sets
-        /// <paramref name="error"/> to a response-shaped error object; the caller's file save is
-        /// unaffected — only the returnImage payload failed.
+        /// Encodes an already-captured PNG as base64; downsamples first if either dimension
+        /// exceeds <paramref name="maxDimension"/>. Reuses <paramref name="pngBytes"/> directly
+        /// when no scaling is needed, avoiding a decode-then-encode round trip.
+        /// On success returns fields to merge into the caller's response (imageBase64/imageWidth/
+        /// imageHeight/imageBytes); on failure returns null and sets <paramref name="error"/> to a
+        /// response-shaped error object — the caller's saved file is unaffected; only the
+        /// returnImage portion of the payload fails.
         /// </summary>
         internal static Dictionary<string, object> Encode(byte[] pngBytes, int width, int height, int maxDimension, out object error)
         {
@@ -52,7 +52,7 @@ namespace UnitySkills.Internal
                 try
                 {
                     src = new Texture2D(2, 2);
-                    src.LoadImage(pngBytes); // resizes src to the PNG's own dimensions
+                    src.LoadImage(pngBytes); // This resizes src to the PNG's own dimensions
 
                     float scale = (float)clamp / Mathf.Max(src.width, src.height);
                     int dstW = Mathf.Max(1, Mathf.RoundToInt(src.width * scale));
@@ -115,7 +115,7 @@ namespace UnitySkills.Internal
 namespace UnitySkills
 {
     /// <summary>
-    /// Camera skills - Control Scene View and Game cameras.
+    /// Camera skills: control the Scene View camera and game cameras.
     /// </summary>
     public static class CameraSkills
     {
@@ -138,7 +138,7 @@ namespace UnitySkills
             return new { error = "No active Scene View found" };
         }
 
-        [UnitySkill("camera_get_info", "Get Scene View camera position and rotation.",
+        [UnitySkill("camera_get_info", "Get the editor SceneView viewport camera position and rotation (editor tooling, not a scene GameObject camera).",
             Category = SkillCategory.Camera, Operation = SkillOperation.Query,
             Tags = new[] { "scene-view", "position", "rotation", "info" },
             Outputs = new[] { "position", "rotation", "pivot", "size", "orthographic" },
@@ -219,7 +219,7 @@ namespace UnitySkills
         [UnitySkill("camera_get_properties", "Get Game Camera properties (supports name/instanceId/path)",
             Category = SkillCategory.Camera, Operation = SkillOperation.Query,
             Tags = new[] { "camera", "properties", "fov", "clip-plane" },
-            Outputs = new[] { "name", "fieldOfView", "nearClipPlane", "farClipPlane", "orthographic", "depth", "clearFlags" },
+            Outputs = new[] { "name", "fieldOfView", "nearClipPlane", "farClipPlane", "orthographic", "orthographicSize", "depth", "cullingMask", "clearFlags", "backgroundColor", "rect" },
             RequiresInput = new[] { "gameObject" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
@@ -239,33 +239,65 @@ namespace UnitySkills
             };
         }
 
-        [UnitySkill("camera_set_properties", "Set Game Camera properties (FOV, clip planes, clear flags, background color, depth)",
+        [UnitySkill("camera_set_properties", "Set Game Camera properties (FOV, clip planes, clear flags, background color incl. alpha, depth). Rejects the whole call if clearFlags is not a valid value; the response echoes every camera property afterwards plus an 'applied' list of the parameters actually written.",
             Category = SkillCategory.Camera, Operation = SkillOperation.Modify,
             Tags = new[] { "camera", "properties", "fov", "background" },
-            Outputs = new[] { "name" },
+            Outputs = new[] { "name", "applied", "fieldOfView", "nearClipPlane", "farClipPlane", "orthographic", "orthographicSize", "depth", "cullingMask", "clearFlags", "backgroundColor", "rect" },
             RequiresInput = new[] { "gameObject" },
             TracksWorkflow = true)]
         public static object CameraSetProperties(
             string name = null, int instanceId = 0, string path = null,
             float? fieldOfView = null, float? nearClipPlane = null, float? farClipPlane = null,
             float? depth = null, string clearFlags = null,
-            float? bgR = null, float? bgG = null, float? bgB = null)
+            float? bgR = null, float? bgG = null, float? bgB = null, float? bgA = null)
         {
             var (cam, err) = GameObjectFinder.FindComponentOrError<Camera>(name, instanceId, path);
             if (err != null) return err;
+
+            // All values must be parsed before touching the camera: otherwise an invalid
+            // clearFlags would be silently dropped while the numeric parameters in the same
+            // call still get written.
+            if (!SkillParamUtil.TryParseOptionalEnum<CameraClearFlags>(clearFlags, "clearFlags", out var cf, out var cfError))
+                return cfError;
+
             WorkflowManager.SnapshotObject(cam);
             Undo.RecordObject(cam, "Set Camera Properties");
-            if (fieldOfView.HasValue) cam.fieldOfView = fieldOfView.Value;
-            if (nearClipPlane.HasValue) cam.nearClipPlane = nearClipPlane.Value;
-            if (farClipPlane.HasValue) cam.farClipPlane = farClipPlane.Value;
-            if (depth.HasValue) cam.depth = depth.Value;
-            if (!string.IsNullOrEmpty(clearFlags) && System.Enum.TryParse<CameraClearFlags>(clearFlags, true, out var cf)) cam.clearFlags = cf;
-            if (bgR.HasValue || bgG.HasValue || bgB.HasValue)
+
+            var applied = new List<string>();
+            if (fieldOfView.HasValue) { cam.fieldOfView = fieldOfView.Value; applied.Add("fieldOfView"); }
+            if (nearClipPlane.HasValue) { cam.nearClipPlane = nearClipPlane.Value; applied.Add("nearClipPlane"); }
+            if (farClipPlane.HasValue) { cam.farClipPlane = farClipPlane.Value; applied.Add("farClipPlane"); }
+            if (depth.HasValue) { cam.depth = depth.Value; applied.Add("depth"); }
+            if (cf.HasValue) { cam.clearFlags = cf.Value; applied.Add("clearFlags"); }
+            if (bgR.HasValue || bgG.HasValue || bgB.HasValue || bgA.HasValue)
             {
                 var c = cam.backgroundColor;
-                cam.backgroundColor = new Color(bgR ?? c.r, bgG ?? c.g, bgB ?? c.b, c.a);
+                cam.backgroundColor = new Color(bgR ?? c.r, bgG ?? c.g, bgB ?? c.b, bgA ?? c.a);
+                // "applied" lists the parameter names, and the parameter names are these four
+                // channels, not the aggregated "backgroundColor"; reporting the aggregate name
+                // would leave callers checking "did what I sent come back unchanged" unable to match it up.
+                if (bgR.HasValue) applied.Add("bgR");
+                if (bgG.HasValue) applied.Add("bgG");
+                if (bgB.HasValue) applied.Add("bgB");
+                if (bgA.HasValue) applied.Add("bgA");
             }
-            return new { success = true, name = cam.gameObject.name };
+
+            return new
+            {
+                success = true,
+                name = cam.gameObject.name,
+                applied = applied.ToArray(),
+                fieldOfView = cam.fieldOfView,
+                nearClipPlane = cam.nearClipPlane,
+                farClipPlane = cam.farClipPlane,
+                orthographic = cam.orthographic,
+                orthographicSize = cam.orthographicSize,
+                depth = cam.depth,
+                cullingMask = cam.cullingMask,
+                clearFlags = cam.clearFlags.ToString(),
+                backgroundColor = new { r = cam.backgroundColor.r, g = cam.backgroundColor.g, b = cam.backgroundColor.b, a = cam.backgroundColor.a },
+                rect = new { x = cam.rect.x, y = cam.rect.y, w = cam.rect.width, h = cam.rect.height }
+            };
         }
 
         [UnitySkill("camera_set_culling_mask", "Set Game Camera culling mask by layer names (comma-separated)",
@@ -279,23 +311,45 @@ namespace UnitySkills
             if (Validate.Required(layerNames, "layerNames") is object layerNamesErr) return layerNamesErr;
             var (cam, err) = GameObjectFinder.FindComponentOrError<Camera>(name, instanceId, path);
             if (err != null) return err;
-            WorkflowManager.SnapshotObject(cam);
-            Undo.RecordObject(cam, "Set Culling Mask");
+
+            // All layer names must be resolved before touching the mask. For a name that isn't
+            // defined in the Tags & Layers window, LayerMask.NameToLayer returns -1; silently
+            // skipping it would let a typo produce success:true with cullingMask 0 (or missing
+            // exactly one bit), with no way to see that the name never took effect.
             int mask = 0;
             foreach (var ln in layerNames.Split(','))
             {
-                var layer = LayerMask.NameToLayer(ln.Trim());
-                if (layer >= 0) mask |= 1 << layer;
+                var trimmed = ln.Trim();
+                var layer = LayerMask.NameToLayer(trimmed);
+                if (layer < 0)
+                    return SkillParamUtil.InvalidValueError(trimmed, "layerNames", GetDefinedLayerNames());
+                mask |= 1 << layer;
             }
+
+            WorkflowManager.SnapshotObject(cam);
+            Undo.RecordObject(cam, "Set Culling Mask");
             cam.cullingMask = mask;
             return new { success = true, cullingMask = mask };
+        }
+
+        /// <summary>All layer names currently defined in the Tags &amp; Layers window (built-in + user-defined).</summary>
+        private static string[] GetDefinedLayerNames()
+        {
+            var names = new List<string>();
+            for (int i = 0; i < 32; i++)
+            {
+                var n = LayerMask.LayerToName(i);
+                if (!string.IsNullOrEmpty(n)) names.Add(n);
+            }
+            return names.ToArray();
         }
 
         [UnitySkill("camera_screenshot", "Capture a screenshot from a Game Camera to file. Set returnImage=true to also get the PNG as base64 in the response, for clients without filesystem access (e.g. remote/MCP).",
             Category = SkillCategory.Camera, Operation = SkillOperation.Execute,
             Tags = new[] { "screenshot", "capture", "render", "png" },
             Outputs = new[] { "path", "width", "height", "imageBase64", "imageWidth", "imageHeight", "imageBytes" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" },
+            MutatesAssets = true)]
         public static object CameraScreenshot(string savePath = "Assets/screenshot.png", int width = 1920, int height = 1080, string name = null, int instanceId = 0, string path = null, bool returnImage = false, int maxDimension = 1280)
         {
             var (cam, err) = GameObjectFinder.FindComponentOrError<Camera>(name, instanceId, path);
@@ -341,15 +395,16 @@ namespace UnitySkills
         [UnitySkill("camera_sceneview_screenshot", "Capture the editor SCENE VIEW (the developer's editing viewport — can overlook the whole scene incl. off-camera objects; distinct from scene_screenshot which is the Game View/player camera, and camera_screenshot which is one Game Camera). By default captures the full Scene View incl. grid/gizmos/selection (on-screen read); auto-falls back to a clean offscreen render if the editor build doesn't support it. filename is a bare filename only (no path separators); saved under Assets/Screenshots/. Set returnImage=true to also get the PNG as base64 in the response, for clients without filesystem access (e.g. remote/MCP).",
             Category = SkillCategory.Camera, Operation = SkillOperation.Execute,
             Tags = new[] { "screenshot", "capture", "scene-view", "editor", "gizmo" },
-            Outputs = new[] { "path", "width", "height", "mode", "note", "imageBase64", "imageWidth", "imageHeight", "imageBytes" })]
+            Outputs = new[] { "path", "width", "height", "mode", "note", "imageBase64", "imageWidth", "imageHeight", "imageBytes" },
+            MutatesAssets = true)]
         public static object CameraSceneViewScreenshot(string filename = "sceneview.png", bool includeOverlays = true, bool returnImage = false, int maxDimension = 1280)
         {
             var sv = SceneView.lastActiveSceneView;
             if (sv == null)
                 return new { error = "No active Scene View found. Open a Scene View window (Window > General > Scene)." };
 
-            // Resolve path the same safe way as scene_screenshot: strip any path components,
-            // force .png, save under Assets/Screenshots/.
+            // Same safety handling as scene_screenshot: strip all path components, force .png,
+            // always save under Assets/Screenshots/.
             filename = System.IO.Path.GetFileName(filename);
             if (string.IsNullOrEmpty(filename)) filename = "sceneview";
             if (!System.IO.Path.HasExtension(filename)) filename += ".png";
@@ -361,7 +416,8 @@ namespace UnitySkills
             string note = null;
             int outW = 0, outH = 0;
 
-            // Method 2 (default): full Scene View incl. grid/gizmos via internal ReadScreenPixel (reflection).
+            // Path 2 (default): reflect into the internal ReadScreenPixel to capture the full
+            // Scene View, including grid / gizmos.
             if (includeOverlays)
             {
                 var (ok, w, h, err) = TryCaptureSceneViewScreen(sv, path);
@@ -377,7 +433,8 @@ namespace UnitySkills
                 }
             }
 
-            // Method 1 (fallback / includeOverlays=false): clean offscreen render from the Scene View camera.
+            // Path 1 (fallback / includeOverlays=false): do a clean offscreen render with the
+            // Scene View camera.
             if (mode == null)
             {
                 var (w, h) = CaptureSceneViewCameraOffscreen(sv, path);
@@ -387,7 +444,8 @@ namespace UnitySkills
                     note = "Clean scene render from the Scene View camera angle (no grid/gizmos).";
             }
 
-            // The PNG is written synchronously above; refresh the AssetDatabase next tick so it shows in the Project window.
+            // The write above is synchronous to disk; refresh AssetDatabase on the next tick so
+            // the file shows up in the Project window.
             EditorApplication.delayCall += () => AssetDatabase.Refresh();
 
             var result = new Dictionary<string, object> { ["success"] = true, ["path"] = path, ["width"] = outW, ["height"] = outH, ["mode"] = mode, ["note"] = note };
@@ -404,9 +462,10 @@ namespace UnitySkills
             return result;
         }
 
-        // Method 2: read the actual on-screen pixels of the Scene View window (incl. grid/gizmos/selection).
-        // Uses internal UnityEditorInternal.InternalEditorUtility.ReadScreenPixel via reflection so the assembly
-        // still compiles on Unity versions where the internal API is absent (graceful runtime fallback).
+        // Path 2: read the Scene View window's actual on-screen pixels directly (includes grid /
+        // gizmos / selection highlight). Reflects into the internal API
+        // UnityEditorInternal.InternalEditorUtility.ReadScreenPixel, so the assembly still
+        // compiles on Unity versions lacking that internal API (graceful runtime degradation).
         private static (bool ok, int width, int height, string error) TryCaptureSceneViewScreen(SceneView sv, string path)
         {
             Texture2D tex = null;
@@ -418,8 +477,8 @@ namespace UnitySkills
                 if (method == null)
                     return (false, 0, 0, "ReadScreenPixel not available in this Unity version");
 
-                // ReadScreenPixel expects logical (point) coordinates, not physical pixels —
-                // do NOT scale the window rect by EditorGUIUtility.pixelsPerPoint.
+                // ReadScreenPixel wants logical (point) coordinates, not physical pixels — never
+                // scale the window rect with EditorGUIUtility.pixelsPerPoint.
                 var ew = (EditorWindow)sv;
                 var pos = ew.position;
                 int w = (int)pos.width;
@@ -447,13 +506,13 @@ namespace UnitySkills
             }
         }
 
-        // Method 1: render the Scene View camera into an offscreen RenderTexture (clean, no editor overlays).
-        // Mirrors the camera_screenshot offscreen pattern.
+        // Path 1: render the Scene View camera to an offscreen RenderTexture (clean image, no
+        // editor overlays), the same approach used by camera_screenshot's offscreen render.
         private static (int width, int height) CaptureSceneViewCameraOffscreen(SceneView sv, string path)
         {
             var cam = sv.camera;
-            // The camera's pixel dimensions are the true viewport size (excludes the toolbar),
-            // so the offscreen render keeps the correct aspect ratio.
+            // The camera's pixel size is the actual viewport size (excludes the toolbar);
+            // offscreen rendering with it keeps the correct aspect ratio.
             int w = Mathf.Max(1, cam.pixelWidth);
             int h = Mathf.Max(1, cam.pixelHeight);
 

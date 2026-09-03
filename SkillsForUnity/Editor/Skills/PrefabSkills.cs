@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System.IO;
 using System.Linq;
@@ -7,7 +7,7 @@ using UnitySkills.Internal;
 namespace UnitySkills
 {
     /// <summary>
-    /// Prefab management skills - create, edit, save.
+    /// Prefab management skills: create, edit, save.
     /// </summary>
     public static class PrefabSkills
     {
@@ -84,7 +84,7 @@ namespace UnitySkills
             TracksWorkflow = true)]
         public static object PrefabInstantiateBatch(string items)
         {
-            // Cache loaded prefabs to avoid repeated AssetDatabase calls
+            // Cache loaded prefabs to avoid repeated AssetDatabase round trips
             var prefabCache = new System.Collections.Generic.Dictionary<string, GameObject>();
 
             return BatchExecutor.Execute<BatchInstantiateItem>(items, item =>
@@ -179,6 +179,7 @@ namespace UnitySkills
                 return new { error = "GameObject is not a prefab instance" };
 
             WorkflowManager.SnapshotObject(prefabRoot);
+            PushInstanceOverridesToSource(prefabRoot);
             var prefabPath = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(prefabRoot);
             PrefabUtility.ApplyPrefabInstance(prefabRoot, InteractionMode.UserAction);
 
@@ -227,13 +228,68 @@ namespace UnitySkills
             var propOverrides = new System.Collections.Generic.List<object>();
             if (overrides != null)
             {
+                // GetPropertyModifications returns the bookkeeping entries Unity writes into every
+                // newly created prefab instance's modification list, regardless of whether the
+                // value actually differs from the source — verified in practice: even a
+                // completely untouched instance has m_LocalPosition.x/y/z,
+                // m_LocalRotation.w/x/y/z, m_LocalEulerAnglesHint.x/y/z, and m_Name all in the
+                // list, a constant ~11 "overrides", with hasOverrides always true.
+                //
+                // PropertyModification.target is not the live instance object in the scene, but a
+                // reference to the *source prefab asset* (confirmed via instance ID: it matches
+                // the object loaded from the asset, not the negative/session-only ID a scene
+                // instance would have; and PrefabUtility.GetCorrespondingObjectFromSource(o.target)
+                // always returns null, because the source itself has no source). So comparing
+                // "instance value" to "source value" requires first mapping each source object
+                // back to the live object in this instance — exactly the reverse of the direction
+                // GetCorrespondingObjectFromSource supports — done here by walking the instance
+                // hierarchy once and indexing by GetCorrespondingObjectFromSource(live).
+                var liveBySource = new System.Collections.Generic.Dictionary<UnityEngine.Object, UnityEngine.Object>();
+                void RegisterLive(UnityEngine.Object live)
+                {
+                    if (live == null) return;
+                    var src = PrefabUtility.GetCorrespondingObjectFromSource(live);
+                    if (src != null) liveBySource[src] = live;
+                }
+                RegisterLive(prefabRoot);
+                foreach (var t in prefabRoot.GetComponentsInChildren<Transform>(true))
+                {
+                    RegisterLive(t.gameObject);
+                    foreach (var comp in t.GetComponents<Component>())
+                        RegisterLive(comp);
+                }
+
                 foreach (var o in overrides)
                 {
                     if (o.target == null) continue;
-                    propOverrides.Add(new { 
-                        target = o.target.name, 
-                        property = o.propertyPath, 
-                        value = o.value 
+
+                    // The instance's own name is unconditionally excluded from the override
+                    // determination, regardless of whether it differs from the source name —
+                    // verified against PrefabUtility.HasPrefabInstanceAnyOverrides's behavior: even
+                    // with a custom name set on the instance, it still returns false. If this only
+                    // filtered by value equality, almost every renamed instance in a scene would be
+                    // falsely reported as having an override.
+                    if (o.propertyPath == "m_Name") continue;
+
+                    // If the source object has no live counterpart in this instance (e.g. it
+                    // belongs to a nested prefab structure not touched by this traversal) — there's
+                    // no way to prove it's just a phantom default, so it's kept to avoid silently
+                    // dropping a genuine override.
+                    if (!liveBySource.TryGetValue(o.target, out var liveInstance))
+                    {
+                        propOverrides.Add(new { target = o.target.name, property = o.propertyPath, value = o.value });
+                        continue;
+                    }
+
+                    var instProp = new SerializedObject(liveInstance).FindProperty(o.propertyPath);
+                    var srcProp = new SerializedObject(o.target).FindProperty(o.propertyPath);
+                    if (instProp != null && srcProp != null && SerializedProperty.DataEquals(instProp, srcProp))
+                        continue; // Instance value matches the source asset; a phantom bookkeeping entry, not a genuine override
+
+                    propOverrides.Add(new {
+                        target = o.target.name,
+                        property = o.propertyPath,
+                        value = o.value
                     });
                 }
             }
@@ -246,7 +302,14 @@ namespace UnitySkills
                 addedComponents = addedComponents.Count,
                 removedComponents = removedComponents.Count,
                 addedGameObjects = addedObjects.Count,
-                hasOverrides = propOverrides.Count > 0 || addedComponents.Count > 0 || removedComponents.Count > 0
+                // Reuse the count from the actual field-by-field comparison above rather than
+                // PrefabUtility.HasPrefabInstanceAnyOverrides — that aggregate value reads Unity's
+                // cached modification list, which can be stale for a property just changed in
+                // memory and not yet flushed into that cache (e.g. a caller bypassing
+                // SetDirty/RecordPrefabInstancePropertyModifications to change a Transform field
+                // directly). Deriving hasOverrides from propOverrides.Count keeps these two fields
+                // in the same response self-consistent.
+                hasOverrides = propOverrides.Count > 0 || addedComponents.Count > 0 || removedComponents.Count > 0 || addedObjects.Count > 0
             };
         }
 
@@ -265,6 +328,7 @@ namespace UnitySkills
 
             WorkflowManager.SnapshotObject(prefabRoot);
             Undo.RecordObject(prefabRoot, "Revert Prefab Overrides");
+            PullSourceValuesToInstance(prefabRoot);
             PrefabUtility.RevertPrefabInstance(prefabRoot, InteractionMode.UserAction);
 
             return new { success = true, reverted = prefabRoot.name };
@@ -284,6 +348,7 @@ namespace UnitySkills
             if (prefabRoot == null) return new { error = "Not a prefab instance" };
 
             WorkflowManager.SnapshotObject(prefabRoot);
+            PushInstanceOverridesToSource(prefabRoot);
             var prefabPath = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(prefabRoot);
             PrefabUtility.ApplyPrefabInstance(prefabRoot, InteractionMode.UserAction);
 
@@ -341,7 +406,12 @@ namespace UnitySkills
             Category = SkillCategory.Prefab, Operation = SkillOperation.Modify,
             Tags = new[] { "prefab", "property", "set", "component", "asset" },
             Outputs = new[] { "prefabPath", "gameObject", "component", "property", "valueSet" },
-            RequiresInput = new[] { "prefabAsset", "componentType" },
+            // Cannot write "prefabAsset": across the whole codebase it appears here alone — this
+            // skill doesn't accept that parameter (the asset comes in via prefabPath), and no skill
+            // outputs it either, so this token constrains nothing and links nothing up; an agent
+            // taking it literally would just get UNKNOWN_PARAM. prefabPath is also prefab_create's
+            // return value, so the corrected token also wires both into the Outputs→RequiresInput chain.
+            RequiresInput = new[] { "prefabPath", "componentType" },
             TracksWorkflow = true)]
         public static object PrefabSetProperty(
             string prefabPath = null, string componentType = null, string propertyName = null,
@@ -355,14 +425,13 @@ namespace UnitySkills
             var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);
             if (prefab == null) return new { error = $"Prefab not found: {prefabPath}" };
 
-            // Find target GameObject inside prefab (root or child by name)
+            // Locate the target GameObject inside the prefab (root, or find a child by name)
             GameObject targetGo = prefab;
             if (!string.IsNullOrEmpty(gameObjectName))
             {
                 var child = prefab.transform.Find(gameObjectName);
                 if (child == null)
                 {
-                    // Deep search
                     foreach (var t in prefab.GetComponentsInChildren<Transform>(true))
                     {
                         if (t.name == gameObjectName) { child = t; break; }
@@ -373,7 +442,6 @@ namespace UnitySkills
                 targetGo = child.gameObject;
             }
 
-            // Find component
             var compType = ComponentSkills.FindComponentType(componentType);
             if (compType == null)
                 return new { error = $"Component type not found: {componentType}" };
@@ -389,7 +457,7 @@ namespace UnitySkills
 
             WorkflowManager.SnapshotObject(comp);
 
-            // Set value based on property type
+            // Dispatch the write based on the property type
             if (!string.IsNullOrEmpty(assetReferencePath))
             {
                 if (prop.propertyType != SerializedPropertyType.ObjectReference)
@@ -403,8 +471,36 @@ namespace UnitySkills
             }
             else if (!string.IsNullOrEmpty(value))
             {
-                if (!SetSerializedPropertyValue(prop, value))
-                    return new { error = $"Failed to set value '{value}' on property '{propertyName}' (type: {prop.propertyType})" };
+                bool applied = false;
+                bool typeSupported = true;
+                try
+                {
+                    applied = SetSerializedPropertyValue(prop, value, out typeSupported);
+                }
+                catch (System.Exception ex)
+                {
+                    // For invalid text formats, the converter throws rather than returning null
+                    // (e.g. passing "1,2" for a Vector3, a Quaternion given only two components,
+                    // or a non-numeric key inside JSON-object form). Not catching this would
+                    // surface as an unclassified SKILL_ERROR + abort carrying only the raw parser
+                    // message. No other exception source exists within this call, so this is
+                    // judged to be "the value is the problem" rather than swallowing a real bug.
+                    return new { error = $"Invalid value '{value}' for property '{propertyName}' (type: {prop.propertyType}): {ex.Message}" };
+                }
+
+                if (!applied)
+                {
+                    // "Failed to set value" reads as "your value is wrong" — but for an unsupported
+                    // property type, nothing the caller writes could ever succeed; only spelling
+                    // this out stops it from retrying the same call with a different format.
+                    // Both messages open with their own classifying word ("Invalid" / "Unsupported"),
+                    // so SkillErrorClassifier's leading-word rule yields SEMANTIC_INVALID + fix_and_retry,
+                    // instead of the unclassified SKILL_ERROR + abort the old wording
+                    // "Failed to set value …" used to produce.
+                    return typeSupported
+                        ? new { error = $"Invalid value '{value}' for property '{propertyName}' (type: {prop.propertyType}) — that property type is supported but the text could not be parsed into it." }
+                        : new { error = $"Unsupported serialized property type {prop.propertyType} for property '{propertyName}'. prefab_set_property writes Integer, Float, Boolean, String, Enum, Color, Vector2/3/4, Vector2Int/3Int, Quaternion, Rect, Bounds and LayerMask from 'value'; use assetReferencePath for an ObjectReference field." };
+                }
             }
             else
             {
@@ -429,11 +525,123 @@ namespace UnitySkills
         #region Prefab SerializedProperty Helpers
 
         /// <summary>
-        /// Find a SerializedProperty by name with Unity naming convention fallbacks (m_PropertyName, _propertyName).
+        /// Finds the genuine property differences (values that actually differ) between a
+        /// prefab instance and its source asset, as distinct from the phantom bookkeeping entries
+        /// PrefabUtility.GetPropertyModifications attaches to every new instance
+        /// (m_LocalPosition/m_LocalRotation/m_LocalEulerAnglesHint/m_Name).
+        ///
+        /// <para>PropertyModification.target points to the *source* prefab asset object rather
+        /// than the live instance (confirmed via instance ID in practice), so
+        /// GetCorrespondingObjectFromSource cannot be called on it directly — that would always
+        /// return null. Here the live instance hierarchy is walked once, indexed by
+        /// GetCorrespondingObjectFromSource(live) -&gt; live (the direction this API actually
+        /// supports), and each modification's live object is looked up in reverse.
+        /// The detection logic mirrors PrefabGetOverrides; a separate copy is kept here rather
+        /// than extracting a shared helper, to avoid touching that already-verified method.</para>
+        /// </summary>
+        private static System.Collections.Generic.List<(UnityEngine.Object live, UnityEngine.Object source, string propertyPath)> FindGenuineOverrides(GameObject instanceRoot)
+        {
+            var result = new System.Collections.Generic.List<(UnityEngine.Object, UnityEngine.Object, string)>();
+            var overrides = PrefabUtility.GetPropertyModifications(instanceRoot);
+            if (overrides == null) return result;
+
+            var liveBySource = new System.Collections.Generic.Dictionary<UnityEngine.Object, UnityEngine.Object>();
+            void RegisterLive(UnityEngine.Object live)
+            {
+                if (live == null) return;
+                var src = PrefabUtility.GetCorrespondingObjectFromSource(live);
+                if (src != null) liveBySource[src] = live;
+            }
+            RegisterLive(instanceRoot);
+            foreach (var t in instanceRoot.GetComponentsInChildren<Transform>(true))
+            {
+                RegisterLive(t.gameObject);
+                foreach (var comp in t.GetComponents<Component>())
+                    RegisterLive(comp);
+            }
+
+            foreach (var o in overrides)
+            {
+                if (o.target == null) continue;
+                if (o.propertyPath == "m_Name") continue; // Unconditionally excluded from override determination, matching PrefabUtility.HasPrefabInstanceAnyOverrides's behavior
+                if (!liveBySource.TryGetValue(o.target, out var liveInstance)) continue;
+
+                var instProp = new SerializedObject(liveInstance).FindProperty(o.propertyPath);
+                var srcProp = new SerializedObject(o.target).FindProperty(o.propertyPath);
+                if (instProp == null || srcProp == null) continue;
+                if (SerializedProperty.DataEquals(instProp, srcProp)) continue; // Matches the source; a phantom bookkeeping entry, not a genuine override
+
+                result.Add((liveInstance, o.target, o.propertyPath));
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Writes each genuine override property's live-instance value onto the corresponding
+        /// prefab source asset object, and saves the asset.
+        ///
+        /// <para>Called before PrefabUtility.ApplyPrefabInstance. Verified in practice (by
+        /// directly inspecting the raw YAML on disk): relying on that API alone leaves the source
+        /// asset completely unchanged for a Transform override, even after separately trying
+        /// EditorUtility.SetDirty, RecordPrefabInstancePropertyModifications, Undo.RecordObject,
+        /// and SerializedObject.ApplyModifiedProperties — in this headless environment where the
+        /// Inspector never repaints, none of them make Unity's native prefab-override comparison
+        /// detect the difference. So instead of relying on that comparison, this copies values
+        /// directly and explicitly calls AssetDatabase.SaveAssets; this codebase has already
+        /// confirmed the same pattern around "a file change triggers a domain reload": background
+        /// work Unity normally does automatically doesn't happen without a window-focus/idle event.</para>
+        /// </summary>
+        private static void PushInstanceOverridesToSource(GameObject instanceRoot)
+        {
+            var diffs = FindGenuineOverrides(instanceRoot);
+            var touchedSources = new System.Collections.Generic.HashSet<UnityEngine.Object>();
+            foreach (var (live, source, propertyPath) in diffs)
+            {
+                var liveProp = new SerializedObject(live).FindProperty(propertyPath);
+                var srcSO = new SerializedObject(source);
+                var srcProp = srcSO.FindProperty(propertyPath);
+                if (liveProp == null || srcProp == null) continue;
+                try { srcProp.boxedValue = liveProp.boxedValue; }
+                catch { continue; /* Not every property type supports boxedValue */ }
+                srcSO.ApplyModifiedProperties();
+                EditorUtility.SetDirty(source);
+                touchedSources.Add(source);
+            }
+            if (touchedSources.Count > 0)
+                AssetDatabase.SaveAssets();
+        }
+
+        /// <summary>
+        /// Writes each genuine override property's prefab-source-asset value back onto the live
+        /// instance — the reverse direction of PushInstanceOverridesToSource.
+        ///
+        /// <para>Called before PrefabUtility.RevertPrefabInstance, for the same reason: that API
+        /// relies on the same native override-comparison cache used by Apply, and in this
+        /// environment that cache doesn't get populated by script-driven changes; otherwise
+        /// revert would silently leave the instance's already-diverged Transform values untouched.</para>
+        /// </summary>
+        private static void PullSourceValuesToInstance(GameObject instanceRoot)
+        {
+            var diffs = FindGenuineOverrides(instanceRoot);
+            foreach (var (live, source, propertyPath) in diffs)
+            {
+                var liveSO = new SerializedObject(live);
+                var liveProp = liveSO.FindProperty(propertyPath);
+                var srcProp = new SerializedObject(source).FindProperty(propertyPath);
+                if (liveProp == null || srcProp == null) continue;
+                try { liveProp.boxedValue = srcProp.boxedValue; }
+                catch { continue; /* Not every property type supports boxedValue */ }
+                liveSO.ApplyModifiedProperties();
+                EditorUtility.SetDirty(live);
+            }
+        }
+
+        /// <summary>
+        /// Looks up a SerializedProperty by name, falling back through Unity naming conventions
+        /// (m_PropertyName, _propertyName).
         /// </summary>
         private static SerializedProperty FindSerializedProperty(SerializedObject so, string propertyName)
         {
-            // Direct match
             var prop = so.FindProperty(propertyName);
             if (prop != null) return prop;
 
@@ -446,7 +654,7 @@ namespace UnitySkills
             prop = so.FindProperty("_" + propertyName);
             if (prop != null) return prop;
 
-            // Try lowercase first char with m_ prefix
+            // m_ prefix + first letter kept lowercase
             var mLower = "m_" + propertyName;
             prop = so.FindProperty(mLower);
             if (prop != null) return prop;
@@ -455,10 +663,18 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Set a SerializedProperty value from a string. Returns true on success.
+        /// Writes a SerializedProperty's value from a string, returning true on success.
+        ///
+        /// <para><paramref name="typeSupported"/> distinguishes two kinds of failure — a single
+        /// "Failed to set value" message used to conflate them: false means there's no branch here
+        /// at all for this <see cref="SerializedPropertyType"/> (nothing the caller writes in
+        /// <c>value</c> could work); true means the type is supported but the given text couldn't
+        /// be parsed. This switch is the sole source of truth for which types are supported — only
+        /// the default branch clears this flag.</para>
         /// </summary>
-        private static bool SetSerializedPropertyValue(SerializedProperty prop, string value)
+        private static bool SetSerializedPropertyValue(SerializedProperty prop, string value, out bool typeSupported)
         {
+            typeSupported = true;
             switch (prop.propertyType)
             {
                 case SerializedPropertyType.Integer:
@@ -483,7 +699,7 @@ namespace UnitySkills
                     return true;
 
                 case SerializedPropertyType.Enum:
-                    // Try name match first
+                    // Try matching by name first, then fall back to matching by index
                     if (prop.enumDisplayNames != null)
                     {
                         for (int i = 0; i < prop.enumDisplayNames.Length; i++)
@@ -492,7 +708,6 @@ namespace UnitySkills
                             { prop.enumValueIndex = i; return true; }
                         }
                     }
-                    // Try index
                     if (int.TryParse(value, out var enumIdx)) { prop.enumValueIndex = enumIdx; return true; }
                     return false;
 
@@ -514,6 +729,16 @@ namespace UnitySkills
                 case SerializedPropertyType.Vector4:
                     var v4 = ComponentSkills.ConvertValue(value, typeof(Vector4));
                     if (v4 is Vector4 vec4) { prop.vector4Value = vec4; return true; }
+                    return false;
+
+                // m_LocalRotation is the most-written property on prefabs, and it's a Quaternion;
+                // missing this branch would make every rotation write fall through to default,
+                // returning "Failed to set value ... (type: Quaternion)".
+                // ConvertValue accepts 3 components (Euler angles, in degrees) or 4 (raw x,y,z,w),
+                // consistent with the Vector branches above.
+                case SerializedPropertyType.Quaternion:
+                    var quat = ComponentSkills.ConvertValue(value, typeof(Quaternion));
+                    if (quat is Quaternion q) { prop.quaternionValue = q; return true; }
                     return false;
 
                 case SerializedPropertyType.Rect:
@@ -543,12 +768,13 @@ namespace UnitySkills
                     return false;
 
                 default:
+                    typeSupported = false;
                     return false;
             }
         }
 
         /// <summary>
-        /// List top-level serialized properties for error diagnostics.
+        /// Lists top-level serialized properties, for error diagnostics.
         /// </summary>
         private static string[] ListSerializedProperties(SerializedObject so)
         {

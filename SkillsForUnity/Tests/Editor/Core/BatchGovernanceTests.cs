@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -16,9 +16,19 @@ namespace UnitySkills.Tests.Core
             return JObject.Parse(JsonConvert.SerializeObject(result));
         }
 
+        private SkillsOperatingMode _savedMode;
+        private SurfaceProfileKind _savedProfile;
+
         [SetUp]
         public void SetUp()
         {
+            _savedMode = SkillsModeManager.CurrentMode;
+            _savedProfile = SkillsSurfaceProfile.Current;
+            // Direct calls to BatchExecute/BatchRetryFailed are also subject to profile execution-time enforcement; if
+            // the dev machine's EditorPrefs has guide/nsa stored it rejects this batch as SURFACE_EXCLUDED, so pin full.
+            SkillsModeManager.CurrentMode = SkillsOperatingMode.Bypass;
+            SkillsSurfaceProfile.Current = SurfaceProfileKind.Full;
+
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             GameObjectFinder.InvalidateCache();
         }
@@ -26,6 +36,8 @@ namespace UnitySkills.Tests.Core
         [TearDown]
         public void TearDown()
         {
+            SkillsModeManager.CurrentMode = _savedMode;
+            SkillsSurfaceProfile.Current = _savedProfile;
             GameObjectFinder.InvalidateCache();
         }
 
@@ -151,7 +163,7 @@ namespace UnitySkills.Tests.Core
         [Test]
         public void BatchRetryFailed_WithNoFailedItems_ReturnsZeroCount()
         {
-            // Create a mock report with no failed items by running a successful batch
+            // First run a batch that fully succeeds, to obtain a report with no failed items.
             new GameObject("RetryTestObj");
             GameObjectFinder.InvalidateCache();
 
@@ -162,7 +174,6 @@ namespace UnitySkills.Tests.Core
             var reportId = exec["reportId"]?.ToString();
             Assert.IsNotNull(reportId);
 
-            // Retry should find 0 failed items
             var retry = ToJObject(BatchSkills.BatchRetryFailed(reportId));
             Assert.AreEqual(0, retry["retryCount"]?.Value<int>());
         }

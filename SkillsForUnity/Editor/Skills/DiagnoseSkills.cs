@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -6,8 +6,8 @@ using UnityEngine;
 namespace UnitySkills
 {
     /// <summary>
-    /// Single-call diagnostic snapshot for AI agents to triage Editor state without
-    /// chaining 4–5 individual skills (console, compile, workflow, server, jobs).
+    /// A single-call diagnostic snapshot, so an AI agent can pinpoint editor state without chaining
+    /// 4-5 skills together (console, compile, workflow, server, jobs).
     /// </summary>
     public static class DiagnoseSkills
     {
@@ -101,7 +101,7 @@ namespace UnitySkills
                 }
                 catch
                 {
-                    // Best-effort — leave null if persistence layer hiccups.
+                    // Best-effort: if the persistence layer has a problem, just leave it null rather than failing diagnosis itself.
                 }
             }
 
@@ -141,7 +141,7 @@ namespace UnitySkills
             };
         }
 
-        /// <summary>Read an int property/field from anonymous-typed objects without throwing.</summary>
+        /// <summary>Reads an int property/field off an anonymous-type object; never throws if it can't be found.</summary>
         private static int ReadIntMember(object source, string memberName)
         {
             if (source == null || string.IsNullOrEmpty(memberName)) return 0;
@@ -155,7 +155,7 @@ namespace UnitySkills
             }
             catch
             {
-                // Ignore — diagnostic helper must not throw on best-effort reads.
+                // A best-effort diagnostic helper must never throw; swallow it.
             }
             return 0;
         }

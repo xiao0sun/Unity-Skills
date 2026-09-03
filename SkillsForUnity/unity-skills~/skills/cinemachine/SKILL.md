@@ -20,7 +20,7 @@ Control Cinemachine Virtual Cameras and brain settings. Works with Cinemachine *
 - **Approval**：查询类 skill（`cinemachine_inspect_vcam` / `cinemachine_list_components` / `cinemachine_get_brain_info`，源码标 `SkillMode.SemiAuto`）直接执行；其余配置/创建类（`cinemachine_create_vcam` / `cinemachine_set_targets` / `cinemachine_set_lens` / `cinemachine_configure_body` / `cinemachine_configure_aim` 等，标 `SkillMode.FullAuto`）需用户 grant，grant 后服务端一步执行返结果。
 - **Auto / Bypass**：未被禁列表拦截的 skill 直接执行。
 - 本模块**含 Delete 类 skill**：`cinemachine_set_component`（替换/移除 pipeline component）、`cinemachine_target_group_remove_member`、`cinemachine_remove_extension` 标记为 `SkillOperation.Delete`，被 `IsForbiddenInSemi` 静态拦截 —— 仅 **Bypass** 模式或加入 **Allowlist** 才能调用。
-- **包依赖**：必须安装 `com.unity.cinemachine` 包（CM 2.x 或 3.x）。未安装时所有 skill 返回 `{ error = "Cinemachine 未安装..." }` 的 stub —— 调用方应先用 `package_*` 系列 skill 确认安装状态。
+- **包依赖**：必须安装 `com.unity.cinemachine` 包（CM 2.x 或 3.x）。未安装时所有 skill 返回 `{ error = "Cinemachine is not installed. Install Cinemachine 2.x or 3.x via Package Manager." }` 的 stub —— 调用方应先用 `package_*` 系列 skill 确认安装状态。
 - **反射脆弱性**：CM2 ↔ CM3 之间 API 名变化大（`CinemachineVirtualCamera` → `CinemachineCamera`，`CinemachineComponentBase` 改名等）。本模块通过 `CinemachineAdapter` 反射桥接，遇 CM 早期预览版（< `3.0.0-pre.5`）可能因 API 漂移返回失败 —— 优先用 `cinemachine_inspect_vcam` 探测当前可用字段，再决定 `propertyName`。
 
 **DO NOT** (common hallucinations):
@@ -80,6 +80,8 @@ Set Follow and LookAt targets.
 Switch VCam pipeline component (Body/Aim/Noise).
 **Parameters:**
 - `vcamName` (string): Name of the VCam.
+- `instanceId` (int, optional): VCam Instance ID.
+- `path` (string, optional): VCam hierarchy path.
 - `stage` (string): "Body", "Aim", or "Noise".
 - `componentType` (string): Type name (e.g. "OrbitalFollow", "Composer") or "None" to remove.
 
@@ -93,13 +95,18 @@ Add a Cinemachine component (legacy, supports CM2 and CM3).
 - `componentType` (string): Type name (e.g., "OrbitalFollow").
 
 ### `cinemachine_set_lens`
-Quickly configure Lens settings (FOV, Near, Far, OrthoSize).
+Quickly configure Lens settings (FOV, Near, Far, OrthoSize) and the projection ModeOverride.
 **Parameters:**
 - `vcamName` (string): Name of the VCam.
+- `instanceId` (int, optional): VCam Instance ID.
+- `path` (string, optional): VCam hierarchy path.
 - `fov` (float, optional): Field of View.
 - `nearClip` (float, optional): Near Clip Plane.
 - `farClip` (float, optional): Far Clip Plane.
 - `orthoSize` (float, optional): Orthographic Size.
+- `mode` (string, optional): Writes the lens `ModeOverride`, i.e. the projection mode this VCam pushes to the Unity Camera when it goes live. Case-insensitive; valid values are `None` (leave the Camera's own projection alone), `Orthographic`, `Perspective` and `Physical`. Omitting it leaves the existing `ModeOverride` untouched.
+
+At least one of `fov` / `nearClip` / `farClip` / `orthoSize` / `mode` must be supplied; passing none returns `No values provided to update.` An invalid `mode` rejects the whole call with `SEMANTIC_INVALID` + `validValues` before anything is written, so the other parameters are not applied either.
 
 ### `cinemachine_list_components`
 List all available Cinemachine component names.
@@ -125,7 +132,11 @@ Create a CinemachineTargetGroup.
 Add or update a member in a TargetGroup.
 **Parameters:**
 - `groupName` (string): Name of the TargetGroup.
+- `groupInstanceId` (int, optional): TargetGroup instance ID.
+- `groupPath` (string, optional): TargetGroup hierarchy path.
 - `targetName` (string): Name of the member GameObject.
+- `targetInstanceId` (int, optional): Member GameObject instance ID.
+- `targetPath` (string, optional): Member GameObject hierarchy path.
 - `weight` (float): Member weight (default 1).
 - `radius` (float): Member radius (default 1).
 
@@ -133,30 +144,44 @@ Add or update a member in a TargetGroup.
 Remove a member from a TargetGroup.
 **Parameters:**
 - `groupName` (string): Name of the TargetGroup.
+- `groupInstanceId` (int, optional): TargetGroup instance ID.
+- `groupPath` (string, optional): TargetGroup hierarchy path.
 - `targetName` (string): Name of the member GameObject.
+- `targetInstanceId` (int, optional): Member GameObject instance ID.
+- `targetPath` (string, optional): Member GameObject hierarchy path.
 
 ### `cinemachine_set_spline`
 Assign a SplineContainer to a VCam's SplineDolly component (Body stage).
 **Parameters:**
 - `vcamName` (string): Name of the VCam.
+- `vcamInstanceId` (int, optional): VCam instance ID.
+- `vcamPath` (string, optional): VCam hierarchy path.
 - `splineName` (string): Name of the GameObject with SplineContainer.
+- `splineInstanceId` (int, optional): SplineContainer GameObject instance ID.
+- `splinePath` (string, optional): SplineContainer GameObject hierarchy path.
 
 ### `cinemachine_add_extension`
 Add a CinemachineExtension to a VCam.
 **Parameters:**
 - `vcamName` (string): Name of the VCam.
+- `instanceId` (int, optional): VCam Instance ID.
+- `path` (string, optional): VCam hierarchy path.
 - `extensionName` (string): Type name of the extension (e.g., "CinemachineStoryboard", "CinemachineImpulseListener").
 
 ### `cinemachine_remove_extension`
 Remove a CinemachineExtension from a VCam.
 **Parameters:**
 - `vcamName` (string): Name of the VCam.
+- `instanceId` (int, optional): VCam Instance ID.
+- `path` (string, optional): VCam hierarchy path.
 - `extensionName` (string): Type name of the extension.
 
 ### `cinemachine_set_active`
 Force activation of a VCam (SOLO) by setting highest priority.
 **Parameters:**
 - `vcamName` (string): Name of the VCam to activate.
+- `instanceId` (int, optional): VCam Instance ID.
+- `path` (string, optional): VCam hierarchy path.
 
 ### `cinemachine_create_mixing_camera`
 Create a Cinemachine Mixing Camera.
@@ -206,6 +231,8 @@ Add a state mapping instruction to a State Driven Camera.
 Configure Noise settings (Basic Multi Channel Perlin).
 **Parameters:**
 - `vcamName` (string): Name of the VCam.
+- `instanceId` (int, optional): VCam Instance ID.
+- `path` (string, optional): VCam hierarchy path.
 - `amplitudeGain` (float): Noise Amplitude.
 - `frequencyGain` (float): Noise Frequency.
 

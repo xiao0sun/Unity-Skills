@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -15,13 +15,12 @@ namespace UnitySkills
 {
 #if CINEMACHINE_2 || CINEMACHINE_3
     /// <summary>
-    /// Adapter layer that abstracts Cinemachine 2.x vs 3.x API differences.
-    /// All version-specific #if blocks are concentrated here so that CinemachineSkills
-    /// methods can be written without conditional compilation.
+    /// Adapter layer that shields the API differences between Cinemachine 2.x and 3.x.
+    /// All version-related #if branches are concentrated here, so CinemachineSkills methods need no conditional compilation.
     /// </summary>
     internal static class CinemachineAdapter
     {
-        // ===================== VCam Type =====================
+        // ===================== VCam type =====================
 
 #if CINEMACHINE_3
         public const string VCamTypeName = "CinemachineCamera";
@@ -38,13 +37,13 @@ namespace UnitySkills
 #endif
         }
 
-        /// <summary>Returns null if vcam found, or an error object if not.</summary>
+        /// <summary>Returns null when the vcam is found, otherwise returns an error object.</summary>
         public static object VCamOrError(MonoBehaviour vcam)
         {
             return vcam != null ? null : new { error = $"Not a {VCamTypeName}" };
         }
 
-        // ===================== Follow / LookAt =====================
+        // ===================== Follow / LookAt targets =====================
 
         public static Transform GetFollow(MonoBehaviour vcam)
         {
@@ -102,7 +101,7 @@ namespace UnitySkills
 #endif
         }
 
-        // ===================== Lens =====================
+        // ===================== Lens settings =====================
 
         public static LensSettings GetLens(MonoBehaviour vcam)
         {
@@ -122,7 +121,7 @@ namespace UnitySkills
 #endif
         }
 
-        // ===================== Noise =====================
+        // ===================== Noise / shake =====================
 
         public static void SetNoiseGains(CinemachineBasicMultiChannelPerlin perlin, float amplitude, float frequency)
         {
@@ -135,7 +134,7 @@ namespace UnitySkills
 #endif
         }
 
-        // ===================== Brain =====================
+        // ===================== Brain reads =====================
 
         public static string GetBrainUpdateMethod(CinemachineBrain brain)
         {
@@ -146,7 +145,7 @@ namespace UnitySkills
 #endif
         }
 
-        // ===================== Assembly / Type Lookup =====================
+        // ===================== Assembly / type lookup =====================
 
         public static System.Reflection.Assembly CmAssembly =>
 #if CINEMACHINE_3
@@ -252,7 +251,7 @@ namespace UnitySkills
             return type;
         }
 
-        // ===================== Find All VCams =====================
+        // ===================== Find all VCams =====================
 
         public static MonoBehaviour[] FindAllVCams()
         {
@@ -271,7 +270,7 @@ namespace UnitySkills
             return max;
         }
 
-        // ===================== Brain Write =====================
+        // ===================== Brain writes =====================
 
         public static CinemachineBrain FindBrain()
         {
@@ -354,7 +353,7 @@ namespace UnitySkills
 #endif
         }
 
-        // ===================== Blend Definition =====================
+        // ===================== Blend definitions =====================
 
         public static CinemachineBlendDefinition GetBrainDefaultBlend(CinemachineBrain brain)
         {
@@ -407,7 +406,7 @@ namespace UnitySkills
             return blend;
         }
 
-        // ===================== StateDriven Instruction =====================
+        // ===================== StateDriven instructions =====================
 
         public static void AddStateDrivenInstruction(
             CinemachineStateDrivenCamera stateCam,
@@ -532,7 +531,7 @@ namespace UnitySkills
             return go;
         }
 
-        // ===================== Pipeline Components =====================
+        // ===================== Pipeline components =====================
 
         public static bool TryParsePipelineStage(string stageName, out CinemachineCore.Stage stage)
         {
@@ -566,8 +565,8 @@ namespace UnitySkills
             stage = attribute.Stage;
             return stage >= CinemachineCore.Stage.Body && stage <= CinemachineCore.Stage.Noise;
 #else
-            // CM2 has no pipeline-stage attribute. This is the same discovery mechanism used by
-            // its editor package: instantiate the component briefly and read its Stage property.
+            // CM2 has no pipeline-stage attribute, so fall back to the same detection trick its
+            // editor package uses: temporarily instantiate the component and read its Stage property.
             var probe = new GameObject("UnitySkills Cinemachine Stage Probe")
             {
                 hideFlags = HideFlags.HideAndDontSave

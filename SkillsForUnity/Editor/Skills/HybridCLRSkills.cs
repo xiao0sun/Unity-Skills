@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using UnityEditorInternal;
 using System;
@@ -12,19 +12,17 @@ using Newtonsoft.Json;
 namespace UnitySkills
 {
     /// <summary>
-    /// HybridCLR (com.code-philosophy.hybridclr) Editor skills — C# hot-update prebuild
-    /// orchestration: settings read/write, il2cpp_plus install probing, hot-update assembly
-    /// compilation, and generation-pipeline execution.
+    /// HybridCLR (com.code-philosophy.hybridclr) editor skills: pre-build orchestration for C# hot-updates —
+    /// settings read/write, il2cpp_plus install detection, hot-update assembly compilation, generation pipeline execution.
     ///
-    /// The package is optional and this module keeps ZERO direct references to it: every call
-    /// resolves through reflection against the `HybridCLR.Editor` assembly, so the UnitySkills
-    /// Editor assembly compiles identically with or without HybridCLR present. `hybridclr_status`
-    /// works either way; every other skill returns <see cref="NoHybridCLR"/> when the package
-    /// is missing.
+    /// The package is optional, and this module keeps zero direct references to it: every call reaches
+    /// HybridCLR.Editor via reflection, so the UnitySkills editor assembly compiles the same whether or not
+    /// HybridCLR is installed. hybridclr_status works in both cases; every other skill in this module returns
+    /// <see cref="NoHybridCLR"/> when the package is missing.
     ///
-    /// API anchors follow hybridclr_unity 8.12.0 Editor source (HybridCLR.Editor.SettingsUtil,
-    /// HybridCLR.Editor.Settings.HybridCLRSettings, HybridCLR.Editor.Commands.*,
-    /// HybridCLR.Editor.Installer.InstallerController).
+    /// The APIs used via reflection are pinned to the hybridclr_unity 8.12.0 editor source
+    /// (HybridCLR.Editor.SettingsUtil, HybridCLR.Editor.Settings.HybridCLRSettings,
+    ///  HybridCLR.Editor.Commands.*, HybridCLR.Editor.Installer.InstallerController).
     /// </summary>
     public static class HybridCLRSkills
     {
@@ -36,12 +34,12 @@ namespace UnitySkills
         private const string GeneratedSourcesKey = "hybridclr.generatedSources";
         private const string FileSetKey = "hybridclr.fileSet";
 
-        // Backups written by hybridclr_compile_dlls / hybridclr_copy_hotupdate_dlls live outside the
-        // workflow blob store, so nothing prunes them for us. Keep a bounded ring per label.
+        // Backups written by hybridclr_compile_dlls / hybridclr_copy_hotupdate_dlls don't live in the workflow
+        // blob store, so nothing else cleans them up — keep a bounded ring buffer per label instead.
         private const int MaxBackupGenerations = 5;
 
         // ==================================================================================
-        // Reflection layer — resolves HybridCLR.Editor lazily, never links against it.
+        // Reflection layer — lazily resolves HybridCLR.Editor, never statically linked against it.
         // ==================================================================================
 
         private static Assembly _editorAssembly;
@@ -101,7 +99,7 @@ namespace UnitySkills
             docs = DocsUrl
         };
 
-        /// <summary>Reads a public static property off a HybridCLR type; returns null on any failure.</summary>
+        /// <summary>Reads a public static property on a HybridCLR type; any failure returns null.</summary>
         private static object StaticProp(Type type, string name)
         {
             try
@@ -129,8 +127,8 @@ namespace UnitySkills
             }
             catch (Exception ex)
             {
-                // SettingsUtil.HotUpdateAssemblyNamesIncludePreserved throws on duplicate preserved
-                // names, which is a user configuration error worth surfacing rather than swallowing.
+                // SettingsUtil.HotUpdateAssemblyNamesIncludePreserved throws when preserved names collide;
+                // that's a configuration error worth surfacing to the user, not one to swallow.
                 error = (ex.InnerException ?? ex).Message;
                 return null;
             }
@@ -206,8 +204,8 @@ namespace UnitySkills
             string.IsNullOrEmpty(path) ? path : path.Replace('\\', '/').TrimEnd('/');
 
         /// <summary>
-        /// HybridCLR stores output roots as project-relative strings ("HybridCLRData/HotUpdateDlls"),
-        /// but also accepts absolute ones. Resolve against the project root either way.
+        /// HybridCLR stores its output root as a project-relative path (e.g. "HybridCLRData/HotUpdateDlls"),
+        /// but also accepts an absolute one. Both cases are resolved uniformly against the project root.
         /// </summary>
         private static string ResolveProjectPath(string maybeRelative)
         {
@@ -290,7 +288,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Workflow snapshot restorers (registered on domain load)
+        // Workflow snapshot restorers (registered at domain load)
         // ==================================================================================
 
         private sealed class SettingsSnapshot
@@ -338,9 +336,8 @@ namespace UnitySkills
         private static void RegisterSettingRestorers()
         {
             WorkflowSettingRestorerRegistry.Register(SettingsKey, CaptureSettingsJson, ApplySettingsJson);
-            // Generated sources and DLL file sets have no meaningful "read current value" form —
-            // capturing a redo value would mean producing another backup — so both use the
-            // restorer-only overload.
+            // Generated source files and DLL file sets have no meaningful "read current value" form — sampling
+            // for redo would mean re-running the backup — so both are registered with the restore-only overload.
             WorkflowSettingRestorerRegistry.Register(GeneratedSourcesKey, ApplyGeneratedSources);
             WorkflowSettingRestorerRegistry.Register(FileSetKey, ApplyFileSetBackup);
         }
@@ -471,8 +468,8 @@ namespace UnitySkills
 
         /// <summary>
         /// The two Assets-side artifacts HybridCLR regenerates: link.xml and AOTGenericReferences.cs.
-        /// Everything else the pipeline emits lands in HybridCLRData/ or LocalIl2CppData-*/ and is a
-        /// rebuildable intermediate, so it is deliberately outside the snapshot.
+        /// Every other pipeline output lands under HybridCLRData/ or LocalIl2CppData-*/, which is a rebuildable
+        /// intermediate product, so it's deliberately excluded from the snapshot.
         /// </summary>
         private static List<string> GeneratedSourceFiles()
         {
@@ -484,7 +481,7 @@ namespace UnitySkills
             return result;
         }
 
-        /// <summary>Resolves a settings field holding an Assets-relative path. Null when unset.</summary>
+        /// <summary>Resolves a settings field that stores an Assets-relative path; returns null if unset.</summary>
         private static string AssetsRelativeSetting(string fieldName)
         {
             var s = SettingsInstance();
@@ -619,7 +616,7 @@ namespace UnitySkills
 
             var tracked = new HashSet<string>(snap.files ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
 
-            // Remove whatever the operation added on top of the tracked set.
+            // First delete any files this operation added outside the tracked set.
             if (Directory.Exists(snap.targetDir))
             {
                 foreach (var f in Directory.GetFiles(snap.targetDir, "*", SearchOption.TopDirectoryOnly))
@@ -639,7 +636,7 @@ namespace UnitySkills
                 }
             }
 
-            // Put the pre-operation files back.
+            // Then put back the files that existed before the operation.
             if (tracked.Count > 0 && !string.IsNullOrEmpty(snap.backupDir) && Directory.Exists(snap.backupDir))
             {
                 try { Directory.CreateDirectory(snap.targetDir); } catch { }
@@ -674,7 +671,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // A. Environment (3 skills) — hybridclr_status works WITHOUT the package
+        // A. Environment (3 skills) — hybridclr_status also works without the package
         // ==================================================================================
 
         [UnitySkill("hybridclr_status",
@@ -953,9 +950,9 @@ namespace UnitySkills
                     "HybridCLR: Settings");
             }
 
-            // In-memory revert for Ctrl+Z. The file-side revert comes from the workflow restorer —
-            // this object lives in ProjectSettings/ and is written by HybridCLRSettings.Save(),
-            // which Unity's undo stack does not drive.
+            // This step only handles the Ctrl+Z in-memory rollback; the file-side rollback is done by the
+            // workflow restorer — this object lives under ProjectSettings/, written to disk by
+            // HybridCLRSettings.Save(), and isn't driven by Unity's undo stack.
             if (settings is UnityEngine.Object settingsObject)
                 Undo.RegisterCompleteObjectUndo(settingsObject, "HybridCLR Settings");
 
@@ -1172,7 +1169,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // D. Compile & generate (3 skills) — long-running, main-thread blocking
+        // D. Compilation and generation (3 skills) — long-running, blocks the main thread
         // ==================================================================================
 
         [UnitySkill("hybridclr_compile_dlls",
@@ -1182,7 +1179,8 @@ namespace UnitySkills
             Outputs = new[] { "success", "buildTarget", "outputDir", "files", "elapsedSeconds" },
             RequiresPackages = new[] { PackageId },
             TracksWorkflow = true, SkipAutoPresnapshot = true,
-            MutatesAssets = true, SupportsDryRun = false, RiskLevel = "high")]
+            MutatesAssets = true, SupportsDryRun = false, RiskLevel = "high",
+            LongRunning = true)]
         public static object CompileDlls(string buildTarget = null, bool developmentBuild = false)
         {
             if (!Installed) return NoHybridCLR();
@@ -1232,8 +1230,8 @@ namespace UnitySkills
             }
             finally
             {
-                // CompileDllCommand only clears the progress bar on Unity 2022; do it unconditionally
-                // so a failure part-way through cannot leave the Editor with a stuck bar.
+                // CompileDllCommand only clears the progress bar on Unity 2022, so clear it unconditionally
+                // again here, to avoid leaving the editor stuck on a progress bar after a mid-run failure.
                 try { EditorUtility.ClearProgressBar(); } catch { }
             }
 
@@ -1260,7 +1258,8 @@ namespace UnitySkills
             Outputs = new[] { "success", "buildTarget", "elapsedSeconds", "generatedArtifacts" },
             RequiresPackages = new[] { PackageId },
             TracksWorkflow = true, SkipAutoPresnapshot = true,
-            MutatesAssets = true, MayTriggerReload = true, SupportsDryRun = false, RiskLevel = "high")]
+            MutatesAssets = true, MayTriggerReload = true, SupportsDryRun = false, RiskLevel = "high",
+            LongRunning = true)]
         public static object GenerateAll()
         {
             if (!Installed) return NoHybridCLR();
@@ -1275,8 +1274,8 @@ namespace UnitySkills
             if (EditorApplication.isCompiling)
                 return new { error = "Unity is still compiling scripts. Wait for compilation to finish before running the prebuild pipeline." };
 
-            // The aot_dlls stage inside GenerateAll runs a scripts-only BuildPipeline.BuildPlayer,
-            // which throws if another build is already running.
+            // GenerateAll's internal aot_dlls stage runs a scripts-only BuildPipeline.BuildPlayer once;
+            // it throws if a build is already in progress.
             if (BuildPipeline.isBuildingPlayer)
                 return new { error = "A player build is already in progress. GenerateAll runs its own scripts-only player build internally and cannot be nested." };
 
@@ -1341,9 +1340,9 @@ namespace UnitySkills
             };
         }
 
-        // Step order matches PrebuildCommand.GenerateAll. "aot_dlls" is the expensive one: it runs a
-        // scripts-only BuildPipeline.BuildPlayer into a temp project and temporarily flips several
-        // EditorUserBuildSettings flags, restoring them in a finally block.
+        // Step order matches PrebuildCommand.GenerateAll. "aot_dlls" is the most time-consuming step:
+        // it runs a scripts-only BuildPipeline.BuildPlayer against a temp project, temporarily flipping
+        // several EditorUserBuildSettings flags along the way and restoring them in a finally block.
         private static readonly Dictionary<string, (string Type, string Method, bool TakesTarget, bool TouchesAssets)> GenerateSteps =
             new Dictionary<string, (string Type, string Method, bool TakesTarget, bool TouchesAssets)>(StringComparer.OrdinalIgnoreCase)
             {
@@ -1363,7 +1362,8 @@ namespace UnitySkills
             RequiresInput = new[] { "step" },
             RequiresPackages = new[] { PackageId },
             TracksWorkflow = true, SkipAutoPresnapshot = true,
-            MutatesAssets = true, MayTriggerReload = true, SupportsDryRun = false, RiskLevel = "high")]
+            MutatesAssets = true, MayTriggerReload = true, SupportsDryRun = false, RiskLevel = "high",
+            LongRunning = true)]
         public static object GenerateStep(string step, string buildTarget = null)
         {
             if (!Installed) return NoHybridCLR();
@@ -1727,8 +1727,8 @@ namespace UnitySkills
             var patched = ParsePatchedAotAssemblyList(content);
             var fi = new FileInfo(absolute);
 
-            // HybridCLR writes patchAOTAssemblies without the .dll suffix but emits module names
-            // (which carry it) into PatchedAOTAssemblyList, so compare on the stem.
+            // HybridCLR writes patchAOTAssemblies without a .dll suffix, but PatchedAOTAssemblyList is written
+            // with module names that include the suffix, so it must be stripped before comparing.
             string Stem(string s) => s.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ? s.Substring(0, s.Length - 4) : s;
             var patchedStems = new HashSet<string>(patched.Select(Stem), StringComparer.OrdinalIgnoreCase);
             var configuredStems = new HashSet<string>(configured.Select(Stem), StringComparer.OrdinalIgnoreCase);
@@ -1773,8 +1773,8 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Counts the `// xxx` lines inside one of the writer's `// {{ label` ... `// }}` blocks.
-        /// The generator emits generic types as comments only, so this is the sole way to size them.
+        /// Counts the <c>// xxx</c> lines inside a generator's <c>// {{ label</c> ... <c>// }}</c> block.
+        /// Generic types are only emitted as comments, so this is the only way to count how many there are.
         /// </summary>
         private static int CountCommentBlockLines(string content, string blockHeader)
         {
@@ -1793,8 +1793,8 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // InstallerController handle — constructing it reads package metadata off disk and can
-        // throw, so every access funnels through here.
+        // InstallerController handle — constructing it reads package metadata from disk and can throw,
+        // so all access is funneled through here.
         // ==================================================================================
 
         private sealed class InstallerHandle

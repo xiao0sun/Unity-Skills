@@ -1,5 +1,6 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -12,11 +13,10 @@ using UnitySkills.Internal;
 namespace UnitySkills
 {
     /// <summary>
-    /// DOTween Pro DOTweenAnimation editor-time configuration skills.
-    /// All DOTween / DOTweenAnimation access is via reflection — the assembly
-    /// compiles even without DOTween installed. DOTWEEN / DOTWEEN_PRO scripting
-    /// defines are maintained automatically by DOTweenPresenceDetector; they act
-    /// as fast-path signals (detector-less short-circuit), not compile gates.
+    /// DOTween Pro's DOTweenAnimation editor-time configuration skills.
+    /// All access to DOTween / DOTweenAnimation goes through reflection, so the assembly still compiles when DOTween isn't installed.
+    /// The two scripting defines DOTWEEN / DOTWEEN_PRO are maintained automatically by DOTweenPresenceDetector;
+    /// they're just a fast-path detection signal (skipping detection), not a compile switch.
     /// </summary>
     public static class DOTweenSkills
     {
@@ -24,7 +24,7 @@ namespace UnitySkills
         private static object NoDOTweenPro() => DOTweenReflectionHelper.NoDOTweenPro();
 
         // ==================================================================================
-        // Free runtime / project diagnostics
+        // Free version runtime / project diagnostics
         // ==================================================================================
 
         [UnitySkill("dotween_get_status",
@@ -300,7 +300,8 @@ namespace UnitySkills
             "Add a DOTweenAnimation component to a GameObject and configure it (DOTween Pro only). " +
             "animationType: Move/LocalMove/Rotate/LocalRotate/Scale/Punch*/Shake*/AnchorPos3D/AnchorPos/UIWidthHeight/Fade/FillAmount/CameraOrthoSize/CameraFieldOfView/Value/Color/CameraBackgroundColor/Text/UIRect. " +
             "Supply the matching endValue* param for the type (V3/V2/Float/Color/String/Rect). " +
-            "ease: one of 38 Ease enum names (OutQuad default). loopType: Yoyo/Restart/Incremental.",
+            "ease: one of 38 Ease enum names (OutQuad default). loopType: Yoyo/Restart/Incremental. " +
+            "An unknown animationType/ease/loopType, a duration <= 0, a loops value other than -1 or >= 1, and a negative delay are all rejected before anything is added to the scene.",
             Category = SkillCategory.DOTween, Operation = SkillOperation.Create,
             Tags = new[] { "dotween", "animation", "tween", "ui", "pro", "add" },
             Outputs = new[] { "success", "component", "animationIndex" },
@@ -328,6 +329,9 @@ namespace UnitySkills
         {
             if (!DOTweenReflectionHelper.IsDOTweenInstalled) return NoDOTween();
             if (!DOTweenReflectionHelper.IsDOTweenProInstalled) return NoDOTweenPro();
+
+            if (ValidateAnimationSpec(animationType, ease, loopType, duration, loops, delay) is object specErr)
+                return specErr;
 
             var (go, err) = GameObjectFinder.FindOrError(name: target, instanceId: targetInstanceId, path: targetPath);
             if (err != null) return err;
@@ -371,6 +375,12 @@ namespace UnitySkills
             var targets = ParseTargetList(targetsJson);
             if (targets == null) return new { error = "targetsJson must be a JSON array of strings" };
 
+            // Reject once up front rather than per-item: these parameters are shared by every target, so a
+            // per-item failure would just echo the same caller error N times, and by the time the caller sees it
+            // the earlier targets have already been added.
+            if (ValidateAnimationSpec(animationType, ease, loopType, duration, loops, delay) is object specErr)
+                return specErr;
+
             var added = new List<object>();
             var failed = new List<object>();
             foreach (var t in targets)
@@ -389,7 +399,7 @@ namespace UnitySkills
 
         [UnitySkill("dotween_pro_stagger_animations",
             "Batch-add DOTweenAnimation with incrementing delay (UI cascade entrance). " +
-            "Each target i gets delay = baseDelay + i * staggerDelay.",
+            "Each target i gets delay = baseDelay + i * staggerDelay; both must be >= 0 (DOTween clamps a negative delay away silently, so it is rejected instead).",
             Category = SkillCategory.DOTween, Operation = SkillOperation.Create,
             Tags = new[] { "dotween", "animation", "stagger", "cascade", "ui", "pro" },
             Outputs = new[] { "success", "added" },
@@ -418,6 +428,13 @@ namespace UnitySkills
             var targets = ParseTargetList(targetsJson);
             if (targets == null) return new { error = "targetsJson must be a JSON array of strings" };
 
+            // A negative baseDelay / staggerDelay must be rejected: DOTween silently clamps a negative delay
+            // away, so the staggered cascade effect reported back to the caller (and the per-item echoed delay) wouldn't actually exist.
+            if (InvalidNonNegativeError(baseDelay, "baseDelay") is object baseErr) return baseErr;
+            if (InvalidNonNegativeError(staggerDelay, "staggerDelay") is object staggerErr) return staggerErr;
+            if (ValidateAnimationSpec(animationType, ease, loopType, duration, loops, baseDelay) is object specErr)
+                return specErr;
+
             var added = new List<object>();
             var failed = new List<object>();
             for (int i = 0; i < targets.Count; i++)
@@ -435,111 +452,222 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // B. Tuning — 3 dedicated + 2 generic
+        // B. Tuning — 3 dedicated setters + 2 generic ones
         // ==================================================================================
 
         [UnitySkill("dotween_pro_set_duration",
-            "Set the duration (seconds) of an existing DOTweenAnimation. " +
-            "Use animationIndex when a GameObject has multiple DOTweenAnimation components (default 0).",
+            "Set the duration (seconds) of an existing DOTweenAnimation. duration is required and must be > 0. " +
+            "Use animationIndex when a GameObject has multiple DOTweenAnimation components (default 0) — take the index from dotween_pro_list_animations, which numbers per GameObject in component order. " +
+            "The response echoes 'applied' plus the value read back off the component.",
             Category = SkillCategory.DOTween, Operation = SkillOperation.Modify,
             Tags = new[] { "dotween", "duration", "tweak", "animation", "pro" },
-            Outputs = new[] { "success" },
-            RequiresInput = new[] { "gameObject" },
+            Outputs = new[] { "success", "applied", "duration", "gameObject", "animationIndex" },
+            RequiresInput = new[] { "gameObject", "duration" },
             TracksWorkflow = true, MutatesScene = true, RiskLevel = "low")]
         public static object DOTweenProSetDuration(
             string target = null, int targetInstanceId = 0, string targetPath = null,
-            int animationIndex = 0, float duration = 1f)
+            int animationIndex = 0, float? duration = null)
         {
+            // Validate the parameter domain before resolving the target: an invalid value is unrelated to
+            // whether Pro is installed, so checking here lets this rejection be observed even without the
+            // Asset Store package. duration is both nullable and listed in RequiresInput: if it were declared as
+            // float duration = 1f, omitting it would silently reset the animation to 1s and still report
+            // success — the CLR default value is indistinguishable from an explicit 1.
+            if (Validate.Required(duration, "duration") is object missing) return missing;
+            if (InvalidPositiveError(duration.Value, "duration") is object invalid) return invalid;
+
             var (comp, err) = ResolveAnimationComponent(target, targetInstanceId, targetPath, animationIndex);
             if (err != null) return err;
 
             Undo.RecordObject(comp, "DOTween set duration");
-            if (!DOTweenReflectionHelper.SetFieldByCandidates(comp, DOTweenReflectionHelper.DurationFieldCandidates, duration))
+            if (!DOTweenReflectionHelper.SetFieldByCandidates(comp, DOTweenReflectionHelper.DurationFieldCandidates, duration.Value))
                 return new { error = "Failed to set duration on DOTweenAnimation" };
             WorkflowManager.SnapshotObject(comp);
             EditorUtility.SetDirty(comp);
-            return new { success = true };
+            return new
+            {
+                success = true,
+                gameObject = comp.gameObject.name,
+                animationIndex,
+                applied = new[] { "duration" },
+                duration = DOTweenReflectionHelper.GetFieldByCandidates(comp, DOTweenReflectionHelper.DurationFieldCandidates)
+            };
         }
 
         [UnitySkill("dotween_pro_set_ease",
-            "Set the ease of an existing DOTweenAnimation (Ease enum name, or easeCurveJson for a custom AnimationCurve).",
+            "Set the ease of an existing DOTweenAnimation (Ease enum name, or easeCurveJson for a custom AnimationCurve — easeCurveJson wins when both are sent). " +
+            "An unknown ease name or an unparseable easeCurveJson is rejected with the accepted values; the response echoes 'applied' plus the ease read back off the component.",
             Category = SkillCategory.DOTween, Operation = SkillOperation.Modify,
             Tags = new[] { "dotween", "ease", "curve", "animation", "pro" },
-            Outputs = new[] { "success" },
+            Outputs = new[] { "success", "applied", "ease", "gameObject", "animationIndex" },
             RequiresInput = new[] { "gameObject" },
             TracksWorkflow = true, MutatesScene = true, RiskLevel = "low")]
         public static object DOTweenProSetEase(
             string target = null, int targetInstanceId = 0, string targetPath = null,
             int animationIndex = 0, string ease = "OutQuad", string easeCurveJson = null)
         {
+            // An easeCurveJson that is sent but fails to parse must be rejected before touching the component:
+            // otherwise it would fall into the branch that sets ease by name, install OutQuad, and still report
+            // success:true — that's a silently wrong ease, not a rejection.
+            AnimationCurve curve = null;
+            if (!string.IsNullOrEmpty(easeCurveJson) &&
+                !DOTweenReflectionHelper.TryParseEaseCurve(easeCurveJson, out curve))
+            {
+                return SkillParamUtil.InvalidValueError(easeCurveJson, "easeCurveJson", new[]
+                {
+                    "[{\"time\":0,\"value\":0},{\"time\":1,\"value\":1}]",
+                    "JsonUtility-serialized AnimationCurve JSON",
+                });
+            }
+
             var (comp, err) = ResolveAnimationComponent(target, targetInstanceId, targetPath, animationIndex);
             if (err != null) return err;
 
+            // The ease name must be validated against the enum this DOTween version actually declares, and this
+            // must complete before the first write — so a rejected name leaves no changes on the component.
+            if (curve == null &&
+                !DOTweenReflectionHelper.EnumFieldAccepts(comp.GetType(), DOTweenReflectionHelper.EaseFieldCandidates, ease))
+            {
+                return SkillParamUtil.InvalidValueError(ease, "ease",
+                    DOTweenReflectionHelper.EnumNamesForField(comp.GetType(), DOTweenReflectionHelper.EaseFieldCandidates));
+            }
+
             Undo.RecordObject(comp, "DOTween set ease");
-            if (!DOTweenReflectionHelper.TrySetEase(comp, ease, easeCurveJson))
-                return new { error = $"Failed to set ease '{ease}'. Check the Ease enum name (e.g. OutQuad/InOutElastic) or easeCurveJson format." };
+            if (curve != null)
+            {
+                if (!DOTweenReflectionHelper.TrySetEaseCurve(comp, curve))
+                    return new { error = "Failed to install the custom ease curve: this DOTweenAnimation has no easeCurve field or no INTERNAL_Custom Ease member, so the curve would be ignored at runtime." };
+            }
+            else if (!DOTweenReflectionHelper.TrySetEase(comp, ease))
+            {
+                return new { error = $"Failed to set ease '{ease}' on DOTweenAnimation" };
+            }
             WorkflowManager.SnapshotObject(comp);
             EditorUtility.SetDirty(comp);
-            return new { success = true };
+            return new
+            {
+                success = true,
+                gameObject = comp.gameObject.name,
+                animationIndex,
+                applied = new[] { curve != null ? "easeCurveJson" : "ease" },
+                ease = DOTweenReflectionHelper.GetFieldByCandidates(comp, DOTweenReflectionHelper.EaseFieldCandidates)?.ToString()
+            };
         }
 
         [UnitySkill("dotween_pro_set_loops",
-            "Set loops count and (optional) loopType for an existing DOTweenAnimation. loops=-1 means infinite.",
+            "Set loops count and/or loopType for an existing DOTweenAnimation. loops=-1 means infinite; DOTween has no other negative loop count, so anything below -1 (and 0) is rejected. " +
+            "Send loops, loopType, or both — omitting both is refused rather than silently resetting loops to 1. The response echoes 'applied' plus the values read back off the component.",
             Category = SkillCategory.DOTween, Operation = SkillOperation.Modify,
             Tags = new[] { "dotween", "loops", "loop", "animation", "pro" },
-            Outputs = new[] { "success" },
-            RequiresInput = new[] { "gameObject" },
+            Outputs = new[] { "success", "applied", "loops", "loopType", "gameObject", "animationIndex" },
+            RequiresInput = new[] { "gameObject", "loops|loopType" },
             TracksWorkflow = true, MutatesScene = true, RiskLevel = "low")]
         public static object DOTweenProSetLoops(
             string target = null, int targetInstanceId = 0, string targetPath = null,
-            int animationIndex = 0, int loops = 1, string loopType = null)
+            int animationIndex = 0, int? loops = null, string loopType = null)
         {
+            // Both parameters must be nullable/optional: this setter covers two unrelated halves — if it were
+            // declared as int loops = 1, a call sending only loopType would silently turn infinite looping into
+            // playing once. Sending neither is a caller error, not a no-op.
+            if (!loops.HasValue && string.IsNullOrEmpty(loopType))
+                return MissingEitherError("loops", "loopType");
+            if (loops.HasValue && InvalidLoopsError(loops.Value) is object invalidLoops) return invalidLoops;
+
             var (comp, err) = ResolveAnimationComponent(target, targetInstanceId, targetPath, animationIndex);
             if (err != null) return err;
 
+            // Must validate before the first write: writing loops first and then rejecting loopType would leave
+            // half the change applied under a single error response.
+            if (!string.IsNullOrEmpty(loopType) &&
+                !DOTweenReflectionHelper.EnumFieldAccepts(comp.GetType(), DOTweenReflectionHelper.LoopTypeFieldCandidates, loopType))
+            {
+                return SkillParamUtil.InvalidValueError(loopType, "loopType",
+                    DOTweenReflectionHelper.EnumNamesForField(comp.GetType(), DOTweenReflectionHelper.LoopTypeFieldCandidates));
+            }
+
             Undo.RecordObject(comp, "DOTween set loops");
-            if (!DOTweenReflectionHelper.SetFieldByCandidates(comp, DOTweenReflectionHelper.LoopsFieldCandidates, loops))
-                return new { error = "Failed to set loops field" };
-            if (!string.IsNullOrEmpty(loopType) && !DOTweenReflectionHelper.TrySetLoopType(comp, loopType))
-                return new { error = $"Failed to set loopType '{loopType}' (valid: Restart/Yoyo/Incremental)" };
+            var applied = new List<string>();
+            if (loops.HasValue)
+            {
+                if (!DOTweenReflectionHelper.SetFieldByCandidates(comp, DOTweenReflectionHelper.LoopsFieldCandidates, loops.Value))
+                    return new { error = "Failed to set loops field" };
+                applied.Add("loops");
+            }
+            if (!string.IsNullOrEmpty(loopType))
+            {
+                if (!DOTweenReflectionHelper.TrySetLoopType(comp, loopType))
+                    return new { error = $"Failed to set loopType '{loopType}' on DOTweenAnimation" };
+                applied.Add("loopType");
+            }
             WorkflowManager.SnapshotObject(comp);
             EditorUtility.SetDirty(comp);
-            return new { success = true };
+            return new
+            {
+                success = true,
+                gameObject = comp.gameObject.name,
+                animationIndex,
+                applied = applied.ToArray(),
+                loops = DOTweenReflectionHelper.GetFieldByCandidates(comp, DOTweenReflectionHelper.LoopsFieldCandidates),
+                loopType = DOTweenReflectionHelper.GetFieldByCandidates(comp, DOTweenReflectionHelper.LoopTypeFieldCandidates)?.ToString()
+            };
         }
 
         [UnitySkill("dotween_pro_set_animation_field",
             "Generic field setter for a DOTweenAnimation component. " +
             "Use the dedicated skills (dotween_pro_set_duration / _set_ease / _set_loops) for those common fields — this skill rejects duration/ease/easeType/easeCurve/loops/loopType. " +
             "Valid targets: delay / isRelative / isFrom / autoPlay / autoKill / id / endValueV3 / endValueFloat / endValueColor / optionalFloat0 / etc. " +
-            "fieldValue is a string (vec/color parsed automatically).",
+            "fieldValue is required (vec/color parsed automatically) — send \"\" to deliberately clear a string field. " +
+            "An unknown fieldName is rejected with the settable field list; the response echoes 'applied' plus the value read back off the component.",
             Category = SkillCategory.DOTween, Operation = SkillOperation.Modify,
             Tags = new[] { "dotween", "field", "reflection", "animation", "pro" },
-            Outputs = new[] { "success" },
-            RequiresInput = new[] { "gameObject" },
+            Outputs = new[] { "success", "applied", "fieldName", "fieldValue", "gameObject", "animationIndex" },
+            RequiresInput = new[] { "gameObject", "fieldName", "fieldValue" },
             TracksWorkflow = true, MutatesScene = true, RiskLevel = "low")]
         public static object DOTweenProSetAnimationField(
             string target = null, int targetInstanceId = 0, string targetPath = null,
             int animationIndex = 0, string fieldName = null, string fieldValue = null)
         {
-            if (string.IsNullOrEmpty(fieldName))
-                return new { error = "fieldName is required" };
+            if (Validate.Required(fieldName, "fieldName") is object missingName) return missingName;
             if (DOTweenReflectionHelper.ReservedByDedicatedSkills.Contains(fieldName))
                 return new
                 {
                     error = $"Field '{fieldName}' must be modified via the dedicated skill " +
                             "(dotween_pro_set_duration / dotween_pro_set_ease / dotween_pro_set_loops). " +
-                            "This keeps intent explicit and avoids accidental ease/loop type mismatches."
+                            "This keeps intent explicit and avoids accidental ease/loop type mismatches.",
+                    errorCode = SkillParamUtil.SemanticInvalidCode,
+                    parameter = "fieldName",
                 };
+            // Omitting fieldValue must not be allowed through: it would flow through as null down to the
+            // reflection layer, clearing the field while the response still reports success.
+            // Only an explicit empty string "" means "clear it" — the router keeps the two clearly separate
+            // (an explicit empty string binds as-is, a missing key binds the CLR default), so intent isn't guessed here.
+            if (fieldValue == null)
+                return MissingFieldValueError(fieldName);
 
             var (comp, err) = ResolveAnimationComponent(target, targetInstanceId, targetPath, animationIndex);
             if (err != null) return err;
 
+            // "field doesn't exist" and "value doesn't convert" must be reported separately: merging them into
+            // one bool would make the latter case also blame fieldName, when the real problem is fieldValue.
+            var field = DOTweenReflectionHelper.ResolveField(comp.GetType(), fieldName);
+            if (field == null)
+                return SkillParamUtil.InvalidValueError(fieldName, "fieldName",
+                    DOTweenReflectionHelper.SettableFieldNames(comp.GetType()));
+
             Undo.RecordObject(comp, $"DOTween set {fieldName}");
             if (!DOTweenReflectionHelper.SetFieldByName(comp, fieldName, fieldValue))
-                return new { error = $"Failed to set '{fieldName}' on DOTweenAnimation. Run dotween_pro_get_animation to inspect available fields." };
+                return SkillParamUtil.InvalidValueError(fieldValue, "fieldValue", AcceptedFieldValues(field.FieldType));
             WorkflowManager.SnapshotObject(comp);
             EditorUtility.SetDirty(comp);
-            return new { success = true };
+            return new
+            {
+                success = true,
+                gameObject = comp.gameObject.name,
+                animationIndex,
+                applied = new[] { fieldName },
+                fieldName,
+                fieldValue = DOTweenReflectionHelper.DumpFieldValue(comp, fieldName)
+            };
         }
 
         [UnitySkill("dotween_pro_get_animation",
@@ -566,10 +694,11 @@ namespace UnitySkills
         // ==================================================================================
 
         [UnitySkill("dotween_pro_list_animations",
-            "List all DOTweenAnimation components under a target (set recursive=true for the whole hierarchy).",
+            "List all DOTweenAnimation components under a target (set recursive=true for the whole hierarchy). " +
+            "animationIndex is the component order on its own GameObject — the same index every dotween_pro_* setter/remover addresses.",
             Category = SkillCategory.DOTween, Operation = SkillOperation.Query,
             Tags = new[] { "dotween", "list", "animation", "pro" },
-            Outputs = new[] { "animations" },
+            Outputs = new[] { "success", "count", "animations" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object DOTweenProListAnimations(
@@ -596,25 +725,22 @@ namespace UnitySkills
             }
 
             var list = new List<object>();
-            var grouped = comps.GroupBy(c => c.gameObject);
-            foreach (var g in grouped)
+            foreach (var pair in ResolveAuthoritativeIndices(comps, type))
             {
-                int idx = 0;
-                foreach (var c in g)
+                var c = pair.Key;
+                var go = c.gameObject;
+                list.Add(new
                 {
-                    list.Add(new
-                    {
-                        gameObject = g.Key.name,
-                        entityId = UnityObjectIdUtility.GetEntityId(g.Key),
-                        instanceId = UnityObjectIdUtility.GetObjectId(g.Key),
-                        animationIndex = idx++,
-                        animationType = DOTweenReflectionHelper.GetFieldByCandidates(c, DOTweenReflectionHelper.AnimationTypeFieldCandidates)?.ToString(),
-                        duration = DOTweenReflectionHelper.GetFieldByCandidates(c, DOTweenReflectionHelper.DurationFieldCandidates),
-                        ease = DOTweenReflectionHelper.GetFieldByCandidates(c, DOTweenReflectionHelper.EaseFieldCandidates)?.ToString(),
-                        loops = DOTweenReflectionHelper.GetFieldByCandidates(c, DOTweenReflectionHelper.LoopsFieldCandidates),
-                        id = DOTweenReflectionHelper.GetFieldByCandidates(c, DOTweenReflectionHelper.IdFieldCandidates)?.ToString()
-                    });
-                }
+                    gameObject = go.name,
+                    entityId = UnityObjectIdUtility.GetEntityId(go),
+                    instanceId = UnityObjectIdUtility.GetObjectId(go),
+                    animationIndex = pair.Value,
+                    animationType = DOTweenReflectionHelper.GetFieldByCandidates(c, DOTweenReflectionHelper.AnimationTypeFieldCandidates)?.ToString(),
+                    duration = DOTweenReflectionHelper.GetFieldByCandidates(c, DOTweenReflectionHelper.DurationFieldCandidates),
+                    ease = DOTweenReflectionHelper.GetFieldByCandidates(c, DOTweenReflectionHelper.EaseFieldCandidates)?.ToString(),
+                    loops = DOTweenReflectionHelper.GetFieldByCandidates(c, DOTweenReflectionHelper.LoopsFieldCandidates),
+                    id = DOTweenReflectionHelper.GetFieldByCandidates(c, DOTweenReflectionHelper.IdFieldCandidates)?.ToString()
+                });
             }
             return new { success = true, count = list.Count, animations = list };
         }
@@ -677,10 +803,10 @@ namespace UnitySkills
 
         [UnitySkill("dotween_settings_configure",
             "Configure Resources/DOTweenSettings.asset (defaultEaseType/defaultAutoKill/defaultLoopType/safeMode/logBehaviour/tweenersCapacity/sequencesCapacity). " +
-            "Any parameter left null is not modified.",
+            "Any parameter left null is not modified. Fields this DOTween version's DOTweenSettings does not declare are reported in 'unsupported' instead of being silently swallowed as success.",
             Category = SkillCategory.DOTween, Operation = SkillOperation.Modify,
             Tags = new[] { "dotween", "settings", "configure", "capacity", "safemode" },
-            Outputs = new[] { "success", "modified" },
+            Outputs = new[] { "success", "modified", "unsupported" },
             MutatesAssets = true, RiskLevel = "low")]
         public static object DOTweenSettingsConfigure(
             string defaultEaseType = null,
@@ -703,55 +829,44 @@ namespace UnitySkills
                 };
             }
 
-            var modified = new List<string>();
-            if (!string.IsNullOrEmpty(defaultEaseType))
-            {
-                var f = DOTweenReflectionHelper.ResolveField(settings.GetType(), "defaultEaseType");
-                if (f != null && f.FieldType.IsEnum)
-                {
-                    try { f.SetValue(settings, Enum.Parse(f.FieldType, defaultEaseType, ignoreCase: true)); modified.Add("defaultEaseType"); }
-                    catch { return new { error = $"Invalid defaultEaseType '{defaultEaseType}'" }; }
-                }
-            }
-            if (defaultAutoKill.HasValue && DOTweenReflectionHelper.SetFieldByName(settings, "defaultAutoKill", defaultAutoKill.Value))
-                modified.Add("defaultAutoKill");
-            if (!string.IsNullOrEmpty(defaultLoopType))
-            {
-                var f = DOTweenReflectionHelper.ResolveField(settings.GetType(), "defaultLoopType");
-                if (f != null && f.FieldType.IsEnum)
-                {
-                    try { f.SetValue(settings, Enum.Parse(f.FieldType, defaultLoopType, ignoreCase: true)); modified.Add("defaultLoopType"); }
-                    catch { return new { error = $"Invalid defaultLoopType '{defaultLoopType}'" }; }
-                }
-            }
-            if (safeMode.HasValue && DOTweenReflectionHelper.SetFieldByName(settings, "useSafeMode", safeMode.Value))
-                modified.Add("useSafeMode");
-            if (!string.IsNullOrEmpty(logBehaviour))
-            {
-                var f = DOTweenReflectionHelper.ResolveField(settings.GetType(), "logBehaviour");
-                if (f != null && f.FieldType.IsEnum)
-                {
-                    try { f.SetValue(settings, Enum.Parse(f.FieldType, logBehaviour, ignoreCase: true)); modified.Add("logBehaviour"); }
-                    catch { return new { error = $"Invalid logBehaviour '{logBehaviour}'" }; }
-                }
-            }
-            if (tweenersCapacity.HasValue && DOTweenReflectionHelper.SetFieldByName(settings, "defaultTweensCapacity", tweenersCapacity.Value))
-                modified.Add("defaultTweensCapacity");
-            if (sequencesCapacity.HasValue && DOTweenReflectionHelper.SetFieldByName(settings, "defaultSequencesCapacity", sequencesCapacity.Value))
-                modified.Add("defaultSequencesCapacity");
+            var write = ApplySettingsFields(settings, defaultEaseType, defaultAutoKill, defaultLoopType,
+                safeMode, logBehaviour, tweenersCapacity, sequencesCapacity);
+            if (write.Error != null) return write.Error;
 
-            if (modified.Count == 0) return new { success = true, modified = new string[0], note = "No fields changed" };
+            if (write.Modified.Count == 0)
+            {
+                return new
+                {
+                    success = true,
+                    modified = new string[0],
+                    unsupported = write.Unsupported.ToArray(),
+                    note = write.Unsupported.Count > 0
+                        ? "No fields changed: every supplied parameter maps to a DOTweenSettings field this DOTween version does not declare (see unsupported)."
+                        : "No fields changed"
+                };
+            }
 
             EditorUtility.SetDirty(settings);
             AssetDatabase.SaveAssets();
-            return new { success = true, modified };
+            return new
+            {
+                success = true,
+                modified = write.Modified.ToArray(),
+                unsupported = write.Unsupported.ToArray()
+            };
         }
 
         // ==================================================================================
-        // Private core
+        // Internal core
         // ==================================================================================
 
-        private class RuntimeTweenSpec
+        /// <summary>
+        /// A recipe for a generated script. Declared internal rather than private so assertions can be made
+        /// directly against the generation contract (which <c>using</c> a given target kind needs, whether a
+        /// given step bakes duration into a literal) — the generator itself refuses to run when DOTween isn't
+        /// installed, so the produced text can't be tested end-to-end on a clean project.
+        /// </summary>
+        internal class RuntimeTweenSpec
         {
             public string targetKind;
             public string tweenKind;
@@ -780,6 +895,288 @@ namespace UnitySkills
             public string targetType { get; set; }
             public string returnType { get; set; }
             public string signature { get; set; }
+        }
+
+        // ==================================================================================
+        // Numeric domain and required-ness guards
+        //
+        // If the dotween_pro_* numbers were passed through as-is, duration=-1 or loops=-7 would land on the
+        // component and report success:true with the caller none the wiser. DOTween's own value domains are
+        // narrow enough to declare precisely.
+        // ==================================================================================
+
+        /// <summary>duration <= 0 isn't a tween: DOTween treats it as an instant jump and only logs it at play
+        /// time, long after the skill has already claimed "the animation is configured".</summary>
+        private static object InvalidPositiveError(float value, string paramName) =>
+            value > 0f ? null : SkillParamUtil.InvalidValueError(SkillParamUtil.FormatFloatR(value), paramName, new[] { "> 0" });
+
+        /// <summary>A negative delay / stagger step is equivalent to running the cascade backward in time;
+        /// DOTween silently clamps it, so the animation reported back to the caller doesn't actually exist.</summary>
+        private static object InvalidNonNegativeError(float value, string paramName) =>
+            value >= 0f ? null : SkillParamUtil.InvalidValueError(SkillParamUtil.FormatFloatR(value), paramName, new[] { ">= 0" });
+
+        /// <summary>-1 is DOTween's only marker for infinite looping. 0 and anything below -1 are meaningless,
+        /// and DOTween neither clamps them nor errors on its own.</summary>
+        private static object InvalidLoopsError(int value) =>
+            value == -1 || value >= 1
+                ? null
+                : SkillParamUtil.InvalidValueError(value.ToString(CultureInfo.InvariantCulture), "loops",
+                    new[] { "-1 (infinite)", ">= 1" });
+
+        /// <summary>
+        /// Expresses "at least one of these two must be given". The payload shape matches <see cref="Validate"/>'s
+        /// missing-param response (errorCode is passed through as-is by routing layer 1), because neither half is
+        /// individually required — a per-parameter check can't express this constraint.
+        /// </summary>
+        private static object MissingEitherError(string first, string second) => new
+        {
+            error = $"Provide {first} and/or {second} — neither was sent, so there is nothing to change. " +
+                    $"Sending only {second} keeps the current {first}, and vice versa.",
+            errorCode = SkillErrorCode.MissingParam.ToWireString(),
+            retryStrategy = SkillErrorResponse.RetryFixAndRetry,
+            parameter = $"{first}|{second}",
+        };
+
+        private static object MissingFieldValueError(string fieldName) => new
+        {
+            error = $"fieldValue is required. It was omitted for fieldName '{fieldName}', which used to " +
+                    "clear the field and still report success. Send the value you want, or an explicit " +
+                    "empty string (\"\") to clear a string field on purpose.",
+            errorCode = SkillErrorCode.MissingParam.ToWireString(),
+            retryStrategy = SkillErrorResponse.RetryFixAndRetry,
+            parameter = "fieldValue",
+        };
+
+        /// <summary>
+        /// What <c>fieldValue</c> can look like for a given field type, for the <c>validValues</c> in a rejection
+        /// response. Content is kept consistent with the string forms <c>DOTweenReflectionHelper.ConvertValue</c>
+        /// accepts — listing forms the converter can't parse would be worse than not listing anything.
+        /// </summary>
+        private static string[] AcceptedFieldValues(Type fieldType)
+        {
+            if (fieldType == null) return Array.Empty<string>();
+            if (fieldType.IsEnum) return DOTweenReflectionHelper.EnumNames(fieldType);
+            if (fieldType == typeof(bool)) return new[] { "true", "false" };
+            if (fieldType == typeof(Vector3)) return new[] { "x,y,z", "[x,y,z]" };
+            if (fieldType == typeof(Vector2)) return new[] { "x,y", "[x,y]" };
+            if (fieldType == typeof(Color)) return new[] { "#RRGGBB", "#RRGGBBAA", "r,g,b", "r,g,b,a" };
+            if (fieldType == typeof(Rect)) return new[] { "x,y,width,height" };
+            if (fieldType == typeof(float) || fieldType == typeof(double)) return new[] { "a decimal number (invariant '.' separator)" };
+            if (fieldType == typeof(int) || fieldType == typeof(long)) return new[] { "a whole number" };
+            if (fieldType == typeof(string)) return new[] { "any string (\"\" clears it)" };
+            return new[] { $"a value convertible to {fieldType.Name} — this field is not settable from text" };
+        }
+
+        // ==================================================================================
+        // Authoritative source for component indices
+        // ==================================================================================
+
+        /// <summary>
+        /// Assigns each component the index that callers will actually use to address it — namely its position
+        /// in <c>gameObject.GetComponents(type)</c>. Every <c>ResolveAnimationComponent</c> call indexes into this array.
+        ///
+        /// <para>This exists because the whole-scene listing path doesn't originally follow that order: it groups
+        /// <c>FindHelper.FindAll</c>'s results (explicitly documented as unordered) by GameObject and hands out a
+        /// running counter, so when the same GameObject carries multiple DOTweenAnimation components, the
+        /// animationIndex reported by listing doesn't line up with the index the setter uses. This has happened in
+        /// a real project: listing reported [Fade 0.3, Scale 0.6, Fade 0.4], while that object's GetComponents order
+        /// was [Scale 0.6, Fade 0.3, Fade 0.4] — an agent listed then set, and ended up modifying a different
+        /// component than intended, with both calls succeeding and no indication anything was wrong.</para>
+        ///
+        /// <para>Output follows each GameObject's authoritative order. A type-matched query in theory should never
+        /// produce a component absent from the authoritative array, but if it ever does, it's kept with index -1
+        /// rather than dropped: a list silently missing a row is a worse failure, and a negative index is rejected
+        /// by ResolveAnimationComponent rather than mistakenly pointing at a different component.</para>
+        /// </summary>
+        internal static List<KeyValuePair<Component, int>> ResolveAuthoritativeIndices(
+            IEnumerable<Component> comps, Type componentType)
+        {
+            var result = new List<KeyValuePair<Component, int>>();
+            if (comps == null || componentType == null) return result;
+
+            foreach (var group in comps.Where(c => c != null).GroupBy(c => c.gameObject))
+            {
+                var authoritative = group.Key.GetComponents(componentType);
+                var indexed = group
+                    .Select(c => new KeyValuePair<Component, int>(c, Array.IndexOf(authoritative, c)))
+                    .OrderBy(pair => pair.Value < 0 ? int.MaxValue : pair.Value);
+                result.AddRange(indexed);
+            }
+            return result;
+        }
+
+        // ==================================================================================
+        // DOTweenSettings write
+        // ==================================================================================
+
+        /// <summary>A single parameter that couldn't be applied because the corresponding field doesn't exist.</summary>
+        internal sealed class UnsupportedSettingsField
+        {
+            public string parameter;
+            public string field;
+            public string reason;
+        }
+
+        internal sealed class SettingsWriteResult
+        {
+            public readonly List<string> Modified = new List<string>();
+            public readonly List<UnsupportedSettingsField> Unsupported = new List<UnsupportedSettingsField>();
+            public object Error;
+        }
+
+        /// <summary>
+        /// Applies configuration parameters to the given object and reports the outcome per parameter. Pulled out
+        /// of the skill so a stand-in settings object can be used for testing — the bug it fixes only shows up on
+        /// a DOTweenSettings missing fields.
+        ///
+        /// <para>DOTween Pro 1.0.381's settings asset has no <c>defaultTweensCapacity</c> /
+        /// <c>defaultSequencesCapacity</c> at all. If both writes only used a bare <c>if (SetFieldByName(...))</c>
+        /// guard that does nothing on the false branch, the response would be <c>success:true, modified:[]</c>,
+        /// which reads as "accepted, nothing to change" rather than "this DOTween version has nowhere to put your
+        /// value." The <c>f != null &amp;&amp; f.FieldType.IsEnum</c> guard on those four enum/bool parameters would
+        /// go silent the same way. So every parameter must land in exactly one of modified / unsupported / Error.</para>
+        /// </summary>
+        internal static SettingsWriteResult ApplySettingsFields(
+            object settings,
+            string defaultEaseType,
+            bool? defaultAutoKill,
+            string defaultLoopType,
+            bool? safeMode,
+            string logBehaviour,
+            int? tweenersCapacity,
+            int? sequencesCapacity)
+        {
+            var result = new SettingsWriteResult();
+            if (settings == null)
+            {
+                result.Error = new { error = "DOTweenSettings instance is null" };
+                return result;
+            }
+
+            if (!ApplyEnumSetting(settings, "defaultEaseType", defaultEaseType, result)) return result;
+            if (!ApplyEnumSetting(settings, "defaultLoopType", defaultLoopType, result)) return result;
+            if (!ApplyEnumSetting(settings, "logBehaviour", logBehaviour, result)) return result;
+
+            ApplyBoolSetting(settings, "defaultAutoKill", "defaultAutoKill", defaultAutoKill, result);
+            ApplyBoolSetting(settings, "useSafeMode", "safeMode", safeMode, result);
+
+            if (!ApplyCapacitySetting(settings, "defaultTweensCapacity", "tweenersCapacity", tweenersCapacity, result)) return result;
+            if (!ApplyCapacitySetting(settings, "defaultSequencesCapacity", "sequencesCapacity", sequencesCapacity, result)) return result;
+
+            return result;
+        }
+
+        /// <summary>Returns false to mean the whole call should be rejected (the field can't express the given value at all).</summary>
+        private static bool ApplyEnumSetting(object settings, string fieldName, string value, SettingsWriteResult result)
+        {
+            if (string.IsNullOrEmpty(value)) return true;
+
+            var field = DOTweenReflectionHelper.ResolveField(settings.GetType(), fieldName);
+            if (field == null || !field.FieldType.IsEnum)
+            {
+                result.Unsupported.Add(Unsupported(fieldName, fieldName,
+                    field == null
+                        ? "no such field on this DOTween version's DOTweenSettings"
+                        : $"field exists but is {field.FieldType.Name}, not an enum"));
+                return true;
+            }
+
+            var names = DOTweenReflectionHelper.EnumNames(field.FieldType);
+            if (!DOTweenReflectionHelper.EnumFieldAccepts(settings.GetType(), new[] { fieldName }, value))
+            {
+                result.Error = SkillParamUtil.InvalidValueError(value, fieldName, names);
+                return false;
+            }
+
+            field.SetValue(settings, Enum.Parse(field.FieldType, value.Trim(), ignoreCase: true));
+            result.Modified.Add(fieldName);
+            return true;
+        }
+
+        private static void ApplyBoolSetting(object settings, string fieldName, string parameterName,
+            bool? value, SettingsWriteResult result)
+        {
+            if (!value.HasValue) return;
+
+            var field = DOTweenReflectionHelper.ResolveField(settings.GetType(), fieldName);
+            if (field == null || field.FieldType != typeof(bool))
+            {
+                result.Unsupported.Add(Unsupported(parameterName, fieldName,
+                    field == null
+                        ? "no such field on this DOTween version's DOTweenSettings"
+                        : $"field exists but is {field.FieldType.Name}, not bool"));
+                return;
+            }
+
+            field.SetValue(settings, value.Value);
+            result.Modified.Add(fieldName);
+        }
+
+        /// <summary>Returns false to mean the whole call should be rejected.</summary>
+        private static bool ApplyCapacitySetting(object settings, string fieldName, string parameterName,
+            int? value, SettingsWriteResult result)
+        {
+            if (!value.HasValue) return true;
+
+            // dotween_settings_validate already reports capacity <= 0 as an issue; actually writing it in would
+            // make this plugin's next read flag its own just-made change as invalid.
+            if (value.Value <= 0)
+            {
+                result.Error = SkillParamUtil.InvalidValueError(
+                    value.Value.ToString(CultureInfo.InvariantCulture), parameterName, new[] { ">= 1" });
+                return false;
+            }
+
+            var field = DOTweenReflectionHelper.ResolveField(settings.GetType(), fieldName);
+            if (field == null || (field.FieldType != typeof(int) && !field.FieldType.IsEnum))
+            {
+                result.Unsupported.Add(Unsupported(parameterName, fieldName,
+                    field == null
+                        ? "no such field on this DOTween version's DOTweenSettings — DOTween Pro 1.0.381 has none, its capacities are set at runtime via DOTween.SetTweensCapacity(tweenersCapacity, sequencesCapacity)"
+                        : $"field exists but is {field.FieldType.Name}, not int"));
+                return true;
+            }
+
+            field.SetValue(settings, value.Value);
+            result.Modified.Add(fieldName);
+            return true;
+        }
+
+        private static UnsupportedSettingsField Unsupported(string parameter, string field, string reason) =>
+            new UnsupportedSettingsField { parameter = parameter, field = field, reason = reason };
+
+        /// <summary>
+        /// The numeric and enum contract shared by the add / batch / stagger skills, checked before anything is
+        /// added to the scene. Enum names are compared against what the current DOTween version actually
+        /// declares, so the validValues in a rejection response are the real word list rather than a hardcoded
+        /// one that can drift with the asset package version.
+        /// </summary>
+        private static object ValidateAnimationSpec(
+            string animationType, string ease, string loopType, float duration, int loops, float delay)
+        {
+            if (InvalidPositiveError(duration, "duration") is object durationErr) return durationErr;
+            if (InvalidLoopsError(loops) is object loopsErr) return loopsErr;
+            if (InvalidNonNegativeError(delay, "delay") is object delayErr) return delayErr;
+
+            var type = DOTweenReflectionHelper.FindTypeInAssemblies(DOTweenReflectionHelper.DOTweenAnimationTypeName);
+            if (type == null) return NoDOTweenPro();
+
+            if (InvalidEnumFieldError(type, DOTweenReflectionHelper.AnimationTypeFieldCandidates, "animationType", animationType) is object typeErr)
+                return typeErr;
+            if (InvalidEnumFieldError(type, DOTweenReflectionHelper.EaseFieldCandidates, "ease", ease) is object easeErr)
+                return easeErr;
+            if (InvalidEnumFieldError(type, DOTweenReflectionHelper.LoopTypeFieldCandidates, "loopType", loopType) is object loopTypeErr)
+                return loopTypeErr;
+
+            return null;
+        }
+
+        private static object InvalidEnumFieldError(Type owner, string[] candidates, string paramName, string value)
+        {
+            if (string.IsNullOrEmpty(value)) return null;
+            if (DOTweenReflectionHelper.EnumFieldAccepts(owner, candidates, value)) return null;
+            return SkillParamUtil.InvalidValueError(value, paramName,
+                DOTweenReflectionHelper.EnumNamesForField(owner, candidates));
         }
 
         private static IEnumerable<Type> FindDOTweenTypes(Func<Type, bool> predicate)
@@ -888,7 +1285,7 @@ namespace UnitySkills
             if (value is int i && i <= 0) issues.Add($"{fieldName} should be greater than 0.");
         }
 
-        private static RuntimeTweenSpec ResolveRuntimeTweenSpec(string targetKind, string tweenKind)
+        internal static RuntimeTweenSpec ResolveRuntimeTweenSpec(string targetKind, string tweenKind)
         {
             targetKind = string.IsNullOrWhiteSpace(targetKind) ? "Transform" : targetKind.Trim();
             tweenKind = string.IsNullOrWhiteSpace(tweenKind) ? "DOMove" : tweenKind.Trim();
@@ -937,8 +1334,33 @@ namespace UnitySkills
         private static RuntimeTweenSpec UiSpec(string type, string field, string initializer, string method, string valueType, string defaultValue, string valueField, string call) => new RuntimeTweenSpec
         {
             targetKind = type, tweenKind = method, fieldType = type, fieldName = field, fieldInitializer = initializer,
-            valueType = valueType, valueField = valueField, defaultValue = defaultValue, methodCall = call, extraUsing = "using UnityEngine.UI;"
+            valueType = valueType, valueField = valueField, defaultValue = defaultValue, methodCall = call,
+            extraUsing = ExtraUsingForTargetKind(type)
         };
+
+        /// <summary>
+        /// The extra <c>using</c> a generated script needs for its target type — only emitted when that type actually lives in that namespace.
+        ///
+        /// <para>A few "looks like UI" targets can't share one hardcoded <c>using UnityEngine.UI;</c>:
+        /// <c>CanvasGroup</c> belongs to <c>UnityEngine</c> (UIModule, always present), while
+        /// <c>Graphic</c> / <c>Image</c> belong to <c>UnityEngine.UI</c>, shipped with com.unity.ugui.
+        /// In a project without that package installed, a generated CanvasGroup file would fail to compile with
+        /// CS0246 over a namespace it never actually references. Generation is pure string concatenation, so the
+        /// only thing that can decide this is the namespace the target type itself lives in.</para>
+        /// </summary>
+        private static string ExtraUsingForTargetKind(string targetKind)
+        {
+            switch (targetKind)
+            {
+                case "Graphic":
+                case "Image":
+                case "Text":
+                    return "using UnityEngine.UI;";
+                default:
+                    // Transform / RectTransform / CanvasGroup / Generic are all in the UnityEngine namespace.
+                    return null;
+            }
+        }
 
         private static object UnsupportedTween(string targetKind, string tweenKind) => new
         {
@@ -1003,6 +1425,14 @@ namespace UnitySkills
             foreach (var item in specs.Where(i => i.spec != null && !string.IsNullOrEmpty(i.spec.extraUsing))) usings.Add(item.spec.extraUsing);
             var fieldSpecs = specs.Where(i => i.spec != null && !i.spec.genericDOTweenTo).Select(i => i.spec).GroupBy(s => s.fieldName).Select(g => g.First()).ToList();
             var valueSpecs = specs.Where(i => i.spec != null).Select(i => i.spec).GroupBy(s => s.valueField).Select(g => g.First()).ToList();
+
+            // Must build the Play() method body first, since it determines whether the duration field gets
+            // declared at all. If every step baked its own duration into a literal (methodCall.Replace("duration", …)),
+            // [SerializeField] float duration would go unreferenced and every generated sequence script would
+            // report CS0414. Steps whose duration equals the top-level value now read that field instead: the
+            // Inspector knob remains usable in the common case, and the field only disappears when nothing uses it.
+            var playLines = BuildSequenceSteps(specs, duration, out bool usesDurationField);
+
             var sb = new StringBuilder();
             sb.AppendLine(string.Join("\n", usings));
             sb.AppendLine();
@@ -1010,7 +1440,7 @@ namespace UnitySkills
             sb.AppendLine("{");
             foreach (var spec in fieldSpecs) sb.AppendLine($"    [SerializeField] private {spec.fieldType} {spec.fieldName};");
             foreach (var spec in valueSpecs) sb.AppendLine($"    [SerializeField] private {spec.valueType} {spec.valueField} = {spec.defaultValue};");
-            sb.AppendLine($"    [SerializeField] private float duration = {FloatLiteral(duration)};");
+            if (usesDurationField) sb.AppendLine($"    [SerializeField] private float duration = {FloatLiteral(duration)};");
             sb.AppendLine($"    [SerializeField] private Ease ease = Ease.{SanitizeEnumName(ease, "OutQuad")};");
             sb.AppendLine($"    [SerializeField] private int loops = {loops};");
             sb.AppendLine($"    [SerializeField] private bool autoPlay = {BoolLiteral(autoPlay)};");
@@ -1031,17 +1461,45 @@ namespace UnitySkills
             sb.AppendLine("    {");
             sb.AppendLine("        KillTween();");
             sb.AppendLine("        sequence = DOTween.Sequence();");
-            foreach (var item in specs)
-            {
-                if (item.op == "AppendInterval") sb.AppendLine($"        sequence.AppendInterval({FloatLiteral(item.duration)});");
-                else sb.AppendLine($"        sequence.{item.op}({item.spec.methodCall.Replace("duration", FloatLiteral(item.duration))});");
-            }
+            foreach (var line in playLines) sb.AppendLine(line);
             sb.AppendLine("        sequence.SetEase(ease).SetLoops(loops);");
             if (useSetLink) sb.AppendLine("        sequence.SetLink(gameObject);");
             sb.AppendLine("    }");
             AppendKillMethods(sb, "sequence");
             sb.AppendLine("}");
             return WrapGeneratedNamespace(namespaceName, sb.ToString());
+        }
+
+        /// <summary>
+        /// Generates the Play() method body for a Sequence, and reports back whether any line reads the
+        /// <c>duration</c> field. Steps whose duration matches the top-level value are generated referencing the
+        /// field; only steps that actually differ get baked into a literal.
+        /// </summary>
+        internal static List<string> BuildSequenceSteps(
+            List<(string op, RuntimeTweenSpec spec, float duration)> specs, float duration, out bool usesDurationField)
+        {
+            var lines = new List<string>();
+            usesDurationField = false;
+            if (specs == null) return lines;
+
+            foreach (var item in specs)
+            {
+                bool matchesTopLevel = Mathf.Approximately(item.duration, duration);
+                if (item.op == "AppendInterval")
+                {
+                    lines.Add($"        sequence.AppendInterval({(matchesTopLevel ? "duration" : FloatLiteral(item.duration))});");
+                    usesDurationField |= matchesTopLevel;
+                    continue;
+                }
+
+                var call = item.spec.methodCall;
+                if (matchesTopLevel && call.Contains("duration"))
+                    usesDurationField = true;
+                else
+                    call = call.Replace("duration", FloatLiteral(item.duration));
+                lines.Add($"        sequence.{item.op}({call});");
+            }
+            return lines;
         }
 
         private static string BuildScriptBody(string className, RuntimeTweenSpec spec, float duration, string ease, int loops, bool autoPlay, bool useSetLink, string tweenType, bool includeRestart = false)
@@ -1159,10 +1617,22 @@ namespace UnitySkills
             DOTweenReflectionHelper.SetFieldByCandidates(comp, DOTweenReflectionHelper.DurationFieldCandidates, duration);
             DOTweenReflectionHelper.SetFieldByCandidates(comp, DOTweenReflectionHelper.DelayFieldCandidates, delay);
             DOTweenReflectionHelper.SetFieldByCandidates(comp, DOTweenReflectionHelper.LoopsFieldCandidates, loops);
-            if (!string.IsNullOrEmpty(loopType))
-                DOTweenReflectionHelper.TrySetLoopType(comp, loopType);
-            if (!string.IsNullOrEmpty(ease))
-                DOTweenReflectionHelper.TrySetEase(comp, ease, null);
+            // The result of writing ease / loopType must be checked: a failed write leaves the component on its
+            // default value while the skill still reports success:true without echoing any requested value.
+            // Typos are already caught by ValidateAnimationSpec before the component was added, so reaching here
+            // means the field is missing or a different type on this version.
+            if (!string.IsNullOrEmpty(loopType) && !DOTweenReflectionHelper.TrySetLoopType(comp, loopType))
+            {
+                Undo.DestroyObjectImmediate(comp);
+                return SkillParamUtil.InvalidValueError(loopType, "loopType",
+                    DOTweenReflectionHelper.EnumNamesForField(type, DOTweenReflectionHelper.LoopTypeFieldCandidates));
+            }
+            if (!string.IsNullOrEmpty(ease) && !DOTweenReflectionHelper.TrySetEase(comp, ease))
+            {
+                Undo.DestroyObjectImmediate(comp);
+                return SkillParamUtil.InvalidValueError(ease, "ease",
+                    DOTweenReflectionHelper.EnumNamesForField(type, DOTweenReflectionHelper.EaseFieldCandidates));
+            }
             DOTweenReflectionHelper.SetFieldByCandidates(comp, DOTweenReflectionHelper.IsRelativeFieldCandidates, isRelative);
             DOTweenReflectionHelper.SetFieldByCandidates(comp, DOTweenReflectionHelper.IsFromFieldCandidates, isFrom);
             DOTweenReflectionHelper.SetFieldByCandidates(comp, DOTweenReflectionHelper.AutoPlayFieldCandidates, autoPlay);

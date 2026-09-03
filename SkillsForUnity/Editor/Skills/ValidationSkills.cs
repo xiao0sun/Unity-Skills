@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using UnityEngine.SceneManagement;
 using System.IO;
@@ -9,7 +9,7 @@ using UnitySkills.Internal;
 namespace UnitySkills
 {
     /// <summary>
-    /// Validation and cleanup skills - find issues, optimize assets, clean project.
+    /// Validation and cleanup skills — find issues, optimize assets, clean up the project.
     /// </summary>
     public static class ValidationSkills
     {
@@ -36,7 +36,6 @@ namespace UnitySkills
             var scene = SceneManager.GetActiveScene();
             var allObjects = FindHelper.FindAll<GameObject>();
 
-            // Check for missing scripts
             if (checkMissingScripts)
             {
                 foreach (var go in allObjects)
@@ -59,7 +58,6 @@ namespace UnitySkills
                 }
             }
 
-            // Check for missing prefab references
             if (checkMissingPrefabs)
             {
                 foreach (var go in allObjects)
@@ -78,7 +76,6 @@ namespace UnitySkills
                 }
             }
 
-            // Check for duplicate names
             if (checkDuplicateNames)
             {
                 var nameGroups = allObjects.GroupBy(go => go.name).Where(g => g.Count() > 1);
@@ -95,13 +92,12 @@ namespace UnitySkills
                 }
             }
 
-            // Check for empty GameObjects
             if (checkEmptyGameObjects)
             {
                 foreach (var go in allObjects)
                 {
                     var components = go.GetComponents<Component>();
-                    if (components.Length == 1 && go.transform.childCount == 0) // Only Transform
+                    if (components.Length == 1 && go.transform.childCount == 0) // Transform only
                     {
                         issues.Add(new ValidationIssue
                         {
@@ -141,7 +137,6 @@ namespace UnitySkills
         {
             var results = new List<object>();
 
-            // Search in scene
             var sceneObjects = FindHelper.FindAll<GameObject>();
             foreach (var go in sceneObjects)
             {
@@ -159,7 +154,6 @@ namespace UnitySkills
                 }
             }
 
-            // Search in prefabs
             if (searchInPrefabs)
             {
                 var prefabGuids = AssetDatabase.FindAssets("t:Prefab");
@@ -239,7 +233,7 @@ namespace UnitySkills
             var files = Directory.GetFiles(path);
             var directories = Directory.GetDirectories(path);
 
-            // Check if folder is empty (only .meta files don't count)
+            // Determine whether the folder is empty (a folder with only .meta files doesn't count as having content)
             var hasRealFiles = files.Any(f => !f.EndsWith(".meta"));
             var hasSubDirs = directories.Length > 0;
 
@@ -263,7 +257,7 @@ namespace UnitySkills
                 guids.Select(AssetDatabase.GUIDToAssetPath).Where(p => !string.IsNullOrEmpty(p)),
                 System.StringComparer.OrdinalIgnoreCase);
 
-            // Pre-build dependency index: collect all paths that are depended upon by any asset
+            // Pre-build a dependency index: collect every path that's depended on by any asset
             var allGuids = AssetDatabase.FindAssets("t:Object", new[] { "Assets" });
             var referencedPaths = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase);
             foreach (var g in allGuids)
@@ -277,7 +271,7 @@ namespace UnitySkills
                 }
             }
 
-            // Collect candidates not found in the referenced set
+            // Pick out candidates that aren't in the referenced set
             var potentiallyUnused = new List<object>();
             foreach (var path in candidatePaths)
             {

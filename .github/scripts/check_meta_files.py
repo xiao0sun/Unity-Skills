@@ -22,7 +22,7 @@ import re
 import sys
 
 SCAN_ROOT_REL = "SkillsForUnity"
-CHECKED_EXTENSIONS = (".cs", ".uxml", ".uss")
+CHECKED_EXTENSIONS = (".cs", ".uxml", ".uss", ".json")
 EXCLUDED_DIR_NAMES = {".git", "Library", "Temp", "obj", "bin", "Logs"}
 GUID_RE = re.compile(r"^guid:\s*([0-9a-fA-F]{32})\s*$", re.MULTILINE)
 
@@ -117,3 +117,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+# Producer:Betsy

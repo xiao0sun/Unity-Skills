@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine.SceneManagement;
@@ -10,7 +10,7 @@ using UnitySkills.Internal;
 namespace UnitySkills
 {
     /// <summary>
-    /// Scene management skills - load, save, create, get info.
+    /// Scene management skills: load, save, create, query info.
     /// </summary>
     public static class SceneSkills
     {
@@ -33,8 +33,8 @@ namespace UnitySkills
             EditorSceneManager.SaveScene(scene, scenePath);
             AssetDatabase.Refresh();
 
-            // SaveScene wrote the new .unity to disk; record it as Created so undo removes it
-            // (moves into the store, redoable). Lightweight — no file-bytes backup needed.
+            // SaveScene has already written the new .unity to disk; record it as Created, so on undo moving it into the storage area is equivalent to deleting it
+            // (redo-able). Cheap -- no need to back up the file bytes.
             var sceneAsset = AssetDatabase.LoadAssetAtPath<SceneAsset>(scenePath);
             if (sceneAsset != null) WorkflowManager.SnapshotCreatedAsset(sceneAsset);
 
@@ -74,11 +74,10 @@ namespace UnitySkills
             if (string.IsNullOrEmpty(path))
                 return new { error = "Scene has no path. Provide scenePath parameter." };
 
-            // Make the save reversible. Overwriting an existing .unity = Modified: back up the
-            // old bytes into the content-addressed store BEFORE SaveScene overwrites the file
-            // (undo writes them back to disk). Saving to a brand-new path = Created: record it
-            // AFTER the file exists (undo moves the new file into the store, redo restores it).
-            // Undo/redo act on the disk file; a currently open scene must be reloaded to reflect it.
+            // Makes the save reversible. Overwriting an existing .unity counts as Modified: the old bytes must be backed up into the
+            // content-addressed store *before* SaveScene overwrites the file (written back to disk on undo). Saving to a brand-new path counts as Created: it must be
+            // recorded *after* the file exists (undo moves the new file into the store, redo restores it).
+            // Undo/redo operates on the on-disk file; the currently open scene needs to be reloaded to reflect the change.
             bool existedBefore = File.Exists(path);
             if (existedBefore)
             {
@@ -101,7 +100,7 @@ namespace UnitySkills
         [UnitySkill("scene_get_info", "Get current scene information",
             Category = SkillCategory.Scene, Operation = SkillOperation.Query,
             Tags = new[] { "info", "status", "roots" },
-            Outputs = new[] { "sceneName", "scenePath", "rootObjects" },
+            Outputs = new[] { "sceneName", "scenePath", "isDirty", "rootObjectCount", "rootObjects" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object SceneGetInfo()
@@ -159,12 +158,15 @@ namespace UnitySkills
                     children[i] = GetHierarchyNode(go.transform.GetChild(i).gameObject, depth + 1, maxDepth, componentBuffer);
             }
 
+            // childCount is always the real child count, so children==null && childCount>0 means this node was
+            // truncated by maxDepth -- distinguishable from a true leaf node (childCount of 0).
             var node = new
             {
                 name = go.name,
                 entityId = UnityObjectIdUtility.GetEntityId(go),
                 instanceId = UnityObjectIdUtility.GetObjectId(go),
                 components = GetComponentTypeNames(go, componentBuffer),
+                childCount,
                 children
             };
             return node;
@@ -191,7 +193,7 @@ namespace UnitySkills
             Outputs = new[] { "path", "width", "height", "isPlaying", "note", "imageBase64", "imageWidth", "imageHeight", "imageBytes" })]
         public static object SceneScreenshot(string filename = "screenshot.png", int width = 1920, int height = 1080, bool returnImage = false, int maxDimension = 1280)
         {
-            // Strip any path components to prevent writing outside Screenshots/
+            // Strip all path components, to prevent writing outside Screenshots/
             filename = Path.GetFileName(filename);
             if (string.IsNullOrEmpty(filename)) filename = "screenshot";
             if (!Path.HasExtension(filename)) filename += ".png";
@@ -200,9 +202,9 @@ namespace UnitySkills
             if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
 
             int superSize = Mathf.Max(1, width / Screen.width);
-            // ScreenCapture.CaptureScreenshot captures the Game View's final composited frame and
-            // writes the PNG on the NEXT frame (not synchronously). Refreshing right now is a no-op
-            // because the file is not on disk yet, so defer the asset import to the next editor tick.
+            // ScreenCapture.CaptureScreenshot captures the final composited Game View frame, and writes the PNG only on the *next frame*
+            // (not synchronous). At this point the file isn't on disk yet, so an immediate Refresh would be a no-op; hence the asset import is deferred to
+            // the next editor tick.
             ScreenCapture.CaptureScreenshot(path, superSize);
             EditorApplication.delayCall += () => AssetDatabase.Refresh();
 
@@ -214,9 +216,8 @@ namespace UnitySkills
             var result = new Dictionary<string, object> { ["success"] = true, ["path"] = path, ["width"] = width, ["height"] = height, ["isPlaying"] = isPlaying, ["note"] = note };
             if (returnImage)
             {
-                // The on-disk PNG isn't readable yet (written ~1 frame later, see above), so
-                // returnImage uses a separate synchronous in-memory capture of the Game View's
-                // current backbuffer instead of reading `path` back.
+                // The PNG on disk can't be read yet at this point (written about a frame later, see above), so returnImage takes a different path:
+                // synchronously capturing the Game View's current backbuffer in memory, rather than reading back `path`.
                 Texture2D liveTex = null;
                 try
                 {

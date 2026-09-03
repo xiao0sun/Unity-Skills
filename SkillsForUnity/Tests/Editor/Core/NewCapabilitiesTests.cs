@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
@@ -16,10 +16,9 @@ namespace UnitySkills.Tests.Core
         [SetUp]
         public void SetUp()
         {
-            // Batch steps here exercise write skills (incl. never-in-semi ones like
-            // gameobject_delete). Force Bypass so mode gating never silently turns a
-            // step into a MODE_FORBIDDEN no-op — otherwise diff assertions fail only
-            // when the persisted EditorPref mode happens to be auto/semi (e.g. fresh CI).
+            // The batch steps here call write-class skills (including gameobject_delete, which never gets through under semi). Force Bypass so the mode gate doesn't silently turn
+            // a step into a MODE_FORBIDDEN no-op -- otherwise the diff assertion would only fail
+            // when the persisted EditorPref mode happens to be auto/semi (e.g. on a fresh CI environment).
             _savedMode = SkillsModeManager.CurrentMode;
             SkillsModeManager.CurrentMode = SkillsOperatingMode.Bypass;
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
@@ -75,8 +74,8 @@ namespace UnitySkills.Tests.Core
         [Test]
         public void BuildPlayer_ExplicitScenesValidate()
         {
-            // Create a throwaway scene on disk so the check never depends on the host
-            // project shipping Assets/Scenes/SampleScene.unity (a fresh CI project has none).
+            // Build a disposable scene on disk here, so validation doesn't depend on the host
+            // project shipping Assets/Scenes/SampleScene.unity (a fresh CI project has no such file).
             const string dir = "Assets/Temp";
             var path = $"{dir}/BuildPlayerValidation_{Guid.NewGuid():N}.unity";
             if (!AssetDatabase.IsValidFolder(dir))

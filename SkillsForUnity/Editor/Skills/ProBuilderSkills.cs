@@ -1,4 +1,4 @@
-using UnityEngine;
+﻿using UnityEngine;
 using UnityEditor;
 using System;
 using System.Linq;
@@ -9,13 +9,14 @@ using System.Reflection;
 using UnityEngine.ProBuilder;
 using UnityEngine.ProBuilder.MeshOperations;
 using UnityEngine.ProBuilder.Shapes;
+using UnityEditor.ProBuilder;
 #endif
 
 namespace UnitySkills
 {
     /// <summary>
-    /// ProBuilder mesh modeling skills - create shapes, extrude, bevel, subdivide, etc.
-    /// Requires com.unity.probuilder package (5.x+).
+    /// ProBuilder modeling skills: create shapes, extrude, bevel, subdivide, etc.
+    /// Depends on the com.unity.probuilder package (5.x and above).
     /// </summary>
     public static class ProBuilderSkills
     {
@@ -25,7 +26,7 @@ namespace UnitySkills
 #endif
 
         // ==================================================================================
-        // Shape Creation
+        // Shape creation
         // ==================================================================================
 
         [UnitySkill("probuilder_create_shape", "Create a ProBuilder primitive shape (Cube/Sphere/Cylinder/Cone/Torus/Prism/Arch/Pipe/Stairs/Door/Plane)", TracksWorkflow = true,
@@ -72,7 +73,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Face Operations
+        // Face operations
         // ==================================================================================
 
         [UnitySkill("probuilder_extrude_faces", "Extrude faces on a ProBuilder mesh (method: IndividualFaces/FaceNormal/VertexNormal)", TracksWorkflow = true,
@@ -97,7 +98,20 @@ namespace UnitySkills
 
             var faces = SelectFaces(pbMesh, faceIndexes);
             if (faces.Count == 0)
-                return new { error = "No faces selected. Provide faceIndexes as comma-separated indices (e.g. \"0,1,2\"), or omit to extrude all faces." };
+            {
+                // SelectFaces returns an empty set in exactly one situation: faceIndexes was indeed sent, but
+                // every index in it either failed to parse or is out of the mesh's face range — an omitted or
+                // empty faceIndexes returns *all* faces instead, never an empty list. So reaching here always
+                // means an invalid value was sent, not a missing parameter. The old message started with
+                // "No faces selected. Provide...", which the router's generic text classifier would read as
+                // "the caller sent nothing at all" and report MISSING_PARAM, even though faceIndexes was sent — it just didn't match anything.
+                return new
+                {
+                    error = $"No faces matched faceIndexes='{faceIndexes}'. Mesh '{pbMesh.gameObject.name}' has {pbMesh.faceCount} faces (valid range 0-{pbMesh.faceCount - 1}). Provide faceIndexes as comma-separated indices (e.g. \"0,1,2\"), or omit to extrude all faces.",
+                    errorCode = SkillErrorCode.SemanticInvalid.ToWireString(),
+                    parameter = "faceIndexes"
+                };
+            }
 
             Undo.RecordObject(pbMesh, "Extrude Faces");
             WorkflowManager.SnapshotObject(pbMesh);
@@ -278,6 +292,22 @@ namespace UnitySkills
 
             var newFaces = pbMesh.DetachFaces(faces, deleteSourceFaces);
 
+            // DetachFaces(faces, true) both appends independent copies of the requested faces and removes the
+            // originals, so totalFaces/totalVertices end up close to the starting numbers (N removed, then N
+            // added back as copies) — looking at the counts alone would make a perfectly normal
+            // "detach and delete" call read like a no-op. So deleteSourceFaces is instead verified with a
+            // count-independent reference-identity check (ProBuilder's Face doesn't override value equality, so
+            // Contains here genuinely means "is the same object still alive"), and any survivors found are force-removed —
+            // this also guards against DetachFaces' internal delete step failing to match the source faces by reference.
+            int sourceFacesDeleted = 0;
+            if (deleteSourceFaces)
+            {
+                var stillPresent = faces.Where(f => pbMesh.faces.Contains(f)).ToList();
+                if (stillPresent.Count > 0)
+                    pbMesh.DeleteFaces(stillPresent);
+                sourceFacesDeleted = faces.Count(f => !pbMesh.faces.Contains(f));
+            }
+
             pbMesh.ToMesh();
             pbMesh.Refresh();
 
@@ -289,6 +319,7 @@ namespace UnitySkills
                 instanceId = UnityObjectIdUtility.GetObjectId(pbMesh.gameObject),
                 detachedFaceCount = newFaces?.Count ?? 0,
                 deleteSourceFaces,
+                sourceFacesDeleted,
                 totalFaces = pbMesh.faceCount,
                 totalVertices = pbMesh.vertexCount
             };
@@ -296,7 +327,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Edge Operations
+        // Edge operations
         // ==================================================================================
 
         [UnitySkill("probuilder_bevel_edges", "Bevel (chamfer) edges on a ProBuilder mesh", TracksWorkflow = true,
@@ -321,7 +352,7 @@ namespace UnitySkills
             IList<Edge> edges;
             if (string.IsNullOrEmpty(edgeIndexes))
             {
-                // Bevel all edges
+                // edgeIndexes not specified: bevel all edges
                 var edgeSet = new HashSet<Edge>();
                 foreach (var face in pbMesh.faces)
                     foreach (var edge in face.edges)
@@ -388,6 +419,24 @@ namespace UnitySkills
 
             var newEdges = pbMesh.Extrude(edges, distance, extrudeAsGroup, enableManifoldExtrude);
 
+            // Unless enableManifoldExtrude is true, Extrude() silently drops edges shared by more than 2 faces
+            // (ProBuilder's own editor action gates this the same way, hidden behind the global "Allow
+            // non-manifold actions" preference), and returns null once every requested edge has been filtered
+            // out this way — which, by default, is every single edge on a closed/watertight mesh. So
+            // extrudedEdgeCount can't just report the requested count: that would make a completely no-op call
+            // on a closed mesh read as success with a plausible-looking count.
+            if (newEdges == null || newEdges.Length == 0)
+            {
+                return new
+                {
+                    error = enableManifoldExtrude
+                        ? "Extrude produced no new edges. None of the requested edges could be extruded."
+                        : $"None of the {edges.Count} requested edge(s) were extruded: they are all manifold (shared by 2 faces), and enableManifoldExtrude=false only extrudes boundary/open edges. Pass enableManifoldExtrude=true to allow extruding manifold edges too.",
+                    errorCode = SkillErrorCode.SemanticInvalid.ToWireString(),
+                    parameter = "enableManifoldExtrude"
+                };
+            }
+
             pbMesh.ToMesh();
             pbMesh.Refresh();
 
@@ -397,10 +446,12 @@ namespace UnitySkills
                 name = pbMesh.gameObject.name,
                 entityId = UnityObjectIdUtility.GetEntityId(pbMesh.gameObject),
                 instanceId = UnityObjectIdUtility.GetObjectId(pbMesh.gameObject),
-                extrudedEdgeCount = edges.Count,
-                newEdgeCount = newEdges?.Length ?? 0,
+                extrudedEdgeCount = newEdges.Length,
+                requestedEdgeCount = edges.Count,
+                newEdgeCount = newEdges.Length,
                 distance,
                 extrudeAsGroup,
+                enableManifoldExtrude,
                 totalFaces = pbMesh.faceCount,
                 totalVertices = pbMesh.vertexCount
             };
@@ -456,7 +507,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Mesh Operations
+        // Mesh operations
         // ==================================================================================
 
         [UnitySkill("probuilder_subdivide", "Subdivide a ProBuilder mesh or selected faces", TracksWorkflow = true,
@@ -583,10 +634,26 @@ namespace UnitySkills
             Undo.RecordObject(pbMesh, "Weld Vertices");
             WorkflowManager.SnapshotObject(pbMesh);
 
+            var vertexCountBeforeWeld = pbMesh.vertexCount;
+
+            // Reproduces the editor's built-in "Weld Vertices" action (WeldVertices.cs): first ToMesh() to put
+            // the mesh into a known-consistent state, then weld shared-vertex groups, then — a step this skill
+            // used to be missing — remove triangles that degenerate to zero area from welding before writing
+            // back the render mesh. Without this step, vertexCount would never decrease even when
+            // spatially-coincident vertices were genuinely merged into the same shared-vertex group: welding
+            // only updates the topology layer (which original vertices share a position), not the per-face
+            // corner-position array that vertexCount reflects — compacting that array is exactly what
+            // RemoveDegenerateTriangles does.
+            pbMesh.ToMesh();
             var weldedIndices = pbMesh.WeldVertices(validIndices, radius);
+
+            var removedVertices = new List<int>();
+            if (MeshValidation.ContainsDegenerateTriangles(pbMesh))
+                MeshValidation.RemoveDegenerateTriangles(pbMesh, removedVertices);
 
             pbMesh.ToMesh();
             pbMesh.Refresh();
+            pbMesh.Optimize();
 
             return new
             {
@@ -596,7 +663,9 @@ namespace UnitySkills
                 instanceId = UnityObjectIdUtility.GetObjectId(pbMesh.gameObject),
                 inputVertexCount = validIndices.Count,
                 weldedVertexCount = weldedIndices?.Length ?? 0,
+                degenerateVerticesRemoved = removedVertices.Count,
                 radius,
+                vertexCountBeforeWeld,
                 totalVertices = pbMesh.vertexCount
             };
 #endif
@@ -623,7 +692,7 @@ namespace UnitySkills
             if (faces.Count == 0)
                 return new { error = "No faces selected. Provide faceIndexes or omit to apply to all." };
 
-            // Validate inputs BEFORE Undo/Snapshot
+            // Input validation must happen before Undo/Snapshot
             if (!string.IsNullOrEmpty(materialPath))
             {
                 if (Validate.SafePath(materialPath, "materialPath") is object pathErr) return pathErr;
@@ -647,13 +716,12 @@ namespace UnitySkills
                 if (mat == null)
                     return new { error = $"Material not found: {materialPath}" };
 
-                // Determine submesh index for this material
                 var sharedMats = renderer.sharedMaterials;
                 int matIndex = Array.IndexOf(sharedMats, mat);
 
                 if (matIndex < 0)
                 {
-                    // Add material to renderer
+                    // Renderer doesn't have this material yet, so append a new slot
                     var newMats = new Material[sharedMats.Length + 1];
                     Array.Copy(sharedMats, newMats, sharedMats.Length);
                     newMats[sharedMats.Length] = mat;
@@ -686,7 +754,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Info & Transform
+        // Info and transform
         // ==================================================================================
 
         [UnitySkill("probuilder_get_info", "Get ProBuilder mesh info (vertices, faces, edges, materials, bounds)",
@@ -709,10 +777,9 @@ namespace UnitySkills
             var renderer = pbMesh.GetComponent<MeshRenderer>();
             var bounds = pbMesh.GetComponent<MeshFilter>()?.sharedMesh?.bounds ?? new Bounds();
 
-            // ProBuilderShape is internal — use reflection to get shape type name
+            // ProBuilderShape is internal, so the shape type name can only be obtained via reflection
             var shapeTypeName = GetShapeTypeName(go);
 
-            // Collect submesh info
             var submeshes = new Dictionary<int, int>();
             foreach (var face in pbMesh.faces)
             {
@@ -787,7 +854,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // UV Operations
+        // UV operations
         // ==================================================================================
 
         [UnitySkill("probuilder_project_uv", "Project UVs onto ProBuilder mesh faces using box projection", TracksWorkflow = true,
@@ -816,7 +883,7 @@ namespace UnitySkills
             Undo.RecordObject(pbMesh, "Project UV");
             WorkflowManager.SnapshotObject(pbMesh);
 
-            // UVEditing is internal — use reflection
+            // UVEditing is internal, so this can only be reached via reflection
             if (!InvokeProjectFacesBox(pbMesh, faces.ToArray(), channel))
                 return new { error = "Failed to project UVs. UVEditing.ProjectFacesBox is not accessible in this ProBuilder version." };
 
@@ -837,7 +904,7 @@ namespace UnitySkills
         }
 
         // ==================================================================================
-        // Private Helpers
+        // Private helpers
         // ==================================================================================
 
 #if PROBUILDER
@@ -857,14 +924,14 @@ namespace UnitySkills
             var go = pbMesh.gameObject;
             if (!string.IsNullOrEmpty(objName)) go.name = objName;
 
-            // Apply size via localScale then freeze (bake into vertices)
-            // This avoids reflection into internal ProBuilderShape APIs
+            // Apply size via localScale then freeze it (baked into vertices), to avoid reflecting into the
+            // internal ProBuilderShape API
             go.transform.localScale = size;
             pbMesh.FreezeScaleTransform();
             pbMesh.ToMesh();
             pbMesh.Refresh();
 
-            // Set position/rotation AFTER freeze
+            // Position/rotation must be set after freeze
             go.transform.position = pos;
             go.transform.eulerAngles = rot;
 
@@ -877,7 +944,7 @@ namespace UnitySkills
             return pbMesh;
         }
 
-        // ProBuilderShape is internal in ProBuilder 5.x — reflection for read-only queries
+        // ProBuilderShape is internal in ProBuilder 5.x, so read-only queries go through reflection
 
         private static Type _pbShapeType;
         private static PropertyInfo _pbShapeShapeProp;
@@ -897,7 +964,7 @@ namespace UnitySkills
             return shape?.GetType().Name ?? "Unknown";
         }
 
-        // UVEditing is internal in ProBuilder 5.x — reflection helper
+        // UVEditing is internal in ProBuilder 5.x; this is a reflection helper for it
 
         private static MethodInfo _projectFacesBoxMethod;
 
@@ -918,13 +985,15 @@ namespace UnitySkills
 #endif
 
         // ==================================================================================
-        // Batch & Level Design
+        // Batching and level building
         // ==================================================================================
 
         [UnitySkill("probuilder_create_batch", "Batch create multiple ProBuilder shapes in one call. items: JSON array of {shape, name, x, y, z, sizeX, sizeY, sizeZ, rotX, rotY, rotZ, parent, materialPath}", TracksWorkflow = true,
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Create,
             Tags = new[] { "probuilder", "batch", "create", "level-design" },
-            Outputs = new[] { "success", "results" })]
+            Outputs = new[] { "success", "results" },
+            MutatesScene = true,
+            RiskLevel = "medium")]
         public static object ProBuilderCreateBatch(string items, string defaultParent = null)
         {
 #if !PROBUILDER
@@ -946,7 +1015,6 @@ namespace UnitySkills
 
                 var go = pbMesh.gameObject;
 
-                // Apply material if specified
                 if (!string.IsNullOrEmpty(item.materialPath))
                 {
                     var mat = AssetDatabase.LoadAssetAtPath<Material>(item.materialPath);
@@ -1011,10 +1079,14 @@ namespace UnitySkills
             WorkflowManager.SnapshotObject(pbMesh);
 
             var delta = new Vector3(deltaX, deltaY, deltaZ);
-            var newPositions = positions.ToArray();
-            foreach (var idx in validIndices)
-                newPositions[idx] += delta;
-            pbMesh.positions = newPositions;
+
+            // Writing directly into a copy of positions[] only moves the requested per-face corner slots —
+            // each face owns its own vertices exclusively, even at corners that visually appear shared with a
+            // neighboring face — so a shared corner (or the other side of a weld) doesn't move along with it,
+            // and the mesh tears open exactly at the seam the caller expected to stay connected.
+            // TranslateVertices first resolves each index to the full SharedVertex group it belongs to, then
+            // moves the whole group together.
+            pbMesh.TranslateVertices(validIndices, delta);
 
             pbMesh.ToMesh();
             pbMesh.Refresh();
@@ -1049,11 +1121,39 @@ namespace UnitySkills
 
             if (Validate.RequiredJsonArray(vertices, "vertices") is object jsonErr) return jsonErr;
 
+            // Validate.RequiredJsonArray only rejects null/empty/"[]" — it doesn't parse the string. So
+            // malformed JSON (a trailing comma, unquoted keys, mismatched brackets, an array of wrongly-shaped
+            // elements) reaches DeserializeObject completely unguarded and throws a raw
+            // JsonReaderException/JsonSerializationException, aborting the whole request outright instead of
+            // presenting a normal structured error that explains the expected shape.
+            List<VertexPosItem> items;
+            try
+            {
+                items = Newtonsoft.Json.JsonConvert.DeserializeObject<List<VertexPosItem>>(vertices);
+            }
+            catch (Newtonsoft.Json.JsonException ex)
+            {
+                return new
+                {
+                    error = $"'vertices' is not valid JSON: {ex.Message}. Expected a JSON array of {{\"index\": int, \"x\": float, \"y\": float, \"z\": float}}, e.g. [{{\"index\":0,\"x\":1,\"y\":0,\"z\":0}}].",
+                    errorCode = SkillErrorCode.SemanticInvalid.ToWireString(),
+                    parameter = "vertices"
+                };
+            }
+            if (items == null || items.Count == 0)
+            {
+                return new
+                {
+                    error = "'vertices' must be a non-empty JSON array of {\"index\": int, \"x\": float, \"y\": float, \"z\": float}.",
+                    errorCode = SkillErrorCode.SemanticInvalid.ToWireString(),
+                    parameter = "vertices"
+                };
+            }
+
             Undo.RecordObject(pbMesh, "Set Vertices");
             WorkflowManager.SnapshotObject(pbMesh);
 
             var positions = pbMesh.positions.ToArray();
-            var items = Newtonsoft.Json.JsonConvert.DeserializeObject<List<VertexPosItem>>(vertices);
             int setCount = 0;
 
             foreach (var item in items)
@@ -1125,7 +1225,7 @@ namespace UnitySkills
             }
             else
             {
-                // Summary mode for large meshes
+                // Large meshes fall back to summary mode
                 var bounds = pbMesh.GetComponent<MeshFilter>()?.sharedMesh?.bounds ?? new Bounds();
                 return new
                 {
@@ -1184,7 +1284,6 @@ namespace UnitySkills
             if (meshes.Count < 2)
                 return new { error = "At least 2 ProBuilder meshes are required to combine" };
 
-            // Record undo for all source meshes
             foreach (var m in meshes)
             {
                 Undo.RecordObject(m.gameObject, "Combine Meshes");
@@ -1194,7 +1293,7 @@ namespace UnitySkills
             var target = meshes[0];
             var result = CombineMeshes.Combine(meshes, target);
 
-            // Destroy source meshes (except target)
+            // Destroy the source meshes (keep target)
             for (int i = 1; i < meshes.Count; i++)
                 Undo.DestroyObjectImmediate(meshes[i].gameObject);
 
@@ -1248,7 +1347,7 @@ namespace UnitySkills
             }
             else if (r.HasValue || g.HasValue || b.HasValue)
             {
-                // Create a temporary colored material using current render pipeline's shader
+                // Build a temporary shaded material using the current render pipeline's shader
                 var color = new Color(r ?? 0.5f, g ?? 0.5f, b ?? 0.5f, a ?? 1f);
                 var shaderName = ProjectSkills.GetDefaultShaderName();
                 var shader = Shader.Find(shaderName);

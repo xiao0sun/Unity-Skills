@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading;
 using UnityEditor;
@@ -9,24 +9,21 @@ using Newtonsoft.Json.Linq;
 namespace UnitySkills
 {
     /// <summary>
-    /// In-memory event channel backing GET /events long-polling: editor-side sources publish
-    /// events, HTTP-side waiters read them — turning the REST API from pull-only into
-    /// "Unity can push".
+    /// In-memory event channel backing the GET /events long-poll: editor-side event sources publish,
+    /// HTTP-side waiters read, turning the REST API from pure-pull into "Unity can also push".
     ///
-    /// Threading contract (mirrors SkillsHttpServer's producer-consumer split):
-    /// - Publish and all event-source callbacks run on the MAIN THREAD only (they serialize
-    ///   the payload, append to the ring buffer, persist the seq via SessionState and set the
-    ///   wakeup signal).
-    /// - TryReadEventsAfter / GetCurrentSeq / ResetSignal / WaitSignal are safe on ThreadPool
-    ///   threads: zero Unity API, zero SessionState — buffer access is guarded by a lock whose
-    ///   critical section only appends/copies list entries (payload serialization happens
-    ///   outside it).
-    /// - Long-poll correctness relies on waiters re-scanning the buffer every 250ms; the
-    ///   signal only reduces latency, so its multi-consumer Reset race is harmless.
+    /// Threading contract (consistent with SkillsHttpServer's producer-consumer split):
+    /// - Publish and all event-source callbacks run only on the main thread (serializing the payload,
+    ///   appending to the ring buffer, persisting seq via SessionState, and setting the wake signal).
+    /// - TryReadEventsAfter / GetCurrentSeq / ResetSignal / WaitSignal are safe to call on thread-pool
+    ///   threads: they touch no Unity API and no SessionState; buffer access is protected by a lock,
+    ///   and the critical section only does list append/copy (payload serialization happens outside the lock).
+    /// - Long-poll correctness relies on each waiter re-scanning the buffer every 250ms; the signal
+    ///   only reduces latency, so a Reset race under multiple consumers is harmless.
     ///
-    /// Persistence: only the seq counter survives a domain reload (SessionState), so cursors
-    /// never move backwards; buffered events are lost with the old domain — clients detect the
-    /// gap via oldestSeq/dropped and learn the compile outcome from server_restored.
+    /// Persistence: only the seq counter survives a domain reload (via SessionState), guaranteeing the
+    /// cursor never goes backwards; events in the buffer are lost along with the old domain -- clients
+    /// detect the gap via oldestSeq/dropped and learn the compile result from the server_restored event.
     /// </summary>
     [InitializeOnLoad]
     public static class EventChannelService
@@ -44,29 +41,28 @@ namespace UnitySkills
             public string ReadyJson;
         }
 
-        // Ring buffer + seq counter, shared between the main thread (Publish) and ThreadPool
-        // waiters (TryReadEventsAfter/GetCurrentSeq) — every access goes through _bufferLock.
+        // The ring buffer and seq counter are shared between the main thread (Publish) and thread-pool
+        // waiters (TryReadEventsAfter/GetCurrentSeq); every access must go through _bufferLock.
         private static readonly object _bufferLock = new object();
         private static readonly Queue<BufferedEvent> _buffer = new Queue<BufferedEvent>(BufferCapacity + 1);
         private static long _seq;
 
-        // Set by Publish (main thread), Reset/Wait by long-poll waiters (ThreadPool).
+        // Set by Publish (main thread); Reset / Wait by long-poll waiters (thread pool).
         private static readonly ManualResetEventSlim _signal = new ManualResetEventSlim(false);
 
-        // console_error throttle state — main thread only (logMessageReceived, non-Threaded).
+        // Rate-limit state for console_error, main-thread-only access (non-Threaded logMessageReceived).
         private static long _consoleWindowStartTicks;
         private static int _consoleErrorsThisWindow;
         private static long _consoleDroppedSinceLast;
-        // Guards against Publish-failure logging re-entering OnLogMessageReceived.
+        // Prevents a log emitted by a failed Publish from re-entering OnLogMessageReceived and recursing.
         private static bool _publishingConsoleError;
 
         static EventChannelService()
         {
             try
             {
-                // Restore the seq counter so cursors held by clients across a domain reload
-                // never observe a seq going backwards. C# guarantees this runs before the
-                // first Publish (static constructor precedes any static member access).
+                // Restores the seq counter so a client's cursor across a domain reload never sees seq go
+                // backwards. C# guarantees the static constructor runs before any static member access, so this always happens before the first Publish.
                 long.TryParse(SessionState.GetString(SessionKeySeq, "0"), out _seq);
 
                 AssemblyReloadEvents.beforeAssemblyReload += OnBeforeAssemblyReload;
@@ -81,9 +77,9 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Publishes one event to the channel. MAIN THREAD ONLY (serializes the payload,
-        /// touches SessionState). <paramref name="type"/> must be a plain identifier
-        /// (snake_case, no quotes/escapes) — it is embedded into JSON without escaping.
+        /// Publishes an event to the channel. Main thread only (needs to serialize the payload and
+        /// touch SessionState). <paramref name="type"/> must be a plain identifier (snake_case, no
+        /// quotes or escaping) -- it gets embedded directly into the JSON with no escaping.
         /// </summary>
         public static void Publish(string type, object payload)
         {
@@ -97,9 +93,8 @@ namespace UnitySkills
                 long seq;
                 lock (_bufferLock)
                 {
-                    // seq assignment stays inside the lock so readers never observe a seq
-                    // without its event in the buffer (the concat here is trivial; the
-                    // expensive JsonConvert call is done above, outside the lock).
+                    // seq assignment must stay inside the lock, or a reader could see a seq whose matching
+                    // event isn't in the buffer yet. The string concatenation here is cheap; the expensive JsonConvert call already ran outside the lock.
                     seq = ++_seq;
                     _buffer.Enqueue(new BufferedEvent
                     {
@@ -120,17 +115,16 @@ namespace UnitySkills
             }
             catch (Exception ex)
             {
-                // LogWarning, never LogError: an Error here would re-enter the console_error
-                // source (logMessageReceived) and risk recursion.
+                // Must use LogWarning, never LogError: an Error would re-enter the console_error
+                // event source (logMessageReceived), risking recursion.
                 SkillsLogger.LogWarning($"EventChannel publish failed for '{type}': {ex.Message}");
             }
         }
 
         /// <summary>
-        /// Publishes server_restored with a summary of the last compilation result. The
-        /// compilation_finished event for a successful compile is published in the OLD domain
-        /// and dies with the in-memory buffer on reload — a reconnecting client learns the
-        /// compile outcome from this event instead. MAIN THREAD ONLY.
+        /// Publishes server_restored, with a summary of the last compile result attached. The
+        /// compilation_finished event for a successful compile was published in the old domain and disappears
+        /// along with the in-memory buffer on reload -- reconnecting clients instead learn the compile result from this event. Main thread only.
         /// </summary>
         internal static void PublishServerRestored(int port)
         {
@@ -140,8 +134,8 @@ namespace UnitySkills
                 string json = CompilationResultService.GetLastCompilationJson();
                 if (!string.IsNullOrEmpty(json))
                 {
-                    // DateParseHandling.None keeps finishedAtUtc as the raw ISO-8601 string
-                    // (plain JObject.Parse would coerce it into a localized Date.ToString()).
+                    // DateParseHandling.None preserves finishedAtUtc's original ISO-8601 string;
+                    // calling JObject.Parse directly would force it into a localized Date.ToString().
                     JObject parsed;
                     using (var reader = new JsonTextReader(new System.IO.StringReader(json))
                            { DateParseHandling = DateParseHandling.None })
@@ -162,13 +156,12 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Copies the ready-made JSON of every buffered event with seq &gt; <paramref name="since"/>
-        /// (optionally filtered by type) into <paramref name="jsons"/>. Returns true when at
-        /// least one event matched. SAFE OFF THE MAIN THREAD — zero Unity API.
-        /// <paramref name="cursor"/> is the current max seq (scan upper bound: pass it back as
-        /// the next 'since' even when type filtering skipped events). <paramref name="oldestSeq"/>
-        /// is the seq of the oldest buffered event, or max+1 when the buffer is empty
-        /// ("nothing older is available").
+        /// Copies the ready-made JSON for buffered events with seq &gt; <paramref name="since"/>
+        /// (optionally filtered by type) into <paramref name="jsons"/>, returning true if at least one
+        /// matched. Safe to call off the main thread -- touches no Unity API.
+        /// <paramref name="cursor"/> is the current max seq (the scan's upper bound: even if type
+        /// filtering skipped events, it should still be passed back as the next call's since).
+        /// <paramref name="oldestSeq"/> is the seq of the oldest event in the buffer; when empty this is max+1, meaning "nothing older is available".
         /// </summary>
         public static bool TryReadEventsAfter(long since, string[] typeFilter,
             out List<string> jsons, out long cursor, out long oldestSeq)
@@ -196,7 +189,7 @@ namespace UnitySkills
             return jsons.Count > 0;
         }
 
-        /// <summary>Current max seq — used as the default 'since' ("wait for new events only"). Thread-safe.</summary>
+        /// <summary>Current max seq, used as the default since (i.e. "only wait for new events"). Thread-safe.</summary>
         public static long GetCurrentSeq()
         {
             lock (_bufferLock)
@@ -204,13 +197,12 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Resets the wakeup signal. Call BEFORE scanning the buffer so a publish landing
-        /// after the scan sets it again; races with other waiters are harmless because every
-        /// waiter re-scans on a 250ms interval regardless. Thread-safe.
+        /// Resets the wake signal. Must be called before scanning the buffer, so a publish that arrives
+        /// after the scan can re-set it; harmless to race with other waiters since every waiter re-scans every 250ms regardless. Thread-safe.
         /// </summary>
         public static void ResetSignal() => _signal.Reset();
 
-        /// <summary>Blocks until a publish or the timeout, whichever first. Thread-safe.</summary>
+        /// <summary>Blocks until an event is published or the timeout elapses, whichever comes first. Thread-safe.</summary>
         public static bool WaitSignal(int millisecondsTimeout) => _signal.Wait(millisecondsTimeout);
 
         private static bool MatchesTypeFilter(string typeName, string[] typeFilter)
@@ -227,8 +219,8 @@ namespace UnitySkills
 
         private static void OnBeforeAssemblyReload()
         {
-            // Best-effort: the buffer dies with this domain moments later, but a waiter
-            // already blocked in a long poll can still be signalled and deliver it.
+            // Best-effort: the buffer disappears along with this domain almost immediately, but a
+            // waiter already blocked in the long-poll may still be woken and get this event sent out.
             Publish("before_domain_reload", new { reason = "assembly_reload" });
         }
 

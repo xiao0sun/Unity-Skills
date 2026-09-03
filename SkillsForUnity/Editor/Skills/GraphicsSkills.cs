@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
@@ -9,11 +9,11 @@ using Newtonsoft.Json;
 namespace UnitySkills
 {
     /// <summary>
-    /// Graphics and quality settings skills for SRP-aware projects.
+    /// Graphics and quality settings skills targeting SRP-based projects.
     /// </summary>
     public static class GraphicsSkills
     {
-        // --- Workflow setting restorers (real, reversible undo/redo) ---
+        // --- Workflow setting restorer (enables true, rollback-capable undo/redo) ---
 
         private sealed class ShaderStrippingValue
         {
@@ -23,10 +23,10 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Registers getters/setters for graphics settings so their skill changes are truly
-        /// reversible via workflow undo/redo. Stateless keys are registered here on domain load;
-        /// the per-quality-level render pipeline key is registered on demand (its getter needs
-        /// the level) in <see cref="GraphicsSetQualityRenderPipeline"/>.
+        /// Registers readers/writers for graphics settings, so changes made by the related skills can actually
+        /// be rolled back through workflow undo/redo. Stateless keys are all registered once at domain load;
+        /// the per-quality-level render pipeline keys need a level parameter for their getter, so they're
+        /// registered on demand inside <see cref="GraphicsSetQualityRenderPipeline"/>.
         /// </summary>
         [InitializeOnLoadMethod]
         private static void RegisterSettingRestorers()
@@ -60,8 +60,8 @@ namespace UnitySkills
                 CaptureShaderStripping,
                 ApplyShaderStripping);
 
-            // Register a per-level render pipeline restorer for every existing quality level so
-            // undo/redo works even after a domain reload (which clears the in-memory registry).
+            // Register a render pipeline restorer for every quality level that already exists, so undo/redo
+            // still works after a domain reload clears the in-memory registry.
             for (var level = 0; level < QualitySettings.names.Length; level++)
                 EnsureQualityRenderPipelineRestorer(level);
         }
@@ -69,8 +69,8 @@ namespace UnitySkills
         private static string QualityRenderPipelineKey(int level) => "graphics.qualityRenderPipeline:" + level;
 
         /// <summary>
-        /// Registers (idempotently) a getter/setter for a specific quality level's render pipeline.
-        /// The level is captured in the closures because the registry passes no key to handlers.
+        /// Idempotently registers a render pipeline reader/writer for the given quality level.
+        /// The level is captured by the closure, since the registry doesn't pass the key back to the handler.
         /// </summary>
         private static void EnsureQualityRenderPipelineRestorer(int level)
         {

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using UnityEditor;
@@ -7,7 +7,7 @@ using UnityEngine;
 namespace UnitySkills
 {
     /// <summary>
-    /// Shader Graph asset creation, inspection, and constrained editing skills.
+    /// Creation, inspection, and constrained editing skills for Shader Graph assets.
     /// </summary>
     public static class ShaderGraphSkills
     {
@@ -265,7 +265,7 @@ namespace UnitySkills
 
             SnapshotGraphAsset(assetPath);
             if (!ShaderGraphReflectionHelper.TryAddNode(assetPath, nodeType, x, y, settings, out var nodeInfo, out var error))
-                return new { error };
+                return GraphError(error);
 
             return new
             {
@@ -292,7 +292,7 @@ namespace UnitySkills
 
             SnapshotGraphAsset(assetPath);
             if (!ShaderGraphReflectionHelper.TryRemoveNode(assetPath, nodeId, out var removedInfo, out var error))
-                return new { error };
+                return GraphError(error);
 
             return new
             {
@@ -318,7 +318,7 @@ namespace UnitySkills
 
             SnapshotGraphAsset(assetPath);
             if (!ShaderGraphReflectionHelper.TryMoveNode(assetPath, nodeId, x, y, out var nodeInfo, out var error))
-                return new { error };
+                return GraphError(error);
 
             return new
             {
@@ -345,7 +345,7 @@ namespace UnitySkills
 
             SnapshotGraphAsset(assetPath);
             if (!ShaderGraphReflectionHelper.TryConnectNodes(assetPath, fromNodeId, fromSlotId, toNodeId, toSlotId, out var edgeInfo, out var error))
-                return new { error };
+                return GraphError(error);
 
             return new
             {
@@ -372,7 +372,7 @@ namespace UnitySkills
 
             SnapshotGraphAsset(assetPath);
             if (!ShaderGraphReflectionHelper.TryDisconnectNodes(assetPath, fromNodeId, fromSlotId, toNodeId, toSlotId, out var edgeInfo, out var error))
-                return new { error };
+                return GraphError(error);
 
             return new
             {
@@ -398,7 +398,7 @@ namespace UnitySkills
 
             SnapshotGraphAsset(assetPath);
             if (!ShaderGraphReflectionHelper.TrySetNodeDefaults(assetPath, nodeId, slotId, value, out var nodeInfo, out var error))
-                return new { error };
+                return SetNodeDefaultsError(error);
 
             return new
             {
@@ -424,7 +424,7 @@ namespace UnitySkills
 
             SnapshotGraphAsset(assetPath);
             if (!ShaderGraphReflectionHelper.TrySetNodeSettings(assetPath, nodeId, settings, out var nodeInfo, out var error))
-                return new { error };
+                return GraphError(error);
 
             return new
             {
@@ -483,7 +483,7 @@ namespace UnitySkills
 
             SnapshotGraphAsset(assetPath);
             if (!ShaderGraphReflectionHelper.TryAddProperty(assetPath, propertyType, displayName, referenceName, value, exposed, hidden, out var propertyInfo, out var error))
-                return new { error };
+                return GraphError(error);
 
             return new
             {
@@ -518,7 +518,7 @@ namespace UnitySkills
 
             SnapshotGraphAsset(assetPath);
             if (!ShaderGraphReflectionHelper.TryUpdateProperty(assetPath, propertyName, referenceName, newDisplayName, newReferenceName, value, exposed, hidden, out var propertyInfo, out var error))
-                return new { error };
+                return GraphError(error);
 
             return new
             {
@@ -546,7 +546,7 @@ namespace UnitySkills
 
             SnapshotGraphAsset(assetPath);
             if (!ShaderGraphReflectionHelper.TryRemoveProperty(assetPath, propertyName, referenceName, out var error))
-                return new { error };
+                return GraphError(error);
 
             return new
             {
@@ -605,7 +605,7 @@ namespace UnitySkills
 
             SnapshotGraphAsset(assetPath);
             if (!ShaderGraphReflectionHelper.TryAddKeyword(assetPath, keywordType, displayName, referenceName, definition, scope, entries, value, out var keywordInfo, out var error))
-                return new { error };
+                return GraphError(error);
 
             return new
             {
@@ -641,7 +641,7 @@ namespace UnitySkills
 
             SnapshotGraphAsset(assetPath);
             if (!ShaderGraphReflectionHelper.TryUpdateKeyword(assetPath, displayName, referenceName, newDisplayName, newReferenceName, definition, scope, entries, value, out var keywordInfo, out var error))
-                return new { error };
+                return GraphError(error);
 
             return new
             {
@@ -669,7 +669,7 @@ namespace UnitySkills
 
             SnapshotGraphAsset(assetPath);
             if (!ShaderGraphReflectionHelper.TryRemoveKeyword(assetPath, displayName, referenceName, out var error))
-                return new { error };
+                return GraphError(error);
 
             return new
             {
@@ -708,6 +708,74 @@ namespace UnitySkills
             var asset = AssetDatabase.LoadMainAssetAtPath(assetPath);
             if (asset != null)
                 WorkflowManager.SnapshotObject(asset);
+        }
+
+        /// <summary>
+        /// Wraps a <c>ShaderGraphReflectionHelper</c> failure into the router's first-tier error contract
+        /// (<c>SkillResultHelper.TryGetErrorContext</c>). Every node/slot/edge/property/keyword failure here is
+        /// about the graph's own internal state — a nodeId, slotId, propertyName, or keyword that doesn't exist
+        /// in this asset, unrelated to a scene GameObject or a material's exposed shader properties. If left to
+        /// the router's message-pattern classifier (<see cref="SkillErrorClassifier"/>), "Node 'x' was not
+        /// found" and "Keyword not found: x" would be read as a generic not-found and paired with relatedSkills
+        /// = gameobject_find/scene_get_hierarchy; "Property not found: x" would be read as PropertyNotOnTarget
+        /// and paired with material_get_properties — both would send the caller off digging through the
+        /// scene/material system for something that only exists inside this graph asset. Explicitly declaring
+        /// relatedSkills/suggestedFixes here unconditionally overrides that guess
+        /// (<c>errorContext.RelatedSkills ?? classified.RelatedSkills</c>); errorCode is still left to the
+        /// classifier to infer from the message text, since for these messages it already infers correctly
+        /// (TARGET_NOT_FOUND / SEMANTIC_INVALID / MISSING_PACKAGE).
+        /// </summary>
+        private static object GraphError(string error) => new
+        {
+            error,
+            relatedSkills = new[] { "shadergraph_get_structure", "shadergraph_get_info" },
+            suggestedFixes = new[]
+            {
+                new
+                {
+                    action = "find_target",
+                    skill = "shadergraph_get_structure",
+                    reason = "List the graph's actual nodes, slots, edges, properties, and keywords, then retry with an id/name from that structure."
+                }
+            }
+        };
+
+        /// <summary>
+        /// <c>shadergraph_set_node_defaults</c> hands <paramref name="value"/> to
+        /// <c>ShaderGraphReflectionHelper.TrySetNodeDefaults</c>, which converts it via <c>Convert.ToSingle</c>
+        /// and similar based on the slot's CLR type. When the shape doesn't match — passing an object
+        /// (<c>{"x":3.14}</c>) to a Vector1 slot that just wants a bare number, or conversely a bare number to a
+        /// DynamicVector slot — the conversion throws <c>InvalidCastException</c> internally, and the helper
+        /// catches it and passes <c>ex.Message</c> straight through as-is: "Specified cast is not valid.",
+        /// which names neither the parameter, nor the slot, nor the expected shape. That text also doesn't
+        /// match any rule in <see cref="SkillErrorClassifier"/>, so it falls through to SKILL_ERROR + abort —
+        /// effectively telling the caller to give up instead of retrying with a different shape. Matching here
+        /// is done by substring, since the exact wording is a runtime message rather than a contract; every
+        /// other helper error still goes through <see cref="GraphError"/>.
+        /// </summary>
+        private static object SetNodeDefaultsError(string error)
+        {
+            if (!string.IsNullOrEmpty(error) && error.IndexOf("cast is not valid", StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                return new
+                {
+                    error = "The 'value' shape does not match this slot's default value type. A Vector1 (float) slot needs a bare number, e.g. 3.14. A Vector2/Vector3/Vector4/Color slot needs an object with matching component keys (x/y/z/w or r/g/b/a), a JSON array, or a comma-separated string. A boolean slot needs true/false.",
+                    errorCode = SkillParamUtil.SemanticInvalidCode,
+                    parameter = "value",
+                    relatedSkills = new[] { "shadergraph_get_structure" },
+                    suggestedFixes = new[]
+                    {
+                        new
+                        {
+                            action = "fix_param",
+                            skill = "shadergraph_get_structure",
+                            reason = "Inspect the target slot's concreteValueType/slot kind, then retry with a value shaped for that type."
+                        }
+                    }
+                };
+            }
+
+            return GraphError(error);
         }
     }
 }

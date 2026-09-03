@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -10,7 +10,7 @@ using UnityEngine.Rendering.Universal;
 namespace UnitySkills
 {
     /// <summary>
-    /// URP decal projector skills.
+    /// URP Decal Projector skills.
     /// </summary>
     public static class DecalSkills
     {
@@ -25,6 +25,9 @@ namespace UnitySkills
             Category = SkillCategory.Decal, Operation = SkillOperation.Query,
             Tags = new[] { "decal", "projector", "info" },
             Outputs = new[] { "name", "material", "size" },
+            // Must stay byte-for-byte identical to the declaration in the URP-installed branch
+            // below: the two variants are the same endpoint, and only one of them compiles in.
+            RequiresInput = new[] { "gameObject" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object DecalGetInfo(string name = null, int instanceId = 0, string path = null) => RenderPipelineSkillsCommon.NoURP();
@@ -33,7 +36,24 @@ namespace UnitySkills
             Category = SkillCategory.Decal, Operation = SkillOperation.Modify,
             Tags = new[] { "decal", "projector", "modify" },
             Outputs = new[] { "name", "material", "size" })]
-        public static object DecalSetProperties(string name = null, int instanceId = 0, string path = null, string materialPath = null) => RenderPipelineSkillsCommon.NoURP();
+        // The parameter list must stay byte-for-byte identical to the real URP-branch implementation:
+        // in a no-URP CI project, the doc-consistency test can only see this stub, and one missing parameter would get the docs flagged as "has extra parameters".
+        public static object DecalSetProperties(
+            string name = null,
+            int instanceId = 0,
+            string path = null,
+            string materialPath = null,
+            float? drawDistance = null,
+            float? fadeScale = null,
+            float? fadeFactor = null,
+            float? startAngleFade = null,
+            float? endAngleFade = null,
+            string uvScale = null,
+            string uvBias = null,
+            string size = null,
+            string pivot = null,
+            uint? renderingLayerMask = null,
+            string scaleMode = null) => RenderPipelineSkillsCommon.NoURP();
 
         [UnitySkill("decal_find_all", "Find all Decal Projectors in the scene",
             Category = SkillCategory.Decal, Operation = SkillOperation.Query,
@@ -50,7 +70,7 @@ namespace UnitySkills
             RiskLevel = "medium")]
         public static object DecalDelete(string name = null, int instanceId = 0, string path = null) => RenderPipelineSkillsCommon.NoURP();
 
-        [UnitySkill("decal_set_properties_batch", "Modify multiple Decal Projectors in one request",
+        [UnitySkill("decal_set_properties_batch", "Modify multiple Decal Projectors in one request. items: JSON array of {name, instanceId, path, materialPath, drawDistance, fadeScale, fadeFactor, startAngleFade, endAngleFade, uvScale, uvBias, size, pivot, renderingLayerMask, scaleMode}",
             Category = SkillCategory.Decal, Operation = SkillOperation.Modify,
             Tags = new[] { "decal", "projector", "batch" },
             Outputs = new[] { "successCount", "failCount", "results" })]
@@ -94,6 +114,10 @@ namespace UnitySkills
             Category = SkillCategory.Decal, Operation = SkillOperation.Query,
             Tags = new[] { "decal", "projector", "info" },
             Outputs = new[] { "name", "material", "size" },
+            // Each of the three locator parameters looks optional on its own; without declaring this group
+            // token, an empty request body would run all the way to GameObjectFinder reporting "not found" -- a lookup failure for a target the caller never specified in the first place.
+            // The group token lets the entry point say clearly up front "you didn't specify a target."
+            RequiresInput = new[] { "gameObject" },
             ReadOnly = true,
             RequiresPackages = new[] { "com.unity.render-pipelines.universal" },
             Mode = SkillMode.SemiAuto)]
@@ -244,7 +268,7 @@ namespace UnitySkills
             };
         }
 
-        [UnitySkill("decal_set_properties_batch", "Modify multiple Decal Projectors in one request",
+        [UnitySkill("decal_set_properties_batch", "Modify multiple Decal Projectors in one request. items: JSON array of {name, instanceId, path, materialPath, drawDistance, fadeScale, fadeFactor, startAngleFade, endAngleFade, uvScale, uvBias, size, pivot, renderingLayerMask, scaleMode}",
             Category = SkillCategory.Decal, Operation = SkillOperation.Modify,
             Tags = new[] { "decal", "projector", "batch" },
             Outputs = new[] { "successCount", "failCount", "results" },

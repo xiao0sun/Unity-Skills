@@ -1,4 +1,4 @@
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -6,27 +6,26 @@ using Newtonsoft.Json.Linq;
 namespace UnitySkills
 {
     /// <summary>
-    /// Concrete recovery suggestion delivered alongside an error response so AI agents
-    /// can self-recover without round-tripping through a human.
+    /// A concrete recovery suggestion delivered alongside an error response, so an AI agent can recover
+    /// on its own without going back to ask a human.
     /// </summary>
     public sealed class SuggestedFix
     {
-        /// <summary>Action verb: "retry", "fix_param", "find_target", "install_package", "wait", "confirm".</summary>
+        /// <summary>The action verb: "retry", "fix_param", "find_target", "install_package", "wait", "confirm".</summary>
         public string action;
 
-        /// <summary>Optional alternative skill the caller should consider.</summary>
+        /// <summary>Optional: an alternative skill suggested for the caller to consider.</summary>
         public string skill;
 
-        /// <summary>Optional argument shape the caller should retry with.</summary>
+        /// <summary>Optional: parameters suggested for the caller to retry with, in this shape.</summary>
         public object args;
 
-        /// <summary>Single-sentence rationale for this suggestion.</summary>
+        /// <summary>A one-sentence explanation of why this suggestion applies.</summary>
         public string reason;
     }
 
     /// <summary>
-    /// Unified builder for REST error payloads. Every routing/validation/runtime failure
-    /// returns the same shape:
+    /// Unified constructor for REST error payloads. Every routing/validation/runtime failure returns the same shape:
     /// <code>
     /// {
     ///   "status": "error",
@@ -43,7 +42,7 @@ namespace UnitySkills
     /// </summary>
     public static class SkillErrorResponse
     {
-        // Stable wire values for retryStrategy.
+        // Stable, publicly-relied-upon values for retryStrategy.
         public const string RetryFixAndRetry     = "fix_and_retry";
         public const string RetryWaitAndRetry    = "wait_and_retry";
         public const string RetryFindAndRetry    = "find_target_and_retry";
@@ -106,7 +105,7 @@ namespace UnitySkills
             return JsonConvert.SerializeObject(payload, _jsonSettings);
         }
 
-        /// <summary>Skill name lookup miss with optional suggestions from fuzzy matching.</summary>
+        /// <summary>Skill name lookup missed; may attach candidate suggestions from a fuzzy match.</summary>
         public static string SkillNotFound(string skillName, IList<string> nearestSkills = null)
         {
             var fixes = new List<SuggestedFix>();
@@ -139,11 +138,11 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// The caller sent a Python-client helper function name (e.g. <c>get_skill_schema</c>) as if
-        /// it were a REST skill. Reported as SKILL_NOT_FOUND like any other miss, but with the
-        /// concrete REST equivalent instead of fuzzy name candidates: these helpers share no token
-        /// with any registered skill, so <see cref="SkillNotFound"/>'s nearest-name search comes back
-        /// empty and leaves the caller with no way to self-correct.
+        /// The caller sent the name of a Python client helper function (e.g. <c>get_skill_schema</c>) as if it were a REST skill.
+        /// Reports SKILL_NOT_FOUND like any other miss, but gives the specific corresponding REST usage
+        /// instead of fuzzy name candidates: these helper functions share no token with any registered
+        /// skill, so <see cref="SkillNotFound"/>'s nearest-name search would come back empty, leaving the
+        /// caller with no way to self-correct.
         /// </summary>
         public static string ClientHelperNotASkill(string helperName, string restEquivalent)
         {
@@ -164,14 +163,14 @@ namespace UnitySkills
                 retryStrategy: RetryFixAndRetry);
         }
 
-        /// <summary>Generic internal error wrapper for caller convenience.</summary>
+        /// <summary>Generic internal error wrapper, for easy handling by the caller.</summary>
         public static string Internal(string message, string skill = null) =>
             Build(SkillErrorCode.Internal, message, skill: skill, retryStrategy: Abort);
     }
 
     /// <summary>
-    /// The classification decided for one business error: which code to report, how the caller
-    /// should react, and what to try next.
+    /// The classification verdict reached for a business error: which error code to report, how the
+    /// caller should react, and what to try next.
     /// </summary>
     public sealed class SkillErrorClassification
     {
@@ -182,39 +181,51 @@ namespace UnitySkills
     }
 
     /// <summary>
-    /// Message-pattern classifier for skill business errors — layer 2 of the router's error
-    /// contract.
+    /// A message-pattern classifier for skill business errors — the second tier of the router's error contract.
     ///
-    /// <para>Layer 1 is the opt-in pass-through: a skill that declares <c>errorCode</c> /
-    /// <c>suggestedFixes</c> / <c>retryStrategy</c> / <c>relatedSkills</c> on its error object has
-    /// those honoured verbatim. Layer 2 exists because the overwhelming majority of skills return
-    /// only <c>new { error = "..." }</c>; without it every one of them would collapse into
-    /// <c>SKILL_ERROR</c> + <c>abort</c>, which tells an agent nothing about whether the call is
-    /// worth retrying.</para>
+    /// <para>The first tier is an optional pass-through: if a skill declares <c>errorCode</c> /
+    /// <c>suggestedFixes</c> / <c>retryStrategy</c> / <c>relatedSkills</c> on its own error object, that is
+    /// used as-is. The second tier exists because the vast majority of skills just return
+    /// <c>new { error = "..." }</c>; without it, these errors would all collapse into
+    /// <c>SKILL_ERROR</c> + <c>abort</c>, which gives the agent no help at all in deciding whether
+    /// this call is worth retrying.</para>
     ///
-    /// <para>The rules below were derived by bucketing the ~950 error literals that actually exist
-    /// in <c>*Skills.cs</c>, not from first principles; they cover ~82% of them. Order matters —
-    /// the first matching rule wins, and the residual bucket keeps today's
-    /// <c>SKILL_ERROR</c> + <c>abort</c> behaviour. No rule may ever emit
-    /// <c>wait_and_retry</c>: the Python client auto-retries on that strategy, and a business
-    /// error the caller must fix would spin.</para>
+    /// <para>The rules below were induced by bucketing the roughly 950 error literals that actually
+    /// exist in <c>*Skills.cs</c> — not derived from first principles — and cover about 82% of them.
+    /// Order matters — the first rule that matches wins, and the fallback bucket keeps the
+    /// <c>SKILL_ERROR</c> + <c>abort</c> behavior that existed before. No rule may ever produce
+    /// <c>wait_and_retry</c>: the Python client auto-retries on that strategy, and a business error that
+    /// needs the caller to fix something would just spin in place.</para>
     /// </summary>
     public static class SkillErrorClassifier
     {
-        // Rule 1 — an optional package/asset-store dependency is absent.
+        // Rule 1 — Missing an optional package / Asset Store dependency.
         private static readonly string[] DependencyMarkers =
         {
             "not installed", "not imported", "requires com.", "requires the",
             "package manager", "install via", "from the asset store", "未安装",
         };
 
-        // Rule 2 — the thing the caller wants to create is already there.
+        // Rule 1b — "Package not found: com.x" / "Package 'x' does not exist" identifies the missing
+        // thing as the *package* itself.
+        // The word "package" must sit right next to the not-found phrase (at most one quoted, parenthesized,
+        // or dotted package id may sit between them): error messages interpolate an identifier supplied by
+        // the caller, and if we only matched Contains("package"), any jobId
+        // ("DefaultPackage_validation_1") or "Packages/..." asset path could get an ordinary lookup miss
+        // misjudged as MISSING_PACKAGE, sending the agent to package_install instead of fixing that id or path.
+        // \bpackage\b doesn't match either of those; the lookbehind assertion also excludes
+        // "Group 'g' not found in package 'p'" (a lookup inside an already-existing package).
+        private static readonly Regex PackageAbsentPattern = new Regex(
+            @"(?<!\bin )\bpackage\b(?:\s+(?:'[^']*'|""[^""]*""|\([\w.@/~-]+\)|[\w-]+(?:\.[\w-]+)+))?\s*:?\s*(?:is |was )?(?:not found|does not exist)",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+        // Rule 2 — What the caller wants to create already exists.
         private static readonly string[] ConflictMarkers =
         {
             "already exists", "already has", "already in use", "already registered", "已存在",
         };
 
-        // Rule 3 — the target could not be located.
+        // Rule 3 — The target can't be located.
         private static readonly string[] NotFoundMarkers =
         {
             "not found", "was not found", "no gameobject", "could not find", "could not locate",
@@ -222,15 +233,52 @@ namespace UnitySkills
             "找不到", "不存在",
         };
 
-        // Rule 6 — a parameter the caller owns was omitted. "provide " carries a trailing space so
-        // it cannot match "provided"; the "no X provided" forms are already taken by rule 4.
+        // Rule 3a — The target *is already* located; what's missing is the property or field the caller
+        // named. Must come before Rule 3, because that rule claims the bare "not found" text: "Property
+        // not found: _Cull" would match there and return TARGET_NOT_FOUND, sending the suggested fix to
+        // gameobject_find to hunt for an object that was never the problem, and never pointing at the
+        // property-reading skill it actually needs. It must likewise come before Rule 5 — that rule's
+        // ^no [a-z] branch would claim "No color property found on material".
+        //
+        // Each branch anchors on nouns like property/field/enum-value, so genuine cases like
+        // "GameObject not found" / "Material asset not found: <path>" are unaffected — neither carries
+        // that kind of noun. These five shapes are taken from error literals that actually exist:
+        // "<noun> ... not found" ("Property not found: X",
+        // "Property '_x' not found on Rigidbody", "Property/field not found: X",
+        // "Shader Graph property 'x' was not found"), a read-only rejection, the inverted
+        // "No color property found on material", "<thing> does not have a color property",
+        // and the enum-value form below.
+        //
+        // "Enum value 'x' not found for 'm_Foo'" is the same class of defect phrased differently — both
+        // the object and the property already resolved; what doesn't exist is the *value* — but it needs
+        // its own branch, because here "not found" sits before the noun rather than after it, which the
+        // first branch doesn't cover.
+        private static readonly Regex PropertyNotOnTargetPattern = new Regex(
+            @"\b(?:propert(?:y|ies)|field)\b[^.;]{0,40}?\b(?:not found|is read-?only)\b" +
+            @"|\bno\b[^.;]{0,30}?\bpropert(?:y|ies)\b[^.;]{0,20}?\bfound\b" +
+            @"|\bdoes not have\b[^.;]{0,40}?\bpropert(?:y|ies)\b" +
+            @"|\benum value\b[^.;]{0,60}?\bnot found\b",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+        // A bare "shader" would also match "shaders" (GraphicsSettings' plural Always Included Shaders list)
+        // and "shader graph property type not found" (an internal type-name lookup failure, not a
+        // property that genuinely exists on some material/shader instance) — neither should be routed to
+        // material_get_properties. So we anchor on the singular word to make the plural miss, and exclude
+        // "property type" to make type-lookup failures miss too; while "Shader Graph property 'x' was not
+        // found" (a genuine named-property miss) still matches and keeps its existing routing.
+        private static readonly Regex ShaderPropertyPhrase = new Regex(
+            @"\bshader\b[^.;]{0,30}?\bpropert(?:y|ies)\b(?!\s+type\b)",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+        // Rule 6 — A parameter the caller was supposed to supply is missing. "provide " has a trailing
+        // space, so it doesn't match "provided"; the "no X provided" shape is already claimed by Rule 4.
         private static readonly string[] MissingParamMarkers =
         {
             "is required", "are required", "required when", "must be provided", "must be specified",
             "provide ", "missing", "必填", "必须提供",
         };
 
-        // Rule 7 — a parameter was supplied but is unusable.
+        // Rule 7 — A parameter was supplied, but it isn't usable.
         private static readonly string[] SemanticMarkers =
         {
             "invalid", "must be", "must not", "must start", "unknown ", "unsupported",
@@ -238,35 +286,36 @@ namespace UnitySkills
             "非法", "无效",
         };
 
-        // Rule 4 — "No faces selected" / "No items provided": the caller simply passed nothing.
+        // Rule 4 — "No faces selected" / "No items provided": the caller passed nothing at all.
         private static readonly Regex NotSuppliedPattern = new Regex(
             @"\bno \S+ (provided|selected|specified|supplied|given)\b|\bno objects selected\b",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         // Rule 5 — "GameObject has no RectTransform" / "No Light component on X" / "No mesh found":
-        // the object was located but does not carry what the skill needs.
+        // the object was located, but it doesn't have what this skill needs.
         private static readonly Regex MissingOnTargetPattern = new Regex(
             @"\bhas no \b|\bno \S+ (component|found)\b|\bno \S+ on |^no [a-z]",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         // Rule 7b — "Not a texture: X" / "Child is not a Cinemachine Virtual Camera".
-        // Word-anchored so "cannot allocate" and "not allowed" cannot match.
+        // Anchored on the word, so "cannot allocate" and "not allowed" can't match.
         private static readonly Regex WrongKindPattern = new Regex(
             @"\bnot an?\b", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
-        // Rule 2b — the message *opens* by naming the failure kind ("Invalid bindingMode 'X': ...",
-        // "Unknown step 'y'."). Such a message often quotes an inner exception further along, and
-        // .NET's own enum parse failure reads "Requested value 'X' was not found" — which would
-        // otherwise match the not-found markers first and report a bad enum value as a missing
-        // scene object, sending the caller off to gameobject_find. Anchored at the start so only
-        // the message's own verdict wins, never a phrase buried in quoted inner text.
+        // Rule 2b — The message *starts* by naming the kind of failure ("Invalid bindingMode 'X': ...",
+        // "Unknown step 'y'."). Messages like this often quote an inner exception in their second half, and
+        // .NET's own enum-parsing failure reads as "Requested value 'X' was not found" — without this
+        // handling, that would match the not-found marker first, reporting an invalid enum value as a
+        // missing scene object and sending the caller to gameobject_find.
+        // Anchored at the start, so only the message's own leading verdict word takes effect, never a
+        // phrase buried in a quoted inner-exception text.
         private static readonly Regex LeadingSemanticPattern = new Regex(
             @"^\s*(invalid|unknown|unsupported|malformed)\b",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
         /// <summary>
-        /// Map a raw skill error message onto a code, a retry strategy and concrete next steps.
-        /// Case-insensitive; never returns null and never throws.
+        /// Maps a raw skill error message to an error code, retry strategy, and specific next action.
+        /// Case-insensitive; never returns null, never throws.
         /// </summary>
         public static SkillErrorClassification Classify(string message)
         {
@@ -275,13 +324,7 @@ namespace UnitySkills
 
             var text = message.ToLowerInvariant();
 
-            // "Package 'x' not found" means the package is not installed — but "Group 'g' not
-            // found in package 'p'" is a lookup inside an existing package, not a dependency gap.
-            bool packageAbsent = text.Contains("package")
-                && !text.Contains("in package")
-                && (text.Contains("not found") || text.Contains("does not exist"));
-
-            if (packageAbsent || ContainsAny(text, DependencyMarkers))
+            if (PackageAbsentPattern.IsMatch(text) || ContainsAny(text, DependencyMarkers))
                 return Dependency();
 
             if (ContainsAny(text, ConflictMarkers))
@@ -289,6 +332,9 @@ namespace UnitySkills
 
             if (LeadingSemanticPattern.IsMatch(text))
                 return SemanticInvalid();
+
+            if (PropertyNotOnTargetPattern.IsMatch(text))
+                return PropertyNotOnTarget(text);
 
             if (ContainsAny(text, NotFoundMarkers))
                 return TargetNotFound(text);
@@ -309,13 +355,14 @@ namespace UnitySkills
         }
 
         /// <summary>
-        /// Advice for a code the skill declared on its own error object. This keeps a *partial*
-        /// declaration coherent: a skill that states <c>errorCode</c> but omits
-        /// <c>retryStrategy</c>/<c>suggestedFixes</c> gets the advice belonging to that code rather
-        /// than whatever its message text happens to look like. Codes outside this classifier's own
-        /// vocabulary fall back to message classification — deliberately, so that declaring a
-        /// transient code (COMPILING, RATE_LIMIT, …) can never make the router infer
-        /// <c>wait_and_retry</c>; a skill that wants it must say so explicitly.
+        /// <summary>
+        /// Gives a matching suggestion for the error code a skill declares on its own error object. This
+        /// keeps *partial* declarations self-consistent too: a skill that only writes <c>errorCode</c>
+        /// without <c>retryStrategy</c>/<c>suggestedFixes</c> gets the suggestion that belongs to that
+        /// error code, rather than something incidentally inferred from its message text.
+        /// An error code outside this classifier's vocabulary falls back to message classification — this
+        /// is deliberate: declaring a transient error code (COMPILING, RATE_LIMIT, etc.) must never let the
+        /// router infer <c>wait_and_retry</c> on its own; a skill that needs that must declare it explicitly.
         /// </summary>
         public static SkillErrorClassification ForCode(SkillErrorCode code, string message)
         {
@@ -418,8 +465,8 @@ namespace UnitySkills
                 return classification;
             }
 
-            // A job id is not a scene object: pointing the caller at gameobject_find here sends it
-            // hunting through the hierarchy for something that only ever lived in the job table.
+            // A job id is not a scene object: if we sent the caller to gameobject_find here, it would go
+            // hunting through the hierarchy for something that only ever exists in the job table.
             if (text.Contains("job"))
             {
                 classification.RelatedSkills = new List<string> { "job_list", "job_status" };
@@ -449,6 +496,94 @@ namespace UnitySkills
                     action = "find_target",
                     skill = "scene_get_hierarchy",
                     reason = "If the name is a guess, list the hierarchy and pick the exact path."
+                },
+            };
+            return classification;
+        }
+
+        /// <summary>
+        /// <summary>
+        /// The object exists, the property doesn't. Reports SEMANTIC_INVALID + fix_and_retry: the target
+        /// the caller named just doesn't have it — there's nothing to find, just a parameter to change.
+        ///
+        /// <para>Which read skill gets recommended depends on the kind of property, and that's the entire
+        /// value of this suggestion: recommending component_get_properties for a shader property would be
+        /// just as useless as the gameobject_find this rule replaces.
+        /// When the message gives no clue — "Property not found: _Cull" doesn't tell you whether it's a
+        /// material or a component — both read skills are given, rather than guessing one.</para>
+        /// </summary>
+        private static SkillErrorClassification PropertyNotOnTarget(string text)
+        {
+            var classification = new SkillErrorClassification
+            {
+                Code = SkillErrorCode.SemanticInvalid,
+                RetryStrategy = SkillErrorResponse.RetryFixAndRetry,
+            };
+
+            // Must come before the checks below: the propertyPath it references may itself contain
+            // "shader"/"material" (e.g. "Enum value 'x' not found for 'm_Shader'"), otherwise a serialized
+            // enum parse failure would get routed to the material-property read skill.
+            if (text.Contains("enum value"))
+            {
+                classification.RelatedSkills = new List<string> { "component_get_serialized_properties" };
+                classification.SuggestedFixes = new List<SuggestedFix>
+                {
+                    new SuggestedFix
+                    {
+                        action = "fix_param",
+                        reason = "The property resolved; the value does not exist on it. The message lists the accepted names — retry with one of those, or a comma-separated set / raw bitmask for a [Flags] enum."
+                    },
+                    new SuggestedFix
+                    {
+                        action = "fix_param",
+                        skill = "component_get_serialized_properties",
+                        reason = "If the accepted names are not enough to tell which property was addressed, list the serialized properties and confirm the propertyPath."
+                    },
+                };
+                return classification;
+            }
+
+            // Excludes "GraphicsSettings serialized property not found" — that SerializedObject belongs
+            // to a project settings asset, not a component, and recommending
+            // component_get_serialized_properties would send the caller to inspect an object that was never involved.
+            if (text.Contains("serialized") && !text.Contains("graphicssettings"))
+            {
+                classification.RelatedSkills = new List<string> { "component_get_serialized_properties" };
+                classification.SuggestedFixes = new List<SuggestedFix>
+                {
+                    new SuggestedFix
+                    {
+                        action = "fix_param",
+                        skill = "component_get_serialized_properties",
+                        reason = "Serialized paths are not the C# member names — list them and retry with an exact propertyPath."
+                    },
+                };
+                return classification;
+            }
+
+            if (text.Contains("material") || ShaderPropertyPhrase.IsMatch(text))
+            {
+                classification.RelatedSkills = new List<string> { "material_get_properties" };
+                classification.SuggestedFixes = new List<SuggestedFix>
+                {
+                    new SuggestedFix
+                    {
+                        action = "fix_param",
+                        skill = "material_get_properties",
+                        reason = "Shader property names vary by render pipeline (_Color vs _BaseColor). List what this material's shader exposes, then retry with a name from that list."
+                    },
+                };
+                return classification;
+            }
+
+            classification.RelatedSkills = new List<string> { "component_get_properties", "material_get_properties" };
+            classification.SuggestedFixes = new List<SuggestedFix>
+            {
+                new SuggestedFix
+                {
+                    action = "fix_param",
+                    skill = "component_get_properties",
+                    reason = "The target exists but carries no such property. List the properties it does expose, then retry with one of them — use material_get_properties instead if the target is a material."
                 },
             };
             return classification;
@@ -489,8 +624,8 @@ namespace UnitySkills
             },
         };
 
-        // Residual bucket: genuine runtime failures ("Failed to ...", stuck editor state).
-        // Same code and strategy as before this classifier existed.
+        // Fallback bucket: genuine runtime failures ("Failed to ...", editor-stuck states).
+        // Error code and strategy match what this classifier had before it existed.
         private static SkillErrorClassification Unclassified() => new SkillErrorClassification
         {
             Code = SkillErrorCode.SkillError,
