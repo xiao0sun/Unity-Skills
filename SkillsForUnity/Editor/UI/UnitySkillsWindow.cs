@@ -559,7 +559,9 @@ namespace UnitySkills
             _pendingBanner?.RefreshLocalization();
             _versionUpdateBanner?.RefreshLocalization();
             if (_narrowWarningText != null)
-                _narrowWarningText.text = SkillsLocalization.Get("narrow_screen_tip");
+                _narrowWarningText.text = (SkillsLocalization.Get("narrow_screen_tip") ?? string.Empty)
+                    .Replace("\U0001F4A1", string.Empty)
+                    .TrimStart();
             _skillsController?.RefreshLocalization();
             _configController?.RefreshLocalization();
             _cliController?.RefreshLocalization();

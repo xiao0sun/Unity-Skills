@@ -122,7 +122,13 @@ namespace UnitySkills
         /// </summary>
         private void ApplySettingsIcon()
         {
-            UISkillsEditorIcons.Apply(_settingsBtn, "d_SettingsIcon", "SettingsIcon", "_Popup");
+            // The gear is authored as UI Toolkit geometry in the UXML. This
+            // avoids Unity 2022's low-resolution EditorGUIUtility icon texture.
+            if (_settingsBtn != null)
+            {
+                _settingsBtn.text = string.Empty;
+                _settingsBtn.style.backgroundImage = StyleKeyword.None;
+            }
         }
 
         private void BuildPermBadgeContent()

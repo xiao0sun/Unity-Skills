@@ -135,6 +135,99 @@
     border-bottom-color: var(--color-border-hard);
     padding: 0 8px;
     min-width: 0;
+    position: relative;
+}
+
+.topbar-actions {
+    flex-shrink: 0;
+    margin-left: auto;
+    flex-grow: 0;
+    flex-direction: row;
+    align-items: center;
+}
+
+.topbar-settings-btn {
+    width: 28px;
+    min-width: 28px;
+    max-width: 28px;
+    flex-shrink: 0;
+    margin-left: 4px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+}
+
+.topbar > .topbar-settings-btn {
+    margin-left: 4px;
+}
+
+/* Draw the settings gear from UI Toolkit geometry. Unity 2022's editor icon
+ * texture is a low-resolution bitmap and becomes blurry when scaled. */
+.settings-icon {
+    width: 18px;
+    height: 18px;
+    position: relative;
+    flex-shrink: 0;
+    align-self: center;
+}
+
+.settings-icon__ring {
+    position: absolute;
+    left: 3px;
+    top: 3px;
+    width: 12px;
+    height: 12px;
+    border-radius: 6px;
+    border-width: 3px;
+    border-color: var(--color-text);
+    background-color: transparent;
+}
+
+.settings-icon__hub {
+    position: absolute;
+    left: 7px;
+    top: 7px;
+    width: 4px;
+    height: 4px;
+    border-radius: 2px;
+    border-width: 2px;
+    border-color: var(--color-text);
+    background-color: transparent;
+}
+
+.settings-icon__tooth {
+    position: absolute;
+    width: 4px;
+    height: 6px;
+    background-color: var(--color-text);
+    border-radius: 1px;
+}
+
+.settings-icon__tooth--top { left: 8px; top: 0; }
+.settings-icon__tooth--top-right { left: 12px; top: 1px; rotate: 45deg; }
+.settings-icon__tooth--right { left: 15px; top: 6px; rotate: 90deg; }
+.settings-icon__tooth--bottom-right { left: 12px; top: 11px; rotate: 135deg; }
+.settings-icon__tooth--bottom { left: 8px; top: 12px; rotate: 180deg; }
+.settings-icon__tooth--bottom-left { left: 3px; top: 11px; rotate: 225deg; }
+.settings-icon__tooth--left { left: 0; top: 6px; rotate: 270deg; }
+.settings-icon__tooth--top-left { left: 3px; top: 1px; rotate: 315deg; }
+
+/* Once the URL pill is removed, take the fixed control group out of the
+ * shrinking row and anchor it to the topbar's right edge. */
+.topbar--narrow .topbar-actions {
+    flex-grow: 1;
+    min-width: 0;
+    padding-left: 8px;
+    padding-right: 4px;
+    justify-content: flex-start;
+    background-color: transparent;
+}
+
+.topbar--narrow > .topbar-settings-btn {
+    position: absolute;
+    right: 8px;
+    top: 6px;
+    margin-left: 0;
 }
 
 .status-dot {
@@ -336,11 +429,13 @@
 .server-status-text {
     flex-shrink: 0;
     min-width: 46px;
+    height: 18px;
     margin-right: 4px;
     font-size: 10px;
     color: var(--color-text-secondary);
     -unity-text-align: middle-left;
     white-space: nowrap;
+    overflow: hidden;
 }
 
 .server-status-text.on  { color: var(--color-success); }
@@ -412,10 +507,6 @@
     margin-left: 0;
 }
 
-.topbar--compact .status-dot {
-    display: none;
-}
-
 .topbar--compact .server-switch {
     margin: 0 4px 0 2px;
 }
@@ -437,9 +528,13 @@
     max-width: none;
 }
 
-.topbar--narrow .url-pill,
-.topbar--narrow .status-dot {
+.topbar--narrow .url-pill {
     display: none;
+}
+
+.topbar--narrow #perm-mode-badge {
+    margin-left: auto;
+    margin-right: 40px;
 }
 
 .topbar--narrow .server-switch {
@@ -1358,6 +1453,38 @@
     white-space: normal;
     flex-grow: 1;
     flex-shrink: 1;
+}
+
+/* Font-independent light-bulb icon for Unity 2022 and Unity 6. */
+.narrow-warning-icon {
+    width: 16px;
+    height: 18px;
+    flex-shrink: 0;
+    margin-right: 6px;
+    position: relative;
+}
+
+.narrow-warning-icon__bulb {
+    position: absolute;
+    left: 4px;
+    top: 1px;
+    width: 9px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: #f5e7b2;
+}
+
+.narrow-warning-icon__base {
+    position: absolute;
+    left: 6px;
+    top: 11px;
+    width: 5px;
+    height: 4px;
+    border-left-width: 1px;
+    border-right-width: 1px;
+    border-bottom-width: 1px;
+    border-color: #f5e7b2;
+    background-color: transparent;
 }
 
 /* ---------- Permissions / token level ---------- */

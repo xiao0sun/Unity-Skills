@@ -20,20 +20,38 @@
                 <ui:Button name="url-copy-btn" class="url-pill__copy" />
             </ui:VisualElement>
 
-            <ui:VisualElement name="server-switch" class="server-switch"
-                              tooltip="Toggle server"
-                              style="flex-shrink: 0; flex-direction: row;">
-                <ui:VisualElement name="server-switch-knob" class="server-switch__knob" />
+            <ui:VisualElement name="topbar-actions" class="topbar-actions"
+                              style="flex-direction: row; align-items: center;">
+                <ui:VisualElement name="server-switch" class="server-switch"
+                                  tooltip="Toggle server"
+                                  style="flex-shrink: 0; flex-direction: row;">
+                    <ui:VisualElement name="server-switch-knob" class="server-switch__knob" />
+                </ui:VisualElement>
+
+                <ui:Label name="server-status-text" class="server-status-text" text="Stopped" />
+
+                <ui:Button name="perm-mode-badge" class="mini-btn"
+                           tooltip="Click to switch operating mode"
+                           style="height: 22px; margin: 0 4px 0 4px;" />
+
             </ui:VisualElement>
 
-            <ui:Label name="server-status-text" class="server-status-text" text="Stopped" />
-
-            <ui:Button name="perm-mode-badge" class="mini-btn"
-                       tooltip="Click to switch operating mode"
-                       style="height: 22px; margin: 0 4px 0 4px;" />
-
-            <ui:Button name="open-settings-btn" class="icon-btn"
-                       tooltip="Settings" />
+            <ui:Button name="open-settings-btn" class="icon-btn topbar-settings-btn"
+                       tooltip="Settings">
+                <ui:VisualElement name="settings-icon" class="settings-icon"
+                                  picking-mode="Ignore">
+                    <ui:VisualElement class="settings-icon__ring" />
+                    <ui:VisualElement class="settings-icon__hub" />
+                    <ui:VisualElement class="settings-icon__tooth settings-icon__tooth--top" />
+                    <ui:VisualElement class="settings-icon__tooth settings-icon__tooth--top-right" />
+                    <ui:VisualElement class="settings-icon__tooth settings-icon__tooth--right" />
+                    <ui:VisualElement class="settings-icon__tooth settings-icon__tooth--bottom-right" />
+                    <ui:VisualElement class="settings-icon__tooth settings-icon__tooth--bottom" />
+                    <ui:VisualElement class="settings-icon__tooth settings-icon__tooth--bottom-left" />
+                    <ui:VisualElement class="settings-icon__tooth settings-icon__tooth--left" />
+                    <ui:VisualElement class="settings-icon__tooth settings-icon__tooth--top-left" />
+                </ui:VisualElement>
+            </ui:Button>
         </ui:VisualElement>
 
         <!-- ============================================
@@ -45,6 +63,11 @@
                           style="flex-direction: column; flex-shrink: 0;">
             <ui:VisualElement name="narrow-warning-banner" class="narrow-warning-banner"
                               style="display: none; flex-direction: row; align-items: center;">
+                <ui:VisualElement name="narrow-warning-icon" class="narrow-warning-icon"
+                                  picking-mode="Ignore">
+                    <ui:VisualElement class="narrow-warning-icon__bulb" />
+                    <ui:VisualElement class="narrow-warning-icon__base" />
+                </ui:VisualElement>
                 <ui:Label name="narrow-warning-text" class="narrow-warning-text" text="" />
                 <ui:Button name="narrow-warning-close" class="icon-btn" text="✕" style="width: 18px; height: 18px; font-size: 10px; margin-left: 4px; padding: 0;" />
             </ui:VisualElement>
