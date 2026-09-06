@@ -12,6 +12,7 @@ namespace UnitySkills.Tests.Core
     public class NewCapabilitiesTests
     {
         private SkillsOperatingMode _savedMode;
+        private SurfaceProfileKind _savedProfile;
 
         [SetUp]
         public void SetUp()
@@ -21,6 +22,10 @@ namespace UnitySkills.Tests.Core
             // when the persisted EditorPref mode happens to be auto/semi (e.g. on a fresh CI environment).
             _savedMode = SkillsModeManager.CurrentMode;
             SkillsModeManager.CurrentMode = SkillsOperatingMode.Bypass;
+            // Same reasoning for the surface profile: the GameObject steps are withdrawn under Guide /
+            // NoSceneAuthoring, which would turn every diff into an empty set. The pref is global, so restore it.
+            _savedProfile = SkillsSurfaceProfile.Current;
+            SkillsSurfaceProfile.Current = SurfaceProfileKind.Full;
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             GameObjectFinder.InvalidateCache();
         }
@@ -29,6 +34,7 @@ namespace UnitySkills.Tests.Core
         public void TearDown()
         {
             GameObjectFinder.InvalidateCache();
+            SkillsSurfaceProfile.Current = _savedProfile;
             SkillsModeManager.CurrentMode = _savedMode;
         }
 

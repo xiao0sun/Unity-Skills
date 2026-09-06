@@ -94,12 +94,7 @@ namespace UnitySkills
             if (root == null || searchBar == null) return;
 
             var bar = new VisualElement();
-            bar.style.flexDirection = FlexDirection.Row;
-            bar.style.alignItems = Align.Center;
-            bar.style.paddingLeft = 8;
-            bar.style.paddingRight = 8;
-            bar.style.paddingTop = 4;
-            bar.style.paddingBottom = 4;
+            bar.AddToClassList("picker-preset-bar");
 
             var btn = new Button(SelectCodingAssistPreset)
             {

@@ -228,7 +228,7 @@ namespace UnitySkills
                 if (_versionLabel != null) _versionLabel.text = "";
             }
 
-            if (_installGuide != null) _installGuide.style.display = found ? DisplayStyle.None : DisplayStyle.Flex;
+            _installGuide.SetVisible(!found);
             RefreshBindingUi();
         }
 

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -1048,10 +1048,13 @@ namespace UnitySkills
                     var jsonResult = JToken.FromObject(result);
 
                     var arr = FindPageArray(jsonResult, out var arrayProperty);
-                    if (arr != null && ((SummaryAutoTruncate && arr.Count > 10) || offset.HasValue || limit.HasValue))
+                    // Read once: a single main-thread EditorPrefs-backed property access, reused below as both the
+                    // auto-truncation trigger and the default page size, so the two can never disagree with each other.
+                    int summaryPageSize = SummaryPageSize;
+                    if (arr != null && ((SummaryAutoTruncate && arr.Count > summaryPageSize) || offset.HasValue || limit.HasValue))
                     {
                         int startIndex = offset ?? 0;
-                        int pageSize = limit ?? SummaryPageSize;
+                        int pageSize = limit ?? summaryPageSize;
 
                         // Clamp to a valid range
                         if (startIndex >= arr.Count)

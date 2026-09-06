@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -147,9 +147,6 @@ namespace UnitySkills
             BindEvents();
             InitializeValues();
             RefreshLocalization();
-
-            if (_drawerContainer != null) _drawerContainer.style.display = DisplayStyle.None;
-            if (_drawerMask != null) _drawerMask.style.display = DisplayStyle.None;
 
             // Shortcuts section: a separate controller owns the capture state machine and
             // conflict detection; the drawer only assembles it and forwards lifecycle events.
@@ -447,7 +444,7 @@ namespace UnitySkills
 
         private void SyncTabVisibilityUi()
         {
-            SetDisplay(_rowTabVisibleAnalytics, SkillTelemetryService.Enabled);
+            _rowTabVisibleAnalytics.SetVisible(SkillTelemetryService.Enabled);
             _tabVisibleSkillsToggle?.SetValueWithoutNotify(TabVisibilitySettings.GetUserPreference("skills"));
             _tabVisibleAiConfigToggle?.SetValueWithoutNotify(TabVisibilitySettings.GetUserPreference("aiconfig"));
             _tabVisibleUnityCliToggle?.SetValueWithoutNotify(TabVisibilitySettings.GetUserPreference("unitycli"));
@@ -673,7 +670,7 @@ namespace UnitySkills
             ApplyModeHintText(mode);
 
             // 2) The Panel Approval row is only visible in Approval mode
-            SetDisplay(_panelApprovalRow, mode == SkillsOperatingMode.Approval);
+            _panelApprovalRow.SetVisible(mode == SkillsOperatingMode.Approval);
             if (_panelApprovalToggle != null)
                 _panelApprovalToggle.SetValueWithoutNotify(SkillsModeManager.PanelApprovalRequired);
             if (_confirmToggle != null)
@@ -688,7 +685,7 @@ namespace UnitySkills
             // 3) The Pending list — shown only in Approval mode + when there are pending items
             var pending = SkillsModeManager.PendingGrantRequests;
             bool showPending = mode == SkillsOperatingMode.Approval && pending.Count > 0;
-            SetDisplay(_pendingSection, showPending);
+            _pendingSection.SetVisible(showPending);
             if (showPending)
             {
                 if (_pendingTitle != null)
@@ -705,7 +702,7 @@ namespace UnitySkills
             // 4) The Allowlist list — shown in Approval/Auto (hidden in Bypass)
             var allowlist = SkillsModeManager.AllowlistSkills;
             bool showAllowlist = mode != SkillsOperatingMode.Bypass;
-            SetDisplay(_allowlistSection, showAllowlist);
+            _allowlistSection.SetVisible(showAllowlist);
             if (showAllowlist)
             {
                 if (_allowlistFoldout != null)
@@ -736,22 +733,20 @@ namespace UnitySkills
         {
             var card = new VisualElement();
             card.AddToClassList("task-card");
-            card.style.flexDirection = FlexDirection.Column;
-            card.style.marginBottom = 4;
+            card.AddToClassList("built-card");
 
-            var head = new VisualElement { style = { flexDirection = FlexDirection.Row, alignItems = Align.Center } };
+            var head = new VisualElement();
+            head.AddToClassList("built-row");
             var title = new Label($"{req.SkillName}  ({req.Channel})  #{PermissionUiHelpers.ShortToken(req.Token)}");
             title.AddToClassList("bold-label");
-            title.style.flexGrow = 1;
-            title.style.fontSize = 11;
+            title.AddToClassList("card-row__title");
             head.Add(title);
 
             var expires = new Label(PermissionUiHelpers.FormatCountdown(req.ExpiresAtUtc));
             expires.AddToClassList("setting-hint");
             expires.AddToClassList(PendingExpiresClass); // marker for RefreshPendingExpiry sweep
+            expires.AddToClassList("pending-row__expires");
             expires.userData = req.ExpiresAtUtc;
-            expires.style.marginTop = 0;
-            expires.style.marginBottom = 0;
             head.Add(expires);
             card.Add(head);
 
@@ -759,9 +754,7 @@ namespace UnitySkills
             {
                 var args = new Label($"args: {req.ArgsSummary}");
                 args.AddToClassList("setting-hint");
-                args.style.whiteSpace = WhiteSpace.Normal;
-                args.style.marginTop = 2;
-                args.style.marginBottom = 4;
+                args.AddToClassList("pending-row__args");
                 card.Add(args);
             }
 
@@ -774,24 +767,25 @@ namespace UnitySkills
             {
                 var status = new Label(SkillsLocalization.Get("perm_approved_waiting"));
                 status.AddToClassList("setting-hint");
-                status.style.marginBottom = 2;
+                status.AddToClassList("pending-row__note");
                 card.Add(status);
             }
             else if (!isPanel)
             {
                 var chatHint = new Label(SkillsLocalization.Get("perm_approve_in_chat"));
                 chatHint.AddToClassList("setting-hint");
-                chatHint.style.marginBottom = 2;
+                chatHint.AddToClassList("pending-row__note");
                 card.Add(chatHint);
             }
 
-            var actions = new VisualElement { style = { flexDirection = FlexDirection.Row, justifyContent = Justify.FlexEnd, marginTop = 2 } };
+            var actions = new VisualElement();
+            actions.AddToClassList("pending-row__actions");
             var approveBtn = new Button(() => SkillsModeManager.Approve(req.Token))
             {
                 text = SkillsLocalization.Get("perm_approve")
             };
             approveBtn.AddToClassList("mini-btn");
-            approveBtn.style.marginRight = 4;
+            approveBtn.AddToClassList("mini-btn--right-gap");
             approveBtn.SetEnabled(isPanel && !req.ApprovedByPanel); // Clickable only when the panel channel hasn't approved yet
             actions.Add(approveBtn);
 
@@ -861,7 +855,7 @@ namespace UnitySkills
                     text = $"{group.Key}  ({items.Count})",
                     value = false, // Collapsed by default to save space; the user expands it to view
                 };
-                foldout.style.marginTop = 2;
+                foldout.AddToClassList("allowlist-foldout");
 
                 foreach (var name in items)
                     foldout.Add(BuildAllowlistRow(name));
@@ -872,11 +866,11 @@ namespace UnitySkills
 
         private static VisualElement BuildAllowlistRow(string skillName)
         {
-            var row = new VisualElement
-            {
-                style = { flexDirection = FlexDirection.Row, alignItems = Align.Center, marginBottom = 2 }
-            };
-            var label = new Label(skillName) { style = { flexGrow = 1, fontSize = 11 } };
+            var row = new VisualElement();
+            row.AddToClassList("built-row");
+            row.AddToClassList("allowlist-row");
+            var label = new Label(skillName);
+            label.AddToClassList("card-row__title");
             row.Add(label);
 
             var removeBtn = new Button(() => SkillsModeManager.RemoveFromAllowlist(skillName))
@@ -944,12 +938,6 @@ namespace UnitySkills
                 if (label.userData is DateTime expiresUtc)
                     label.text = PermissionUiHelpers.FormatCountdown(expiresUtc);
             });
-        }
-
-        private static void SetDisplay(VisualElement el, bool visible)
-        {
-            if (el == null) return;
-            el.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
         }
     }
 }

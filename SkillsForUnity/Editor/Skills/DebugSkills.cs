@@ -366,7 +366,8 @@ namespace UnitySkills
             Category = SkillCategory.Debug, Operation = SkillOperation.Modify,
             Tags = new[] { "defines", "symbols", "preprocessor", "set" },
             Outputs = new[] { "buildTargetGroup", "defines", "serverAvailability" },
-            MayTriggerReload = true)]
+            RequiresInput = new[] { "defines" },
+            MayTriggerReload = true, MutatesAssets = true)]
         public static object DebugSetDefines(string defines)
         {
             if (Validate.Required(defines, "defines") is object definesErr) return definesErr;

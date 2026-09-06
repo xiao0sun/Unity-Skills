@@ -391,7 +391,7 @@ namespace UnitySkills
             Tags = new[] { "validation", "fix", "missing", "scripts" },
             Outputs = new[] { "dryRun", "fixedCount", "objects", "message" },
             TracksWorkflow = true,
-            RiskLevel = "medium")]
+            RiskLevel = "medium", MutatesScene = true)]
         public static object ValidateFixMissingScripts(bool dryRun = true)
         {
             var fixedObjects = new List<object>();

@@ -16,7 +16,8 @@ namespace UnitySkills
             Category = SkillCategory.Shader, Operation = SkillOperation.Create,
             Tags = new[] { "shader", "create", "hlsl", "asset" },
             Outputs = new[] { "shaderName", "path" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "shaderName", "savePath" },
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object ShaderCreate(string shaderName, string savePath, string template = null)
         {
             if (Validate.Required(shaderName, "shaderName") is object err) return err;
@@ -98,7 +99,9 @@ namespace UnitySkills
             Category = SkillCategory.Shader, Operation = SkillOperation.Query,
             Tags = new[] { "shader", "read", "source", "code" },
             Outputs = new[] { "path", "lines", "content" },
-            RequiresInput = new[] { "assetPath" },
+            // Real accepted param is "shaderPath", not "assetPath" - the old token matched neither the
+            // literal parameter nor the registered "assetPath" group's sole candidate, so it enforced nothing.
+            RequiresInput = new[] { "shaderPath" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object ShaderRead(string shaderPath)
@@ -145,7 +148,7 @@ namespace UnitySkills
             Category = SkillCategory.Shader, Operation = SkillOperation.Query,
             Tags = new[] { "shader", "property", "inspect" },
             Outputs = new[] { "shaderName", "propertyCount", "properties" },
-            RequiresInput = new[] { "assetPath" },
+            RequiresInput = new[] { "shaderNameOrPath" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object ShaderGetProperties(string shaderNameOrPath)
@@ -203,7 +206,7 @@ namespace UnitySkills
             Category = SkillCategory.Shader, Operation = SkillOperation.Delete,
             Tags = new[] { "shader", "delete", "asset" },
             Outputs = new[] { "deleted" },
-            RequiresInput = new[] { "assetPath" },
+            RequiresInput = new[] { "shaderPath" },
             TracksWorkflow = true, SkipAutoPresnapshot = true,
             RiskLevel = "medium")]
         public static object ShaderDelete(string shaderPath)
@@ -221,7 +224,7 @@ namespace UnitySkills
             Category = SkillCategory.Shader, Operation = SkillOperation.Analyze,
             Tags = new[] { "shader", "error", "compile", "diagnostic" },
             Outputs = new[] { "shaderName", "hasErrors", "messageCount" },
-            RequiresInput = new[] { "assetPath" },
+            RequiresInput = new[] { "shaderNameOrPath" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object ShaderCheckErrors(string shaderNameOrPath)
@@ -236,7 +239,7 @@ namespace UnitySkills
             Category = SkillCategory.Shader, Operation = SkillOperation.Query,
             Tags = new[] { "shader", "keyword", "inspect" },
             Outputs = new[] { "shaderName", "keywordCount", "keywords" },
-            RequiresInput = new[] { "assetPath" },
+            RequiresInput = new[] { "shaderNameOrPath" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object ShaderGetKeywords(string shaderNameOrPath)
@@ -251,7 +254,7 @@ namespace UnitySkills
             Category = SkillCategory.Shader, Operation = SkillOperation.Analyze,
             Tags = new[] { "shader", "variant", "performance", "optimization" },
             Outputs = new[] { "shaderName", "subshaderCount", "totalPasses" },
-            RequiresInput = new[] { "assetPath" },
+            RequiresInput = new[] { "shaderNameOrPath" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object ShaderGetVariantCount(string shaderNameOrPath)
@@ -273,7 +276,8 @@ namespace UnitySkills
             Category = SkillCategory.Shader, Operation = SkillOperation.Create,
             Tags = new[] { "shader", "urp", "create", "template" },
             Outputs = new[] { "shaderName", "path", "type" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "shaderName", "savePath" },
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object ShaderCreateUrp(string shaderName, string savePath, string type = "Unlit")
         {
             if (Validate.SafePath(savePath, "savePath") is object pathErr2) return pathErr2;

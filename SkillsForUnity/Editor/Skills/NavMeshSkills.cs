@@ -89,7 +89,7 @@ namespace UnitySkills
             Category = SkillCategory.NavMesh, Operation = SkillOperation.Create,
             Tags = new[] { "navmesh", "agent", "component", "navigation" },
             Outputs = new[] { "success", "gameObject" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object NavMeshAddAgent(string name = null, int instanceId = 0, string path = null)
         {
             var (go, err) = GameObjectFinder.FindOrError(name, instanceId, path);
@@ -104,7 +104,7 @@ namespace UnitySkills
             Category = SkillCategory.NavMesh, Operation = SkillOperation.Modify,
             Tags = new[] { "navmesh", "agent", "speed", "properties" },
             Outputs = new[] { "success", "gameObject", "speed", "radius" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object NavMeshSetAgent(string name = null, int instanceId = 0, string path = null,
             float? speed = null, float? acceleration = null, float? angularSpeed = null,
             float? radius = null, float? height = null, float? stoppingDistance = null)
@@ -128,7 +128,7 @@ namespace UnitySkills
             Category = SkillCategory.NavMesh, Operation = SkillOperation.Create,
             Tags = new[] { "navmesh", "obstacle", "component", "carving" },
             Outputs = new[] { "success", "gameObject", "carving" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object NavMeshAddObstacle(string name = null, int instanceId = 0, string path = null, bool carve = true)
         {
             var (go, err) = GameObjectFinder.FindOrError(name, instanceId, path);
@@ -144,7 +144,7 @@ namespace UnitySkills
             Category = SkillCategory.NavMesh, Operation = SkillOperation.Modify,
             Tags = new[] { "navmesh", "obstacle", "shape", "carving" },
             Outputs = new[] { "success", "gameObject", "shape", "carving" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object NavMeshSetObstacle(string name = null, int instanceId = 0, string path = null,
             string shape = null, float? sizeX = null, float? sizeY = null, float? sizeZ = null, bool? carving = null)
         {

@@ -713,7 +713,8 @@ namespace UnitySkills
             Category = SkillCategory.Netcode, Operation = SkillOperation.Create,
             Tags = new[] { "netcode", "ngo", "prefabs", "list", "scriptableobject" },
             Outputs = new[] { "success", "path" },
-            MutatesAssets = true, MutatesScene = true, RiskLevel = "low", RequiresPackages = new[] { "com.unity.netcode.gameobjects" })]
+            MutatesAssets = true, MutatesScene = true, RiskLevel = "low", RequiresPackages = new[] { "com.unity.netcode.gameobjects" },
+            RequiresInput = new[] { "path" })]
         public static object CreatePrefabsList(string path, bool assignToManager = true, string managerName = null)
         {
 #if !NETCODE_GAMEOBJECTS
@@ -759,6 +760,7 @@ namespace UnitySkills
             Category = SkillCategory.Netcode, Operation = SkillOperation.Modify,
             Tags = new[] { "netcode", "ngo", "prefabs", "list", "add" },
             Outputs = new[] { "success", "count" },
+            RequiresInput = new[] { "listPath", "prefabPath" },
             MutatesAssets = true, RiskLevel = "low", RequiresPackages = new[] { "com.unity.netcode.gameobjects" })]
         public static object AddToPrefabsList(
             string listPath,
@@ -823,7 +825,8 @@ namespace UnitySkills
             Category = SkillCategory.Netcode, Operation = SkillOperation.Delete,
             Tags = new[] { "netcode", "ngo", "prefabs", "list", "remove" },
             Outputs = new[] { "success", "count" },
-            MutatesAssets = true, RiskLevel = "low", RequiresPackages = new[] { "com.unity.netcode.gameobjects" })]
+            MutatesAssets = true, RiskLevel = "low", RequiresPackages = new[] { "com.unity.netcode.gameobjects" },
+            RequiresInput = new[] { "listPath", "prefabPath" })]
         public static object RemoveFromPrefabsList(string listPath, string prefabPath)
         {
 #if !NETCODE_GAMEOBJECTS
@@ -902,6 +905,7 @@ namespace UnitySkills
             Category = SkillCategory.Netcode, Operation = SkillOperation.Modify,
             Tags = new[] { "netcode", "ngo", "player", "prefab" },
             Outputs = new[] { "success", "prefab" },
+            RequiresInput = new[] { "prefabPath" },
             MutatesScene = true, RiskLevel = "low", RequiresPackages = new[] { "com.unity.netcode.gameobjects" })]
         public static object SetPlayerPrefab(string prefabPath, string name = null)
         {
@@ -1145,7 +1149,8 @@ namespace UnitySkills
             Category = SkillCategory.Netcode, Operation = SkillOperation.Create,
             Tags = new[] { "netcode", "ngo", "networkbehaviour", "script", "template" },
             Outputs = new[] { "success", "path" },
-            MutatesAssets = true, MayTriggerReload = true, RiskLevel = "medium", RequiresPackages = new[] { "com.unity.netcode.gameobjects" })]
+            MutatesAssets = true, MayTriggerReload = true, RiskLevel = "medium", RequiresPackages = new[] { "com.unity.netcode.gameobjects" },
+            RequiresInput = new[] { "className", "path" })]
         public static object AddNetworkBehaviourScript(
             string className,
             string path,

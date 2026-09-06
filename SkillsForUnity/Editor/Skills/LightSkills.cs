@@ -15,7 +15,7 @@ namespace UnitySkills
             Category = SkillCategory.Light, Operation = SkillOperation.Create,
             Tags = new[] { "light", "create", "illumination", "scene" },
             Outputs = new[] { "name", "instanceId", "lightType", "intensity", "shadows" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object LightCreate(
             string name = "New Light",
             string lightType = "Point",
@@ -73,7 +73,7 @@ namespace UnitySkills
             Tags = new[] { "light", "color", "intensity", "shadow" },
             Outputs = new[] { "lightType", "color", "intensity", "range", "spotAngle", "shadows", "applied", "skipped" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object LightSetProperties(
             string name = null, int instanceId = 0, string path = null,
             float? r = null, float? g = null, float? b = null, float? a = null,
@@ -266,7 +266,7 @@ namespace UnitySkills
             Tags = new[] { "light", "enable", "disable", "toggle" },
             Outputs = new[] { "name", "enabled" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object LightSetEnabled(string name = null, int instanceId = 0, string path = null, bool enabled = true)
         {
             var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
@@ -287,8 +287,8 @@ namespace UnitySkills
             Category = SkillCategory.Light, Operation = SkillOperation.Modify,
             Tags = new[] { "light", "enable", "batch", "toggle" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "items" },
+            TracksWorkflow = true, MutatesScene = true)]
         public static object LightSetEnabledBatch(string items)
         {
             return BatchExecutor.Execute<BatchLightEnabledItem>(items, item =>
@@ -318,8 +318,8 @@ namespace UnitySkills
             Category = SkillCategory.Light, Operation = SkillOperation.Modify,
             Tags = new[] { "light", "batch", "properties", "color" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "items" },
+            TracksWorkflow = true, MutatesScene = true)]
         public static object LightSetPropertiesBatch(string items)
         {
             return BatchExecutor.Execute<BatchLightPropsItem>(items, item =>
@@ -370,7 +370,7 @@ namespace UnitySkills
             Tags = new[] { "lightProbe", "gi", "globalIllumination", "grid" },
             Outputs = new[] { "gameObject", "probeCount", "existed", "hasGrid" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object LightAddProbeGroup(string name = null, int instanceId = 0, string path = null,
             int gridX = 0, int gridY = 0, int gridZ = 0,
             float spacingX = 2f, float spacingY = 1.5f, float spacingZ = 2f)
@@ -406,7 +406,7 @@ namespace UnitySkills
             Category = SkillCategory.Light, Operation = SkillOperation.Create,
             Tags = new[] { "reflectionProbe", "reflection", "environment", "gi" },
             Outputs = new[] { "name", "instanceId", "resolution", "size" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object LightAddReflectionProbe(string probeName = "ReflectionProbe", float x = 0, float y = 1, float z = 0,
             float sizeX = 10, float sizeY = 10, float sizeZ = 10, int resolution = 256)
         {

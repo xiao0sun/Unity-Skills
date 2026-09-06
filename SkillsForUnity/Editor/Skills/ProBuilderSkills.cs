@@ -80,7 +80,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Modify,
             Tags = new[] { "probuilder", "extrude", "face", "modeling" },
             Outputs = new[] { "success", "extrudedFaceCount", "totalFaces", "totalVertices" },
-            RequiresInput = new[] { "proBuilderMesh" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object ProBuilderExtrudeFaces(
             string name = null, int instanceId = 0, string path = null,
             string faceIndexes = null,
@@ -140,8 +140,8 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Modify,
             Tags = new[] { "probuilder", "delete", "face", "modeling" },
             Outputs = new[] { "success", "deletedCount", "remainingFaces", "remainingVertices" },
-            RequiresInput = new[] { "proBuilderMesh" },
-            RiskLevel = "medium")]
+            RequiresInput = new[] { "gameObject" },
+            RiskLevel = "medium", MutatesScene = true)]
         public static object ProBuilderDeleteFaces(
             string name = null, int instanceId = 0, string path = null,
             string faceIndexes = null)
@@ -190,7 +190,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Modify,
             Tags = new[] { "probuilder", "merge", "face", "combine" },
             Outputs = new[] { "success", "mergedFromCount", "totalFaces", "totalVertices" },
-            RequiresInput = new[] { "proBuilderMesh" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object ProBuilderMergeFaces(
             string name = null, int instanceId = 0, string path = null,
             string faceIndexes = null)
@@ -232,7 +232,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Modify,
             Tags = new[] { "probuilder", "normals", "flip", "face" },
             Outputs = new[] { "success", "flippedCount" },
-            RequiresInput = new[] { "proBuilderMesh" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object ProBuilderFlipNormals(
             string name = null, int instanceId = 0, string path = null,
             string faceIndexes = null)
@@ -271,7 +271,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Modify,
             Tags = new[] { "probuilder", "detach", "face", "separate" },
             Outputs = new[] { "success", "detachedFaceCount", "totalFaces", "totalVertices" },
-            RequiresInput = new[] { "proBuilderMesh" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object ProBuilderDetachFaces(
             string name = null, int instanceId = 0, string path = null,
             string faceIndexes = null,
@@ -334,7 +334,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Modify,
             Tags = new[] { "probuilder", "bevel", "chamfer", "edge" },
             Outputs = new[] { "success", "beveledEdgeCount", "newFaceCount", "totalFaces", "totalVertices" },
-            RequiresInput = new[] { "proBuilderMesh" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object ProBuilderBevelEdges(
             string name = null, int instanceId = 0, string path = null,
             string edgeIndexes = null,
@@ -393,7 +393,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Modify,
             Tags = new[] { "probuilder", "extrude", "edge", "wall" },
             Outputs = new[] { "success", "extrudedEdgeCount", "newEdgeCount", "totalFaces", "totalVertices" },
-            RequiresInput = new[] { "proBuilderMesh" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object ProBuilderExtrudeEdges(
             string name = null, int instanceId = 0, string path = null,
             string edgeIndexes = null,
@@ -462,7 +462,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Create | SkillOperation.Modify,
             Tags = new[] { "probuilder", "bridge", "edge", "connect" },
             Outputs = new[] { "success", "bridgedEdge", "totalFaces", "totalVertices" },
-            RequiresInput = new[] { "proBuilderMesh" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object ProBuilderBridgeEdges(
             string name = null, int instanceId = 0, string path = null,
             string edgeA = null,
@@ -514,7 +514,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Modify,
             Tags = new[] { "probuilder", "subdivide", "mesh", "detail" },
             Outputs = new[] { "success", "totalFaces", "totalVertices" },
-            RequiresInput = new[] { "proBuilderMesh" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object ProBuilderSubdivide(
             string name = null, int instanceId = 0, string path = null,
             string faceIndexes = null)
@@ -564,7 +564,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Modify,
             Tags = new[] { "probuilder", "normals", "conform", "consistency" },
             Outputs = new[] { "success", "status", "faceCount" },
-            RequiresInput = new[] { "proBuilderMesh" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object ProBuilderConformNormals(
             string name = null, int instanceId = 0, string path = null,
             string faceIndexes = null)
@@ -604,7 +604,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Modify,
             Tags = new[] { "probuilder", "weld", "vertex", "merge" },
             Outputs = new[] { "success", "inputVertexCount", "weldedVertexCount", "totalVertices" },
-            RequiresInput = new[] { "proBuilderMesh" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object ProBuilderWeldVertices(
             string name = null, int instanceId = 0, string path = null,
             string vertexIndexes = null,
@@ -675,7 +675,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Modify,
             Tags = new[] { "probuilder", "material", "face", "submesh" },
             Outputs = new[] { "success", "affectedFaces", "materialCount" },
-            RequiresInput = new[] { "proBuilderMesh" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object ProBuilderSetFaceMaterial(
             string name = null, int instanceId = 0, string path = null,
             string faceIndexes = null,
@@ -761,7 +761,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Query,
             Tags = new[] { "probuilder", "info", "mesh", "topology" },
             Outputs = new[] { "vertexCount", "faceCount", "edgeCount", "triangleCount", "shapeType", "bounds" },
-            RequiresInput = new[] { "proBuilderMesh" },
+            RequiresInput = new[] { "gameObject" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object ProBuilderGetInfo(
@@ -812,7 +812,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Modify,
             Tags = new[] { "probuilder", "pivot", "center", "transform" },
             Outputs = new[] { "success", "pivot" },
-            RequiresInput = new[] { "proBuilderMesh" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object ProBuilderCenterPivot(
             string name = null, int instanceId = 0, string path = null,
             float? worldX = null, float? worldY = null, float? worldZ = null)
@@ -861,7 +861,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Modify,
             Tags = new[] { "probuilder", "uv", "projection", "texture" },
             Outputs = new[] { "success", "projectedFaceCount", "channel", "method" },
-            RequiresInput = new[] { "proBuilderMesh" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object ProBuilderProjectUV(
             string name = null, int instanceId = 0, string path = null,
             string faceIndexes = null,
@@ -992,6 +992,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Create,
             Tags = new[] { "probuilder", "batch", "create", "level-design" },
             Outputs = new[] { "success", "results" },
+            RequiresInput = new[] { "items" },
             MutatesScene = true,
             RiskLevel = "medium")]
         public static object ProBuilderCreateBatch(string items, string defaultParent = null)
@@ -1051,7 +1052,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Modify,
             Tags = new[] { "probuilder", "vertex", "move", "deform" },
             Outputs = new[] { "success", "movedVertexCount", "delta", "totalVertices" },
-            RequiresInput = new[] { "proBuilderMesh" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object ProBuilderMoveVertices(
             string name = null, int instanceId = 0, string path = null,
             string vertexIndexes = null,
@@ -1108,7 +1109,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Modify,
             Tags = new[] { "probuilder", "vertex", "position", "absolute" },
             Outputs = new[] { "success", "setVertexCount", "totalVertices" },
-            RequiresInput = new[] { "proBuilderMesh" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object ProBuilderSetVertices(
             string name = null, int instanceId = 0, string path = null,
             string vertices = null)
@@ -1193,7 +1194,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Query,
             Tags = new[] { "probuilder", "vertex", "position", "topology" },
             Outputs = new[] { "vertexCount", "faceCount", "vertices" },
-            RequiresInput = new[] { "proBuilderMesh" },
+            RequiresInput = new[] { "gameObject" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object ProBuilderGetVertices(
@@ -1252,8 +1253,10 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Modify | SkillOperation.Delete,
             Tags = new[] { "probuilder", "combine", "merge", "optimization" },
             Outputs = new[] { "success", "combinedCount", "vertexCount", "faceCount" },
-            RequiresInput = new[] { "proBuilderMesh" },
-            RiskLevel = "medium")]
+            // The real accepted param is "names" (a comma-separated list, or the literal string "selected") -
+            // not the generic name/instanceId/path locator shape every other ProBuilder skill here uses.
+            RequiresInput = new[] { "names" },
+            RiskLevel = "medium", MutatesScene = true)]
         public static object ProBuilderCombineMeshes(string names = null)
         {
 #if !PROBUILDER
@@ -1318,7 +1321,7 @@ namespace UnitySkills
             Category = SkillCategory.ProBuilder, Operation = SkillOperation.Modify,
             Tags = new[] { "probuilder", "material", "color", "appearance" },
             Outputs = new[] { "success", "material", "color" },
-            RequiresInput = new[] { "proBuilderMesh" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object ProBuilderSetMaterial(
             string name = null, int instanceId = 0, string path = null,
             string materialPath = null,

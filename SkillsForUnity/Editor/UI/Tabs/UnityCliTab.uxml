@@ -28,7 +28,7 @@
                 <ui:Button name="cli-browse-btn" class="mini-btn cli-btn" text="…" />
                 <ui:Button name="cli-detect-btn" class="mini-btn cli-btn cli-btn-primary" text="Detect" />
             </ui:VisualElement>
-            <ui:VisualElement name="cli-install-guide" class="cli-install-guide" style="display: none;">
+            <ui:VisualElement name="cli-install-guide" class="cli-install-guide is-hidden">
                 <ui:Label name="cli-install-hint" class="cli-hint" />
                 <ui:VisualElement class="cli-row">
                     <ui:TextField name="cli-install-cmd" class="cli-install-cmd" readonly="true" />

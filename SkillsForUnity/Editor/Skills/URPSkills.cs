@@ -26,7 +26,9 @@ namespace UnitySkills
         [UnitySkill("urp_set_asset_settings", "Modify key settings on a URP asset",
             Category = SkillCategory.URP, Operation = SkillOperation.Modify,
             Tags = new[] { "urp", "asset", "settings", "modify" },
-            Outputs = new[] { "asset" })]
+            Outputs = new[] { "asset" },
+            // Mirrors the real (URP) branch so metadata stays identical when the package is absent.
+            MutatesAssets = true)]
         public static object URPSetAssetSettings(string assetPath = null, bool? supportsHDR = null, int? msaaSampleCount = null,
             float? renderScale = null, bool? supportsMainLightShadows = null, bool? supportsAdditionalLightShadows = null,
             bool? supportsCameraDepthTexture = null, bool? supportsCameraOpaqueTexture = null, float? shadowDistance = null) => RenderPipelineSkillsCommon.NoURP();
@@ -50,20 +52,26 @@ namespace UnitySkills
         [UnitySkill("urp_add_renderer_feature", "Add a safe built-in renderer feature to a URP renderer",
             Category = SkillCategory.URP, Operation = SkillOperation.Create,
             Tags = new[] { "urp", "renderer feature", "add" },
-            Outputs = new[] { "feature", "renderer" })]
+            Outputs = new[] { "feature", "renderer" },
+            // Mirrors the real (URP) branch so metadata stays identical when the package is absent.
+            MutatesAssets = true)]
         public static object URPAddRendererFeature(string featureType, string assetPath = null, int rendererIndex = -1, string rendererDataPath = null, string featureName = null, bool active = true) => RenderPipelineSkillsCommon.NoURP();
 
         [UnitySkill("urp_remove_renderer_feature", "Remove a renderer feature from a URP renderer",
             Category = SkillCategory.URP, Operation = SkillOperation.Delete,
             Tags = new[] { "urp", "renderer feature", "remove" },
             Outputs = new[] { "removedFeature", "renderer" },
-            RiskLevel = "medium")]
+            RiskLevel = "medium",
+            // Mirrors the real (URP) branch so metadata stays identical when the package is absent.
+            MutatesAssets = true)]
         public static object URPRemoveRendererFeature(string assetPath = null, int rendererIndex = -1, string rendererDataPath = null, int featureIndex = -1, string featureName = null, string featureType = null) => RenderPipelineSkillsCommon.NoURP();
 
         [UnitySkill("urp_set_renderer_feature_active", "Enable or disable a renderer feature on a URP renderer",
             Category = SkillCategory.URP, Operation = SkillOperation.Modify,
             Tags = new[] { "urp", "renderer feature", "active" },
-            Outputs = new[] { "feature", "active" })]
+            Outputs = new[] { "feature", "active" },
+            // Mirrors the real (URP) branch so metadata stays identical when the package is absent.
+            MutatesAssets = true)]
         public static object URPSetRendererFeatureActive(bool active, string assetPath = null, int rendererIndex = -1, string rendererDataPath = null, int featureIndex = -1, string featureName = null, string featureType = null) => RenderPipelineSkillsCommon.NoURP();
 #else
         [UnitySkill("urp_get_info", "Get information about the active URP asset and renderer setup",

@@ -230,7 +230,7 @@ namespace UnitySkills
             Category = SkillCategory.Graphics, Operation = SkillOperation.Modify,
             Tags = new[] { "graphics", "quality", "level", "switch" },
             Outputs = new[] { "level", "name" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object GraphicsSetQualityLevel(int level = -1, string levelName = null)
         {
             if (!string.IsNullOrWhiteSpace(levelName))
@@ -287,7 +287,7 @@ namespace UnitySkills
             Category = SkillCategory.Graphics, Operation = SkillOperation.Modify,
             Tags = new[] { "graphics", "render pipeline", "default", "asset" },
             Outputs = new[] { "defaultRenderPipeline" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object GraphicsSetDefaultRenderPipeline(string assetPath = null, bool clear = false)
         {
             if (!clear)
@@ -321,7 +321,7 @@ namespace UnitySkills
             Category = SkillCategory.Graphics, Operation = SkillOperation.Modify,
             Tags = new[] { "graphics", "quality", "render pipeline", "asset" },
             Outputs = new[] { "level", "name", "renderPipeline" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object GraphicsSetQualityRenderPipeline(int level = -1, string levelName = null, string assetPath = null, bool clear = false)
         {
             if (!string.IsNullOrWhiteSpace(levelName))
@@ -411,7 +411,8 @@ namespace UnitySkills
             Category = SkillCategory.Graphics, Operation = SkillOperation.Modify,
             Tags = new[] { "graphics", "shader", "always included", "add" },
             Outputs = new[] { "count", "shader" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "shaderNameOrPath" },
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object GraphicsAddAlwaysIncludedShader(string shaderNameOrPath)
         {
             if (Validate.Required(shaderNameOrPath, "shaderNameOrPath") is object err) return err;
@@ -451,7 +452,8 @@ namespace UnitySkills
             Category = SkillCategory.Graphics, Operation = SkillOperation.Modify,
             Tags = new[] { "graphics", "shader", "always included", "remove" },
             Outputs = new[] { "count", "removedShader" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "shaderNameOrPath" },
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object GraphicsRemoveAlwaysIncludedShader(string shaderNameOrPath)
         {
             if (Validate.Required(shaderNameOrPath, "shaderNameOrPath") is object err) return err;
@@ -513,7 +515,7 @@ namespace UnitySkills
             Category = SkillCategory.Graphics, Operation = SkillOperation.Modify,
             Tags = new[] { "graphics", "shader", "stripping", "settings" },
             Outputs = new[] { "lightmap", "fog", "instancing" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object GraphicsSetShaderStripping(
             string lightmapMode = null,
             string fogMode = null,

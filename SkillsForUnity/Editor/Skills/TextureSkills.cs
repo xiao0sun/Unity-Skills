@@ -209,6 +209,7 @@ namespace UnitySkills
             Category = SkillCategory.Texture, Operation = SkillOperation.Modify,
             Tags = new[] { "texture", "import", "batch", "settings" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
+            RequiresInput = new[] { "items" },
             MutatesAssets = true)]
         public static object TextureSetSettingsBatch(string items)
         {

@@ -13,7 +13,7 @@ namespace UnitySkills
         [UnitySkill("terrain_create", "Create a new Terrain with TerrainData asset", TracksWorkflow = true,
             Category = SkillCategory.Terrain, Operation = SkillOperation.Create,
             Tags = new[] { "terrain", "heightmap", "landscape", "create" },
-            Outputs = new[] { "success", "name", "instanceId", "terrainDataPath", "size", "position" })]
+            Outputs = new[] { "success", "name", "instanceId", "terrainDataPath", "size", "position" }, MutatesScene = true, MutatesAssets = true)]
         public static object TerrainCreate(
             string name = "Terrain",
             int width = 500,
@@ -54,7 +54,7 @@ namespace UnitySkills
             Category = SkillCategory.Terrain, Operation = SkillOperation.Query,
             Tags = new[] { "terrain", "info", "resolution", "layers" },
             Outputs = new[] { "name", "size", "heightmapResolution", "terrainLayerCount", "layers" },
-            RequiresInput = new[] { "terrain" },
+            RequiresInput = new[] { "gameObject" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object TerrainGetInfo(string name = null, int instanceId = 0)
@@ -102,7 +102,7 @@ namespace UnitySkills
             Category = SkillCategory.Terrain, Operation = SkillOperation.Query,
             Tags = new[] { "terrain", "height", "sample", "elevation" },
             Outputs = new[] { "height", "worldY" },
-            RequiresInput = new[] { "terrain" },
+            RequiresInput = new[] { "gameObject" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object TerrainGetHeight(float worldX, float worldZ, string name = null, int instanceId = 0)
@@ -127,7 +127,7 @@ namespace UnitySkills
             Category = SkillCategory.Terrain, Operation = SkillOperation.Modify,
             Tags = new[] { "terrain", "height", "heightmap", "sculpt" },
             Outputs = new[] { "success", "normalizedX", "normalizedZ", "height", "pixelX", "pixelZ" },
-            RequiresInput = new[] { "terrain" })]
+            RequiresInput = new[] { "gameObject" }, MutatesAssets = true)]
         public static object TerrainSetHeight(
             float normalizedX, float normalizedZ, float height,
             string name = null, int instanceId = 0)
@@ -163,7 +163,7 @@ namespace UnitySkills
             Category = SkillCategory.Terrain, Operation = SkillOperation.Modify,
             Tags = new[] { "terrain", "height", "batch", "heightmap", "region" },
             Outputs = new[] { "success", "startX", "startZ", "modifiedWidth", "modifiedLength", "totalPointsModified" },
-            RequiresInput = new[] { "terrain" },
+            RequiresInput = new[] { "gameObject" },
             // SetHeights writes to the TerrainData asset (created by terrain_create via AssetDatabase.CreateAsset);
             // the scene's Terrain component is unaffected.
             MutatesAssets = true)]
@@ -220,7 +220,7 @@ namespace UnitySkills
             Category = SkillCategory.Terrain, Operation = SkillOperation.Modify,
             Tags = new[] { "terrain", "hill", "sculpt", "heightmap" },
             Outputs = new[] { "success", "centerX", "centerZ", "radius", "height", "affectedArea" },
-            RequiresInput = new[] { "terrain" })]
+            RequiresInput = new[] { "gameObject" }, MutatesAssets = true)]
         public static object TerrainAddHill(
             float normalizedX, float normalizedZ,
             float radius = 0.2f,
@@ -290,7 +290,7 @@ namespace UnitySkills
             Category = SkillCategory.Terrain, Operation = SkillOperation.Execute,
             Tags = new[] { "terrain", "perlin", "noise", "procedural", "generation" },
             Outputs = new[] { "success", "resolution", "scale", "heightMultiplier", "octaves" },
-            RequiresInput = new[] { "terrain" })]
+            RequiresInput = new[] { "gameObject" }, MutatesAssets = true)]
         public static object TerrainGeneratePerlin(
             float scale = 20f,
             float heightMultiplier = 0.3f,
@@ -360,7 +360,7 @@ namespace UnitySkills
             Category = SkillCategory.Terrain, Operation = SkillOperation.Modify,
             Tags = new[] { "terrain", "smooth", "heightmap", "sculpt" },
             Outputs = new[] { "success", "centerX", "centerZ", "radius", "iterations", "affectedArea" },
-            RequiresInput = new[] { "terrain" })]
+            RequiresInput = new[] { "gameObject" }, MutatesAssets = true)]
         public static object TerrainSmooth(
             float normalizedX, float normalizedZ,
             float radius = 0.1f,
@@ -428,7 +428,7 @@ namespace UnitySkills
             Category = SkillCategory.Terrain, Operation = SkillOperation.Modify,
             Tags = new[] { "terrain", "flatten", "heightmap", "level" },
             Outputs = new[] { "success", "centerX", "centerZ", "targetHeight", "radius" },
-            RequiresInput = new[] { "terrain" })]
+            RequiresInput = new[] { "gameObject" }, MutatesAssets = true)]
         public static object TerrainFlatten(
             float normalizedX, float normalizedZ,
             float targetHeight = 0.5f,
@@ -495,7 +495,9 @@ namespace UnitySkills
             Category = SkillCategory.Terrain, Operation = SkillOperation.Modify,
             Tags = new[] { "terrain", "paint", "texture", "splat", "layer" },
             Outputs = new[] { "success", "layerIndex", "layerName", "brushSize", "strength" },
-            RequiresInput = new[] { "terrain", "terrainLayer" })]
+            // "terrainLayer" is dropped: layerIndex is a non-nullable int with no CLR default, so it's already
+            // auto-required by IsParameterRequired's value-type rule - the token enforced nothing extra.
+            RequiresInput = new[] { "gameObject" }, MutatesAssets = true)]
         public static object TerrainPaintTexture(
             float normalizedX, float normalizedZ,
             int layerIndex,

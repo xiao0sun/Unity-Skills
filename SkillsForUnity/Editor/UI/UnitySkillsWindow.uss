@@ -125,6 +125,87 @@
     flex-grow: 1;
 }
 
+/* Single shared show/hide mechanism (see UiVisibility.SetVisible). Toggling this class is the
+ * only sanctioned way to hide an element with plain Flex/None semantics; nothing should write
+ * element.style.display directly for a site that uses it. */
+.is-hidden {
+    display: none;
+}
+
+/* Static, never-varying layout for rows/cards built programmatically in C# (AllowlistPickerWindow,
+ * AIConfigTabController, HistoryTabController, SettingsDrawerController). Kept generic so callers
+ * needing a different constant simply add a modifier class instead of writing style.X in C#.
+ * A flexGrow:1 label/field in one of these rows reuses the existing .flex-grow helper above. */
+.built-row {
+    flex-direction: row;
+    align-items: center;
+}
+
+.built-card {
+    flex-direction: column;
+    margin-bottom: 4px;
+}
+
+/* One-off spacing modifiers for a couple of specific programmatically-built rows -
+ * kept separate from .built-row so a differing constant never has to fork the base rule. */
+.setting-row--gap-top {
+    margin-top: 4px;
+}
+
+.mini-btn--inline-gap {
+    margin-left: 4px;
+}
+
+.mini-btn--right-gap {
+    margin-right: 4px;
+}
+
+/* ShortcutsSettingsController.BuildCaptureRow - the outer capture container and the
+ * .setting-row nested inside it need constants .built-card / .setting-row don't already provide. */
+.shortcut-capture-row {
+    flex-direction: column;
+    margin-bottom: 6px;
+}
+
+.setting-row--flush-bottom {
+    margin-bottom: 0;
+}
+
+/* SettingsDrawerController.BuildPendingRow / BuildAllowlistRow - the two programmatically-built
+ * permission-panel row shapes share this title styling. */
+.card-row__title {
+    flex-grow: 1;
+    font-size: 11px;
+}
+
+.pending-row__expires {
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+.pending-row__note {
+    margin-bottom: 2px;
+}
+
+.pending-row__args {
+    margin-top: 2px;
+    margin-bottom: 4px;
+}
+
+.pending-row__actions {
+    flex-direction: row;
+    justify-content: flex-end;
+    margin-top: 2px;
+}
+
+.allowlist-row {
+    margin-bottom: 2px;
+}
+
+.allowlist-foldout {
+    margin-top: 2px;
+}
+
 /* ===================================================================
  * 1. TOPBAR — persistent server status & quick actions
  * =================================================================== */
@@ -136,6 +217,10 @@
     padding: 0 8px;
     min-width: 0;
     position: relative;
+    /* Space the narrow-layout perm badge must leave clear on its right so it never
+     * overlaps the absolutely positioned settings button (see .topbar--narrow >
+     * .topbar-settings-btn below: right 8px + width 28px = 36px, +4px buffer). */
+    --topbar-settings-reserve: 40px;
 }
 
 .topbar-actions {
@@ -534,7 +619,9 @@
 
 .topbar--narrow #perm-mode-badge {
     margin-left: auto;
-    margin-right: 40px;
+    /* Must clear the absolutely positioned .topbar-settings-btn (see .topbar's
+     * --topbar-settings-reserve declaration above). */
+    margin-right: var(--topbar-settings-reserve);
 }
 
 .topbar--narrow .server-switch {
@@ -1435,6 +1522,13 @@
     overflow: hidden;
 }
 
+/* AnalyticsTabController's "no rows" placeholder - overrides just the top/left margin
+ * longhands, so margin-right/bottom still fall through from .setting-hint above. */
+.setting-hint--table-empty {
+    margin-top: 2px;
+    margin-left: 4px;
+}
+
 .narrow-warning-banner {
     background-color: rgba(234, 179, 8, 0.16);
     border-bottom-width: 1px;
@@ -1717,6 +1811,15 @@
     white-space: normal;
 }
 
+/* Task-history-specific one-off modifiers for .muted-label (see HistoryTabController). */
+.muted-label--indent {
+    margin-left: 6px;
+}
+
+.muted-label--small {
+    font-size: 10px;
+}
+
 .accent-title { color: var(--color-accent); }
 .muted-title  { color: var(--color-muted); }
 
@@ -1952,6 +2055,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
     padding-right: 6px;
+    /* Always 0 - only flex-grow varies per cell (column weight), which stays inline in
+     * AnalyticsTabController since it's computed from data at build time. */
+    flex-basis: 0;
 }
 
 .analytics-cell--num {

@@ -15,7 +15,9 @@ namespace UnitySkills
         [UnitySkill("animator_create_controller", "Create a new Animator Controller",
             Category = SkillCategory.Animator, Operation = SkillOperation.Create,
             Tags = new[] { "animator", "controller", "create", "animation" },
-            Outputs = new[] { "success", "name", "path" })]
+            Outputs = new[] { "success", "name", "path" },
+            RequiresInput = new[] { "name" },
+            MutatesAssets = true)]
         public static object AnimatorCreateController(string name, string folder = "Assets/Animations")
         {
             if (Validate.Required(name, "name") is object nameErr) return nameErr;
@@ -43,7 +45,8 @@ namespace UnitySkills
             Category = SkillCategory.Animator, Operation = SkillOperation.Modify,
             Tags = new[] { "animator", "parameter", "add", "controller" },
             Outputs = new[] { "success", "controller", "parameter", "type" },
-            RequiresInput = new[] { "animatorController" })]
+            RequiresInput = new[] { "controllerPath" },
+            MutatesAssets = true)]
         public static object AnimatorAddParameter(string controllerPath, string paramName, string paramType = "float", float defaultFloat = 0, int defaultInt = 0, bool defaultBool = false)
         {
             var pathErr = Validate.SafePath(controllerPath, "controllerPath");
@@ -108,7 +111,7 @@ namespace UnitySkills
             Category = SkillCategory.Animator, Operation = SkillOperation.Query,
             Tags = new[] { "animator", "parameter", "list", "controller" },
             Outputs = new[] { "controller", "parameters" },
-            RequiresInput = new[] { "animatorController" },
+            RequiresInput = new[] { "controllerPath" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object AnimatorGetParameters(string controllerPath)
@@ -136,7 +139,8 @@ namespace UnitySkills
             Category = SkillCategory.Animator, Operation = SkillOperation.Modify,
             Tags = new[] { "animator", "parameter", "set", "value" },
             Outputs = new[] { "success", "gameObject", "parameter", "value" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" },
+            MutatesScene = true)]
         public static object AnimatorSetParameter(
             string name = null, int instanceId = 0, string path = null,
             string paramName = null, string paramType = "float",
@@ -320,7 +324,8 @@ namespace UnitySkills
             Category = SkillCategory.Animator, Operation = SkillOperation.Modify,
             Tags = new[] { "animator", "controller", "assign", "bind" },
             Outputs = new[] { "success", "gameObject", "controller" },
-            RequiresInput = new[] { "gameObject", "animatorController" })]
+            RequiresInput = new[] { "gameObject", "controllerPath" },
+            MutatesScene = true)]
         public static object AnimatorAssignController(string name = null, int instanceId = 0, string path = null, string controllerPath = null)
         {
             if (Validate.Required(controllerPath, "controllerPath") is object err2) return err2;
@@ -351,7 +356,7 @@ namespace UnitySkills
             Category = SkillCategory.Animator, Operation = SkillOperation.Query,
             Tags = new[] { "animator", "state", "list", "layer" },
             Outputs = new[] { "controller", "layer", "layerName", "stateCount", "states" },
-            RequiresInput = new[] { "animatorController" },
+            RequiresInput = new[] { "controllerPath" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object AnimatorListStates(string controllerPath, int layer = 0)
@@ -388,8 +393,9 @@ namespace UnitySkills
             Category = SkillCategory.Animator, Operation = SkillOperation.Create | SkillOperation.Modify,
             Tags = new[] { "animator", "state", "add", "layer" },
             Outputs = new[] { "success", "controller", "stateName", "layer" },
-            RequiresInput = new[] { "animatorController" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "controllerPath" },
+            TracksWorkflow = true,
+            MutatesAssets = true)]
         public static object AnimatorAddState(string controllerPath, string stateName, string clipPath = null, int layer = 0)
         {
             var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);
@@ -411,8 +417,9 @@ namespace UnitySkills
             Category = SkillCategory.Animator, Operation = SkillOperation.Create | SkillOperation.Modify,
             Tags = new[] { "animator", "transition", "state", "flow" },
             Outputs = new[] { "success", "from", "to", "layer", "hasExitTime", "duration" },
-            RequiresInput = new[] { "animatorController" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "controllerPath" },
+            TracksWorkflow = true,
+            MutatesAssets = true)]
         public static object AnimatorAddTransition(string controllerPath, string fromState, string toState, int layer = 0, bool hasExitTime = true, float duration = 0.25f)
         {
             var controller = AssetDatabase.LoadAssetAtPath<AnimatorController>(controllerPath);

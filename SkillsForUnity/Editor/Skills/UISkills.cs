@@ -105,7 +105,7 @@ namespace UnitySkills
             Category = SkillCategory.UI, Operation = SkillOperation.Create,
             Tags = new[] { "canvas", "ugui", "overlay", "render-mode" },
             Outputs = new[] { "name", "instanceId", "renderMode" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UICreateCanvas(string name = "Canvas", string renderMode = "ScreenSpaceOverlay")
         {
             // Must be resolved before the Canvas is created. The old default branch silently produced a
@@ -136,7 +136,7 @@ namespace UnitySkills
             Category = SkillCategory.UI, Operation = SkillOperation.Create,
             Tags = new[] { "panel", "ugui", "container", "background" },
             Outputs = new[] { "name", "instanceId", "parent" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UICreatePanel(string name = "Panel", string parent = null, float r = 1, float g = 1, float b = 1, float a = 0.5f)
         {
             var parentGo = FindOrCreateCanvas(parent);
@@ -164,7 +164,7 @@ namespace UnitySkills
             Category = SkillCategory.UI, Operation = SkillOperation.Create,
             Tags = new[] { "button", "ugui", "interactive", "click" },
             Outputs = new[] { "name", "instanceId", "parent", "text" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UICreateButton(string name = "Button", string parent = null, string text = "Button", float width = 160, float height = 30)
         {
             var parentGo = FindOrCreateCanvas(parent);
@@ -201,7 +201,7 @@ namespace UnitySkills
             Category = SkillCategory.UI, Operation = SkillOperation.Create,
             Tags = new[] { "text", "ugui", "label", "tmp" },
             Outputs = new[] { "name", "instanceId", "parent", "usingTMP" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UICreateText(string name = "Text", string parent = null, string text = "New Text", int fontSize = 14, float r = 0, float g = 0, float b = 0)
         {
             var parentGo = FindOrCreateCanvas(parent);
@@ -226,7 +226,7 @@ namespace UnitySkills
             Category = SkillCategory.UI, Operation = SkillOperation.Create,
             Tags = new[] { "image", "ugui", "sprite", "graphic" },
             Outputs = new[] { "name", "instanceId", "parent" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UICreateImage(string name = "Image", string parent = null, string spritePath = null, float width = 100, float height = 100)
         {
             var parentGo = FindOrCreateCanvas(parent);
@@ -258,6 +258,7 @@ namespace UnitySkills
             Category = SkillCategory.UI, Operation = SkillOperation.Create,
             Tags = new[] { "batch", "ugui", "bulk", "multiple" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
+            RequiresInput = new[] { "items" },
             TracksWorkflow = true, MutatesScene = true)]
         public static object UICreateBatch(string items)
         {
@@ -341,7 +342,7 @@ namespace UnitySkills
             Category = SkillCategory.UI, Operation = SkillOperation.Create,
             Tags = new[] { "inputfield", "ugui", "text-input", "tmp" },
             Outputs = new[] { "name", "instanceId", "parent", "placeholder", "usingTMP" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UICreateInputField(string name = "InputField", string parent = null, string placeholder = "Enter text...", float width = 200, float height = 30)
         {
             var parentGo = FindOrCreateCanvas(parent);
@@ -444,7 +445,7 @@ namespace UnitySkills
             Category = SkillCategory.UI, Operation = SkillOperation.Create,
             Tags = new[] { "slider", "ugui", "range", "interactive" },
             Outputs = new[] { "name", "instanceId", "parent", "minValue", "maxValue", "value" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UICreateSlider(string name = "Slider", string parent = null, float minValue = 0, float maxValue = 1, float value = 0.5f, float width = 160, float height = 20)
         {
             var parentGo = FindOrCreateCanvas(parent);
@@ -514,7 +515,7 @@ namespace UnitySkills
             Category = SkillCategory.UI, Operation = SkillOperation.Create,
             Tags = new[] { "toggle", "ugui", "checkbox", "interactive" },
             Outputs = new[] { "name", "instanceId", "parent", "label", "isOn" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UICreateToggle(string name = "Toggle", string parent = null, string label = "Toggle", bool isOn = false)
         {
             var parentGo = FindOrCreateCanvas(parent);
@@ -573,7 +574,7 @@ namespace UnitySkills
             Tags = new[] { "text", "ugui", "content", "tmp" },
             Outputs = new[] { "name", "text", "usingTMP" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UISetText(string name = null, int instanceId = 0, string path = null, string text = null)
         {
             var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
@@ -698,7 +699,7 @@ namespace UnitySkills
             Tags = new[] { "anchor", "ugui", "layout", "rect-transform" },
             Outputs = new[] { "name", "preset", "anchorMin", "anchorMax" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UISetAnchor(string name = null, int instanceId = 0, string path = null, string preset = "MiddleCenter", bool setPivot = true)
         {
             var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path);
@@ -753,7 +754,7 @@ namespace UnitySkills
             Tags = new[] { "rect-transform", "ugui", "size", "position" },
             Outputs = new[] { "name", "sizeDelta", "anchoredPosition" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UISetRect(
             string name = null, int instanceId = 0, string path = null,
             float? width = null, float? height = null,
@@ -825,7 +826,7 @@ namespace UnitySkills
             Tags = new[] { "rect-transform", "ugui", "anchor", "offset", "layout" },
             Outputs = new[] { "name", "anchorMin", "anchorMax", "anchoredPosition3D", "sizeDelta", "offsetMin", "offsetMax" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UISetRectTransform(
             string name = null, int instanceId = 0, string path = null,
             float? anchorMinX = null, float? anchorMinY = null,
@@ -864,8 +865,8 @@ namespace UnitySkills
             Category = SkillCategory.UI, Operation = SkillOperation.Modify,
             Tags = new[] { "rect-transform", "ugui", "anchor", "offset", "layout", "batch" },
             Outputs = new[] { "name", "anchorMin", "anchorMax", "anchoredPosition3D" },
-            RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "items" },
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UISetRectTransformBatch(string items)
         {
             return BatchExecutor.Execute<BatchRectTransformItem>(items, item =>
@@ -895,7 +896,7 @@ namespace UnitySkills
             Category = SkillCategory.UI, Operation = SkillOperation.Modify,
             Tags = new[] { "layout", "ugui", "vertical", "horizontal", "grid" },
             Outputs = new[] { "parent", "layoutType", "childCount" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object UILayoutChildren(
             string name = null, int instanceId = 0, string path = null,
             string layoutType = "Vertical",  // values: Vertical, Horizontal, Grid
@@ -975,7 +976,7 @@ namespace UnitySkills
             Category = SkillCategory.UI, Operation = SkillOperation.Modify,
             Tags = new[] { "align", "ugui", "layout", "selection" },
             Outputs = new[] { "alignment", "count" },
-            RequiresInput = new[] { "selectedGameObjects" })]
+            RequiresInput = new[] { "selectedGameObjects" }, MutatesScene = true)]
         public static object UIAlignSelected(string alignment = "Center")
         {
             // Validate before touching the selection: the switch below only produces a plain-text error with no
@@ -1035,7 +1036,7 @@ namespace UnitySkills
             Category = SkillCategory.UI, Operation = SkillOperation.Modify,
             Tags = new[] { "distribute", "ugui", "layout", "spacing" },
             Outputs = new[] { "direction", "count" },
-            RequiresInput = new[] { "selectedGameObjects" })]
+            RequiresInput = new[] { "selectedGameObjects" }, MutatesScene = true)]
         public static object UIDistributeSelected(string direction = "Horizontal")
         {
             // Validated up front: direction used to only ever be compared against == "horizontal", so any other
@@ -1088,7 +1089,7 @@ namespace UnitySkills
             Category = SkillCategory.UI, Operation = SkillOperation.Create,
             Tags = new[] { "dropdown", "ugui", "select", "options" },
             Outputs = new[] { "name", "instanceId", "parent", "optionCount" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UICreateDropdown(string name = "Dropdown", string parent = null, string options = null, float width = 160, float height = 30)
         {
             var parentGo = FindOrCreateCanvas(parent);
@@ -1258,7 +1259,7 @@ namespace UnitySkills
             Category = SkillCategory.UI, Operation = SkillOperation.Create,
             Tags = new[] { "scrollview", "ugui", "scroll-rect", "container" },
             Outputs = new[] { "name", "instanceId", "parent", "horizontal", "vertical" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UICreateScrollview(
             string name = "ScrollView", string parent = null,
             float width = 300, float height = 200,
@@ -1317,7 +1318,7 @@ namespace UnitySkills
             Category = SkillCategory.UI, Operation = SkillOperation.Create,
             Tags = new[] { "rawimage", "ugui", "texture", "render-texture" },
             Outputs = new[] { "name", "instanceId", "parent", "hasTexture" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UICreateRawImage(string name = "RawImage", string parent = null, string texturePath = null, float width = 100, float height = 100)
         {
             var parentGo = FindOrCreateCanvas(parent);
@@ -1349,7 +1350,7 @@ namespace UnitySkills
             Category = SkillCategory.UI, Operation = SkillOperation.Create,
             Tags = new[] { "scrollbar", "ugui", "scroll", "navigation" },
             Outputs = new[] { "name", "instanceId", "parent", "direction" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UICreateScrollbar(
             string name = "Scrollbar", string parent = null,
             string direction = "BottomToTop", float value = 0, float size = 0.2f, int numberOfSteps = 0)
@@ -1412,7 +1413,7 @@ namespace UnitySkills
             Tags = new[] { "image", "ugui", "sprite", "fill" },
             Outputs = new[] { "name", "type", "fillMethod", "fillAmount", "preserveAspect" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UISetImage(
             string name = null, int instanceId = 0, string path = null,
             string type = null,
@@ -1474,7 +1475,7 @@ namespace UnitySkills
             Tags = new[] { "layout-element", "ugui", "sizing", "flexible" },
             Outputs = new[] { "name", "minWidth", "minHeight", "preferredWidth", "preferredHeight", "flexibleWidth", "flexibleHeight" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UIAddLayoutElement(
             string name = null, int instanceId = 0, string path = null,
             float? minWidth = null, float? minHeight = null,
@@ -1513,7 +1514,7 @@ namespace UnitySkills
             Tags = new[] { "canvas-group", "ugui", "alpha", "interactable" },
             Outputs = new[] { "name", "alpha", "interactable", "blocksRaycasts" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UIAddCanvasGroup(
             string name = null, int instanceId = 0, string path = null,
             float? alpha = null, bool? interactable = null,
@@ -1549,7 +1550,7 @@ namespace UnitySkills
             Tags = new[] { "mask", "ugui", "clipping", "rect-mask" },
             Outputs = new[] { "name", "maskType", "showMaskGraphic" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UIAddMask(
             string name = null, int instanceId = 0, string path = null,
             string maskType = "RectMask2D", bool showMaskGraphic = true)
@@ -1590,7 +1591,7 @@ namespace UnitySkills
             Tags = new[] { "outline", "ugui", "shadow", "effect" },
             Outputs = new[] { "name", "effectType", "effectColor", "effectDistance" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UIAddOutline(
             string name = null, int instanceId = 0, string path = null,
             string effectType = "Outline",
@@ -1633,7 +1634,7 @@ namespace UnitySkills
             Tags = new[] { "selectable", "ugui", "transition", "navigation", "colors" },
             Outputs = new[] { "name", "transition", "interactable", "navigationMode" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UIConfigureSelectable(
             string name = null, int instanceId = 0, string path = null,
             string transition = null,

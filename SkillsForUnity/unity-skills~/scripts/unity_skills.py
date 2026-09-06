@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
 
-__version__ = "2.8.0"
+__version__ = "2.8.1"
 
 UNITY_URL = "http://localhost:8090"
 DEFAULT_PORT = 8090
@@ -108,13 +108,21 @@ def _version_matches(actual_version: str, target: str) -> bool:
     """
     Version prefix matching with Unity 6 special format support.
 
-    Unity 6 uses internal version like '6000.0.xxf1', so user input '6' or 'Unity 6'
-    should match '6000.x.x'. Traditional versions like '2022.3.12f1' use direct prefix matching.
+    Unity 6 uses internal version like '6000.0.xxf1', so user input '6' (no minor) means
+    "any Unity 6" and matches every '6000.x.x'. A minor component narrows that down: "6.1"
+    or "6.2" (with or without a trailing patch, e.g. "6.2.3") is translated to the
+    '6000.<minor>.' prefix, so it only matches that specific Unity 6 minor line -- it does
+    NOT fall back to "any Unity 6" the way bare "6" does. Traditional versions like
+    '2022.3.12f1', or anything already spelled '6000...', use direct prefix matching
+    unchanged.
 
     Examples:
-        _version_matches("6000.0.28f1", "6")       -> True
+        _version_matches("6000.0.28f1", "6")        -> True   (bare "6" = any Unity 6)
         _version_matches("6000.0.28f1", "Unity 6")  -> True
-        _version_matches("6000.0.28f1", "6000")     -> True
+        _version_matches("6000.2.3f1", "6.2")       -> True   ("6.2" -> "6000.2." prefix)
+        _version_matches("6000.1.5f1", "6.2")       -> False  (minor "1" != "2")
+        _version_matches("6000.2.3f1", "6.2.3")     -> True   ("6.N.x" -> same "6000.N." prefix)
+        _version_matches("6000.0.28f1", "6000")     -> True   (already "6000...", unchanged)
         _version_matches("2022.3.12f1", "2022")     -> True
         _version_matches("2022.3.12f1", "2022.3")   -> True
         _version_matches("2022.3.12f1", "6")        -> False
@@ -129,9 +137,14 @@ def _version_matches(actual_version: str, target: str) -> bool:
     if not cleaned:
         return False
 
-    # Unity 6 special mapping: user says "6", "6.1", "6.2" etc -> match "6000."
-    if cleaned.split(".")[0] == "6" and not cleaned.startswith("6000"):
-        return actual_version.startswith("6000.")
+    parts = cleaned.split(".")
+    if parts[0] == "6" and not cleaned.startswith("6000"):
+        if len(parts) == 1:
+            # Bare "6" (no minor given): any Unity 6.x.x.
+            return actual_version.startswith("6000.")
+        # "6.N" or "6.N.x": narrow to that specific minor line, "6000.N.".
+        minor = parts[1]
+        return actual_version.startswith(f"6000.{minor}.")
 
     # Direct prefix match for everything else (e.g. "6000", "2022", "2022.3")
     return actual_version.startswith(cleaned)
@@ -220,6 +233,10 @@ class UnitySkills:
         # shared by timeout sync and disk-cache keying so construction issues at
         # most one /health request.
         self._health_info = None
+        # /skills/meta is effectively constant for the life of a running Unity instance
+        # (category/operation enums, reserved parameter names, wire-v2 field defaults),
+        # so it is fetched at most once per client and reused for the rest of the session.
+        self._meta_cache = None
 
         if not self.url:
             if port:
@@ -587,7 +604,19 @@ class UnitySkills:
         return self.call('job_status', jobId=job_id)
 
     def get_job_logs(self, job_id: str, limit: int = 100) -> Dict[str, Any]:
-        return self.call('job_logs', jobId=job_id, limit=limit)
+        """Read structured logs via GET /jobs/{id}/logs?limit=N (lightweight, bypasses
+        the skill router and the main-thread skill queue, like get_job()/get_job_progress()).
+
+        The server clamps `limit` to [1, 500] and returns the most recent entries:
+        {jobId, count, totalCount, logs:[{timestamp, level, stage, message, code}]}.
+        A missing job id comes back as the server's structured NOT_FOUND error body
+        (same shape get_job() surfaces for an unknown id), not a raised exception.
+        """
+        try:
+            resp = self._session.get(f"{self.url}/jobs/{job_id}/logs?limit={int(limit)}", timeout=HEALTH_TIMEOUT)
+            return resp.json()
+        except Exception as exc:
+            return {'status': 'error', 'error': str(exc)}
 
     def wait_for_job(self, job_id: str, timeout: float = 60.0) -> Dict[str, Any]:
         """Wait for a job to finish, polling GET /jobs/{id} until terminal or `timeout`.
@@ -655,6 +684,113 @@ class UnitySkills:
             return resp.json()
         except Exception as exc:
             return {'status': 'error', 'error': str(exc)}
+
+    def get_meta(self, force_refresh: bool = False) -> Dict[str, Any]:
+        """GET /skills/meta -- session constants (category/operation enums, reserved
+        parameter names, the tracked-skills list, and the field defaults ?wire=v2 omits).
+
+        This payload does not change while a Unity instance keeps running, so it is
+        fetched at most once per client instance and cached on self._meta_cache for the
+        rest of the session. Pass force_refresh=True to bypass the cache (e.g. after the
+        server restarts or the schema changed).
+        """
+        if not force_refresh and self._meta_cache is not None:
+            return self._meta_cache
+        try:
+            response = self._session.get(f"{self.url}/skills/meta", timeout=self.timeout)
+            response.encoding = 'utf-8'
+            data = response.json()
+        except Exception as e:
+            return {"status": "error", "error": str(e)}
+        self._meta_cache = data
+        return data
+
+    def execute_batch(self, steps: List[Dict[str, Any]], dry_run: bool = False,
+                       continue_on_error: Optional[bool] = None, diff: bool = False,
+                       mode: Optional[str] = None, timeout: Optional[int] = None,
+                       _retries: int = 3, _retry_delay: float = 2.0) -> Dict[str, Any]:
+        """POST /skills/batch -- run (or preview) a sequence of skill steps in one HTTP call.
+
+        Only the top-level body keys the server accepts are ever sent (``steps``,
+        ``continueOnError``): any other key trips the server's UNKNOWN_PARAM check and
+        the batch is not executed at all, so this never forwards arbitrary kwargs.
+
+        Args:
+            steps: List of ``{"skill": <name>, "args": {...}}`` step dicts (server max 50).
+            dry_run: Shorthand for ``mode="dryRun"`` (validates every step, executes
+                nothing, never halts). Ignored when `mode` is given explicitly.
+            continue_on_error: When True, a failing step is recorded and the batch
+                continues instead of stopping at the first failure. Left out of the body
+                entirely when None (the default), so the server's fail-fast behavior applies.
+            diff: When True, sends ``?diff=1`` so a successful response carries the net
+                ``sceneDiff`` across successful steps (the server ignores this under a
+                dry run -- nothing executed to diff).
+            mode: Explicit query-string override, e.g. ``"transactional"`` for all-or-nothing
+                execution with rollback, or ``"dryRun"``. Takes precedence over `dry_run`.
+            timeout: Per-call request timeout override in seconds.
+
+        Shares call()'s retry contract (see _post_skill_with_retries): transport errors
+        and the server's structured "wait and retry" responses (COMPILING/RATE_LIMIT/
+        QUEUE_FULL/SERVER_STOPPED) are retried up to `_retries` times, using the server's
+        own retryAfterSeconds when present.
+
+        Returns the server's parsed JSON (``{status, executed, failed, results:[...]}``)
+        on success, or ``{'status': 'error', 'error': ...}`` on transport failure -- the
+        same convention as dry_run_skill()/plan_skill().
+        """
+        params = {}
+        if mode:
+            params['mode'] = mode
+        elif dry_run:
+            params['mode'] = 'dryRun'
+        if diff:
+            params['diff'] = '1'
+        qs = f"?{urlencode(params)}" if params else ""
+
+        body: Dict[str, Any] = {'steps': steps}
+        if continue_on_error is not None:
+            body['continueOnError'] = bool(continue_on_error)
+
+        json_data = json.dumps(body, ensure_ascii=False)
+        effective_timeout = timeout or self.timeout
+
+        for attempt in range(_retries + 1):
+            try:
+                response = self._session.post(
+                    f"{self.url}/skills/batch{qs}",
+                    data=json_data.encode('utf-8'),
+                    headers={'Content-Type': 'application/json; charset=utf-8'},
+                    timeout=effective_timeout,
+                )
+            except requests.exceptions.Timeout:
+                if attempt < _retries:
+                    time.sleep(_retry_delay * (attempt + 1))
+                    continue
+                return {'status': 'error', 'error': self._timeout_error_result(effective_timeout).get('error')}
+            except requests.exceptions.ConnectionError:
+                if attempt < _retries:
+                    time.sleep(_retry_delay * (attempt + 1))
+                    continue
+                return {'status': 'error', 'error': self._connection_error_result().get('error')}
+            except Exception as e:
+                return {'status': 'error', 'error': str(e)}
+
+            response.encoding = 'utf-8'
+            try:
+                data = response.json()
+            except ValueError:
+                return {'status': 'error', 'error': f"Invalid JSON response: {response.text}"}
+
+            if isinstance(data, dict) and data.get('status') == 'error':
+                retry_after = _structured_retry_after(data, response.status_code)
+                if retry_after is not None and attempt < _retries:
+                    time.sleep(retry_after)
+                    continue
+
+            return data
+
+        # Unreachable: every branch above either continues or returns.
+        return {'status': 'error', 'error': 'retry loop exhausted unexpectedly'}
 
     def poll_job(self, job_id: str, interval: float = 0.5, timeout: float = 300.0,
                  on_progress=None, max_interval: float = 5.0) -> Dict[str, Any]:
@@ -804,7 +940,7 @@ def get_job_status(job_id: str) -> Dict[str, Any]:
 
 
 def get_job_logs(job_id: str, limit: int = 100) -> Dict[str, Any]:
-    """Get structured logs for an asynchronous UnitySkills job."""
+    """Read structured logs via GET /jobs/{id}/logs?limit=N (lightweight, non-blocking)."""
     return _get_default_client().get_job_logs(job_id, limit=limit)
 
 
@@ -836,6 +972,27 @@ def get_job_progress(job_id: str, offset: int = 0) -> Dict[str, Any]:
 def poll_job(job_id: str, interval: float = 0.5, timeout: float = 300.0, on_progress=None) -> Dict[str, Any]:
     """Block until a job reaches a terminal state, polling GET /jobs/{id} every `interval` seconds."""
     return _get_default_client().poll_job(job_id, interval=interval, timeout=timeout, on_progress=on_progress)
+
+
+def get_meta(force_refresh: bool = False) -> Dict[str, Any]:
+    """Get the session-constant GET /skills/meta payload (cached on the default client
+    instance for the session; pass force_refresh=True to bypass the cache)."""
+    return _get_default_client().get_meta(force_refresh=force_refresh)
+
+
+def execute_batch(steps: List[Dict[str, Any]], dry_run: bool = False,
+                   continue_on_error: Optional[bool] = None, diff: bool = False,
+                   mode: Optional[str] = None) -> Dict[str, Any]:
+    """Execute (or dry-run) a batch of skill steps via POST /skills/batch.
+
+    Example:
+        execute_batch([
+            {"skill": "scene_get_info", "args": {}},
+            {"skill": "gameobject_find", "args": {"name": "Main Camera"}},
+        ], dry_run=True)
+    """
+    return _get_default_client().execute_batch(
+        steps, dry_run=dry_run, continue_on_error=continue_on_error, diff=diff, mode=mode)
 
 
 def diagnose(error_limit: int = 20, include_warnings: bool = True, include_recent_jobs: bool = True) -> Dict[str, Any]:
@@ -1262,19 +1419,34 @@ def get_skill_schema(force_refresh: bool = False) -> Dict[str, Any]:
         return {"status": "error", "error": str(e)}
 
 
-def find_skills(intent: str, top_n: int = 10) -> Dict[str, Any]:
-    """Server-side intent-based skill recommendation.
+def find_skills(intent: str, top_n: int = 10, include_schema: bool = False,
+                 wire: Optional[str] = None) -> Dict[str, Any]:
+    """Server-side intent-based skill recommendation (GET /skills/recommend).
+
+    This is the documented default starting point once you already know the specific
+    intent -- root SKILL.md's "Default: start here" row is
+    `GET /skills/recommend?intent=...&includeSchema=true`: one call that both finds and
+    describes the candidate skill, often the only lookup you need before a dryRun.
 
     Uses keyword scoring: name match (3pts), tag match (2pts), description match (1pt).
     Returns top-N ranked skills with relevance scores.
 
     Args:
         intent: Natural language description of what you want to do (e.g. "create red cube").
-        top_n: Maximum number of results (default 10, max 50).
+        top_n: Maximum number of results (default 10; server clamps to 1-50).
+        include_schema: When True, sends includeSchema=true so each result also carries
+            its parameter schema -- skip a separate get_skill_schema()/dryRun round trip
+            when this is the only skill you need.
+        wire: Optional wire-format override, e.g. "v2" to request the slimmer v2 envelope
+            (a "flags" array instead of six boolean fields; roughly halves the payload).
     """
     try:
         client = _get_default_client()
         params = {"intent": intent, "topN": str(top_n)}
+        if include_schema:
+            params["includeSchema"] = "true"
+        if wire:
+            params["wire"] = wire
         response = client._session.get(
             f"{client.url}/skills/recommend?{urlencode(params)}", timeout=client.timeout)
         response.encoding = 'utf-8'
@@ -1637,6 +1809,12 @@ def main():
     parser.add_argument('--search', type=str, default=None, metavar='QUERY',
                         help='Search skills by keyword against the cached summary, e.g. --search "gradient scriptableobject"')
     parser.add_argument('--list-instances', action='store_true', help='List active Unity instances')
+    parser.add_argument('--meta', action='store_true', help='Print the GET /skills/meta session-constants payload')
+    parser.add_argument('--batch', type=str, default=None, metavar='STEPS_JSON_FILE',
+                        help='Execute a batch from a JSON file ({"steps":[...],"continueOnError":false}) via POST /skills/batch')
+    parser.add_argument('--batch-mode', type=str, default=None, choices=['dryRun', 'transactional'],
+                        help='With --batch: query-string mode override (dryRun validates without executing; transactional is all-or-nothing)')
+    parser.add_argument('--diff', action='store_true', help='With --batch: request ?diff=1 (net sceneDiff on a successful response)')
     parser.add_argument('--port', type=int, default=None, help='Connect to specific port')
     parser.add_argument('--version', type=str, default=None, dest='unity_version',
                         help='Connect to Unity instance by version (e.g. "6", "2022", "2022.3")')
@@ -1663,6 +1841,21 @@ def main():
         return
     elif args.list_instances:
         print(json.dumps(list_instances(), ensure_ascii=False, indent=2))
+        return
+    elif args.meta:
+        print(json.dumps(get_meta(), ensure_ascii=False, indent=2))
+        return
+    elif args.batch:
+        try:
+            with open(args.batch, 'r', encoding='utf-8') as f:
+                batch_body = json.load(f)
+        except (OSError, ValueError) as e:
+            print(json.dumps({"status": "error", "error": f"Cannot read --batch file: {e}"}, ensure_ascii=False, indent=2))
+            sys.exit(1)
+        steps = batch_body.get('steps', [])
+        continue_on_error = batch_body.get('continueOnError')
+        result = execute_batch(steps, continue_on_error=continue_on_error, diff=args.diff, mode=args.batch_mode)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         return
 
     if not args.skill_name:

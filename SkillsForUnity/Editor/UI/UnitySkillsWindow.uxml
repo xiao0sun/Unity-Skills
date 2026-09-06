@@ -61,8 +61,8 @@
              ============================================ -->
         <ui:VisualElement name="global-notice-stack" class="global-notice-stack"
                           style="flex-direction: column; flex-shrink: 0;">
-            <ui:VisualElement name="narrow-warning-banner" class="narrow-warning-banner"
-                              style="display: none; flex-direction: row; align-items: center;">
+            <ui:VisualElement name="narrow-warning-banner" class="narrow-warning-banner is-hidden"
+                              style="flex-direction: row; align-items: center;">
                 <ui:VisualElement name="narrow-warning-icon" class="narrow-warning-icon"
                                   picking-mode="Ignore">
                     <ui:VisualElement class="narrow-warning-icon__bulb" />
@@ -72,8 +72,8 @@
                 <ui:Button name="narrow-warning-close" class="icon-btn" text="✕" style="width: 18px; height: 18px; font-size: 10px; margin-left: 4px; padding: 0;" />
             </ui:VisualElement>
 
-            <ui:VisualElement name="pending-banner" class="pending-banner"
-                              style="display: none; flex-direction: column; flex-shrink: 0;">
+            <ui:VisualElement name="pending-banner" class="pending-banner is-hidden"
+                              style="flex-direction: column; flex-shrink: 0;">
                 <ui:VisualElement class="pending-banner__header"
                                   style="flex-direction: row; align-items: center;">
                     <ui:Label name="pending-banner-title" class="pending-banner__title"

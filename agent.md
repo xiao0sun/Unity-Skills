@@ -7,7 +7,7 @@
 
 | 项目 | 值 |
 |------|----|
-| 版本 | 2.8.0 |
+| 版本 | 2.8.1 |
 | 技术栈 | C# (Unity Editor Plugin) + Python (Client) |
 | Unity | 2022.3+（已验证 Unity 6 / 6000.x） |
 | 协议 | MIT |
@@ -93,7 +93,7 @@ Unity-Skills/
 - **复杂窗口拆 Controller**：每个 UXML 子树由一个 `XxxController(VisualElement root, EditorWindow owner)` 接管，主窗口仅做组装与生命周期；参考 `TopbarController` / `SkillsTabController` / `SettingsDrawerController`。
 - **Window 菜单单入口（用户拍板）**：`[MenuItem("Window/UnitySkills")]` 是叶子项且全项目唯一——Unity 里叶子与 `Window/UnitySkills/...` 子菜单不能并存（叶子会被吞）。**禁止**在该前缀下新增任何 `[MenuItem]`；二级面板（审计日志）只走面板内按钮 + 快捷键。
 - **面板快捷键**：命令统一注册在 `Editor/UI/ShortcutActions.cs`（Unity `[Shortcut]` 特性，出厂默认不绑定）。新增可绑定面板 = 加一个 `[Shortcut]` 静态方法 + `Commands` 清单追加一条，设置抽屉 Shortcuts 节自动枚举；用户主动设置的绑定由 ShortcutManager profile 持久化，不写 EditorPrefs。
-- **样式只走 USS class**：不要在 C# 里手写 `style.color = ...`，改类名（`AddToClassList` / `RemoveFromClassList`）。
+- **样式只走 USS class**：不要在 C# 里手写 `style.color = ...`，改类名（`AddToClassList` / `RemoveFromClassList`）。显隐统一用 `UiVisibility.SetVisible(element, bool)`（切 `.is-hidden` 类），不要写 `style.display`；UXML 里也不要写内联 `display: none`，内联样式会压过 class 让切换失效。仅运行时才能算出的值（字体资产、按视口计算的宽度、数据驱动的 flexGrow、运行时加载的贴图）允许内联写。
 
 ### 2. Skill 编写规范
 

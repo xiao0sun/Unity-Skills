@@ -372,7 +372,59 @@ namespace UnitySkills
             // silently reset loops to the CLR default of 1. Note HasUsableArgument treats numeric 0 as unusable,
             // which is correct here: 0 isn't a loop count DOTween accepts either (skill explains more at execution time).
             ["loops|loopType"] = new[] { "loops", "loopType" },
+            // 2026-09 cleanup of the 24 unregistered semantic-locator tokens named in
+            // SkillMetadataGuardTests.RequiresInput_SingleTokensNameARealParameterOrGroupKey's (now near-empty)
+            // allowlist. Each entry below is written alongside the specific skill(s) whose real parameter shape
+            // it describes - not a guess. Simple, single-shape locators reuse the token name as-is; skills whose
+            // locator shape collides with another skill using the same word (Cinemachine's mixing-camera and
+            // state-driven-camera skills each juggle two *different* locators under one word) get their own
+            // compound "A|B|..." key instead, exactly to avoid the vcamName-only trap documented on
+            // ApplyRequiredInputGroups: reusing a group whose candidates the skill only partially accepts can
+            // silently narrow "provide one of several" down to "provide exactly this one".
+            ["vcam"] = new[] { "vcamName", "instanceId", "path", "entityId" },
+            ["camera"] = new[] { "cameraName", "cameraInstanceId", "cameraPath" },
+            ["source"] = new[] { "sourceName", "sourceInstanceId", "sourcePath" },
+            ["sequencer"] = new[] { "sequencerName", "sequencerInstanceId", "sequencerPath", "sequencerEntityId" },
+            ["splineContainer"] = new[] { "splineName", "splineInstanceId", "splinePath" },
+            // cinemachine_set_spline's vcam half uses vcamName/vcamInstanceId/vcamPath, not the plain
+            // vcamName/instanceId/path shape the "vcam" group above covers - reusing "vcam" here would leave only
+            // {vcamName} in the intersection and reject a legitimate vcamInstanceId-only or vcamPath-only call.
+            ["vcamName|vcamInstanceId|vcamPath"] = new[] { "vcamName", "vcamInstanceId", "vcamPath" },
+            // cinemachine_mixing_camera_set_weight juggles two different locators (the mixer, and the child vcam
+            // being weighted) under two different real parameter prefixes - neither matches "vcam"/"gameObject".
+            ["mixerName|mixerInstanceId|mixerPath|mixerEntityId"] = new[] { "mixerName", "mixerInstanceId", "mixerPath", "mixerEntityId" },
+            ["childName|childInstanceId|childPath|childEntityId"] = new[] { "childName", "childInstanceId", "childPath", "childEntityId" },
+            // Shared by cinemachine_state_driven_camera_add_instruction (the parent state-driven camera) and, for
+            // the child half, also by cinemachine_sequencer_add_instruction - both name their child camera locator
+            // childCameraName/childInstanceId/childPath/childEntityId identically.
+            ["cameraName|cameraInstanceId|cameraPath|cameraEntityId"] = new[] { "cameraName", "cameraInstanceId", "cameraPath", "cameraEntityId" },
+            ["childCameraName|childInstanceId|childPath|childEntityId"] = new[] { "childCameraName", "childInstanceId", "childPath", "childEntityId" },
+            // cinemachine_target_group_add_member/remove_member: "groupName..." locates the TargetGroup,
+            // "targetName..." locates the member being added/removed - neither is the generic name/path/instanceId shape.
+            ["groupName|groupInstanceId|groupPath"] = new[] { "groupName", "groupInstanceId", "groupPath" },
+            ["targetName|targetInstanceId|targetPath"] = new[] { "targetName", "targetInstanceId", "targetPath" },
         };
+
+        // Skills whose real requirement is "at least one GameObject must already be selected in the Hierarchy",
+        // read from UnityEditor.Selection at request time rather than from any JSON body parameter. No group
+        // mechanism can express this ("selection" names no parameter any of these skills accepts, and
+        // _requiredInputGroups candidates must themselves be real accepted parameter names per
+        // RequiredInputGroups_NameOnlyRealParameters) - so it is enforced here directly instead, and
+        // "selection"/"selectedGameObjects" stay in SkillMetadataGuardTests's allowlist with this same justification.
+        private static void AnalyzeRequiresEditorSelection(SkillRouter.ParameterValidationResult validation, int minimumCount, bool requireRectTransform)
+        {
+            var selected = UnityEditor.Selection.gameObjects ?? Array.Empty<GameObject>();
+            if (requireRectTransform)
+                selected = selected.Where(go => go.GetComponent<RectTransform>() != null).ToArray();
+
+            if (selected.Length < minimumCount)
+            {
+                var message = minimumCount <= 1
+                    ? "No GameObjects selected in the Hierarchy. Select one or more objects first."
+                    : $"Select at least {minimumCount} {(requireRectTransform ? "UI elements (with a RectTransform)" : "GameObjects")} in the Hierarchy first.";
+                AddSemanticError(validation, "selection", message);
+            }
+        }
 
         /// <summary>
         /// Enforces the half of RequiresInput that says "you must specify a target" - nothing enforced it before:
@@ -705,6 +757,22 @@ namespace UnitySkills
                 case "timeline_play":
                 case "timeline_set_binding":
                     AnalyzeTimelineSceneLocatorSkill(skill.Name, validation);
+                    break;
+                case "smart_scene_layout":
+                case "smart_align_to_ground":
+                case "smart_snap_to_grid":
+                case "smart_randomize_transform":
+                case "smart_replace_objects":
+                    AnalyzeRequiresEditorSelection(validation, minimumCount: 1, requireRectTransform: false);
+                    break;
+                case "smart_distribute":
+                    AnalyzeRequiresEditorSelection(validation, minimumCount: 3, requireRectTransform: false);
+                    break;
+                case "ui_align_selected":
+                    AnalyzeRequiresEditorSelection(validation, minimumCount: 2, requireRectTransform: true);
+                    break;
+                case "ui_distribute_selected":
+                    AnalyzeRequiresEditorSelection(validation, minimumCount: 3, requireRectTransform: true);
                     break;
             }
 

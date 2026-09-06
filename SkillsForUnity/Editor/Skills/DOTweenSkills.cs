@@ -347,7 +347,7 @@ namespace UnitySkills
             Category = SkillCategory.DOTween, Operation = SkillOperation.Create,
             Tags = new[] { "dotween", "animation", "batch", "ui", "pro" },
             Outputs = new[] { "success", "added", "failed" },
-            RequiresInput = new[] { "gameObjects" },
+            RequiresInput = new[] { "targetsJson" },
             TracksWorkflow = true, MutatesScene = true, RiskLevel = "low")]
         public static object DOTweenProBatchAddAnimation(
             string targetsJson,
@@ -403,7 +403,7 @@ namespace UnitySkills
             Category = SkillCategory.DOTween, Operation = SkillOperation.Create,
             Tags = new[] { "dotween", "animation", "stagger", "cascade", "ui", "pro" },
             Outputs = new[] { "success", "added" },
-            RequiresInput = new[] { "gameObjects" },
+            RequiresInput = new[] { "targetsJson" },
             TracksWorkflow = true, MutatesScene = true, RiskLevel = "low")]
         public static object DOTweenProStaggerAnimations(
             string targetsJson,
@@ -750,7 +750,9 @@ namespace UnitySkills
             Category = SkillCategory.DOTween, Operation = SkillOperation.Create,
             Tags = new[] { "dotween", "copy", "duplicate", "animation", "pro" },
             Outputs = new[] { "success" },
-            RequiresInput = new[] { "gameObjects" },
+            // sourceTarget and destTarget are two independently required fields (AND, not "one of") -
+            // each is added directly since both are real, literal parameter names.
+            RequiresInput = new[] { "sourceTarget", "destTarget" },
             TracksWorkflow = true, MutatesScene = true, RiskLevel = "low")]
         public static object DOTweenProCopyAnimation(
             string sourceTarget, string destTarget, int sourceIndex = 0)

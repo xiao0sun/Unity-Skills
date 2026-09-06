@@ -272,7 +272,7 @@ namespace UnitySkills
             Category = SkillCategory.Scene, Operation = SkillOperation.Execute,
             Tags = new[] { "unload", "close", "multi-scene" },
             Outputs = new[] { "unloaded" },
-            RequiresInput = new[] { "scenePath" })]
+            RequiresInput = new[] { "sceneName" })]
         public static object SceneUnload(string sceneName)
         {
             Scene sceneToUnload = default;
@@ -305,7 +305,7 @@ namespace UnitySkills
             Category = SkillCategory.Scene, Operation = SkillOperation.Modify,
             Tags = new[] { "active", "focus", "multi-scene" },
             Outputs = new[] { "activeScene" },
-            RequiresInput = new[] { "scenePath" })]
+            RequiresInput = new[] { "sceneName" })]
         public static object SceneSetActive(string sceneName)
         {
             for (int i = 0; i < SceneManager.sceneCount; i++)

@@ -15,7 +15,8 @@ namespace UnitySkills
             Category = SkillCategory.Timeline, Operation = SkillOperation.Create,
             Tags = new[] { "timeline", "director", "playable", "asset" },
             Outputs = new[] { "assetPath", "gameObjectName", "directorInstanceId" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "name" },
+            TracksWorkflow = true, MutatesScene = true, MutatesAssets = true)]
         public static object TimelineCreate(string name, string folder = "Assets/Timelines")
         {
             if (Validate.Required(name, "name") is object nameErr) return nameErr;
@@ -52,8 +53,8 @@ namespace UnitySkills
             Category = SkillCategory.Timeline, Operation = SkillOperation.Create | SkillOperation.Modify,
             Tags = new[] { "timeline", "audio", "track", "sound" },
             Outputs = new[] { "trackName" },
-            RequiresInput = new[] { "director" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "gameObject" },
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object TimelineAddAudioTrack(string name = null, int instanceId = 0, string path = null, string trackName = "Audio Track")
         {
             var (go, findErr) = GameObjectFinder.FindOrError(name: name, instanceId: instanceId, path: path);
@@ -76,8 +77,8 @@ namespace UnitySkills
             Category = SkillCategory.Timeline, Operation = SkillOperation.Create | SkillOperation.Modify,
             Tags = new[] { "timeline", "animation", "track", "binding" },
             Outputs = new[] { "trackName", "boundObject" },
-            RequiresInput = new[] { "director" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "gameObject" },
+            TracksWorkflow = true, MutatesScene = true, MutatesAssets = true)]
         public static object TimelineAddAnimationTrack(string name = null, int instanceId = 0, string path = null, string trackName = "Animation Track", string bindingObjectName = null)
         {
             var (go, findErr) = GameObjectFinder.FindOrError(name: name, instanceId: instanceId, path: path);
@@ -112,8 +113,8 @@ namespace UnitySkills
             Category = SkillCategory.Timeline, Operation = SkillOperation.Create | SkillOperation.Modify,
             Tags = new[] { "timeline", "activation", "track", "visibility" },
             Outputs = new[] { "trackName" },
-            RequiresInput = new[] { "director" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "gameObject" },
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object TimelineAddActivationTrack(string name = null, int instanceId = 0, string path = null, string trackName = "Activation Track")
         {
             var (timeline, director, err) = GetTimeline(name, instanceId, path);
@@ -127,8 +128,8 @@ namespace UnitySkills
             Category = SkillCategory.Timeline, Operation = SkillOperation.Create | SkillOperation.Modify,
             Tags = new[] { "timeline", "control", "track", "nested", "prefab" },
             Outputs = new[] { "trackName" },
-            RequiresInput = new[] { "director" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "gameObject" },
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object TimelineAddControlTrack(string name = null, int instanceId = 0, string path = null, string trackName = "Control Track")
         {
             var (timeline, director, err) = GetTimeline(name, instanceId, path);
@@ -142,8 +143,8 @@ namespace UnitySkills
             Category = SkillCategory.Timeline, Operation = SkillOperation.Create | SkillOperation.Modify,
             Tags = new[] { "timeline", "signal", "track", "event", "marker" },
             Outputs = new[] { "trackName" },
-            RequiresInput = new[] { "director" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "gameObject" },
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object TimelineAddSignalTrack(string name = null, int instanceId = 0, string path = null, string trackName = "Signal Track")
         {
             var (timeline, director, err) = GetTimeline(name, instanceId, path);
@@ -157,9 +158,9 @@ namespace UnitySkills
             Category = SkillCategory.Timeline, Operation = SkillOperation.Delete,
             Tags = new[] { "timeline", "track", "remove", "delete" },
             Outputs = new[] { "success", "removed" },
-            RequiresInput = new[] { "director", "track" },
+            RequiresInput = new[] { "gameObject", "trackName" },
             TracksWorkflow = true,
-            RiskLevel = "medium")]
+            RiskLevel = "medium", MutatesAssets = true)]
         public static object TimelineRemoveTrack(string name = null, int instanceId = 0, string path = null, string trackName = null)
         {
             var (timeline, director, err) = GetTimeline(name, instanceId, path);
@@ -175,7 +176,7 @@ namespace UnitySkills
             Category = SkillCategory.Timeline, Operation = SkillOperation.Query,
             Tags = new[] { "timeline", "track", "list", "inspect" },
             Outputs = new[] { "count", "tracks" },
-            RequiresInput = new[] { "director" },
+            RequiresInput = new[] { "gameObject" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object TimelineListTracks(string name = null, int instanceId = 0, string path = null)
@@ -194,8 +195,8 @@ namespace UnitySkills
             Category = SkillCategory.Timeline, Operation = SkillOperation.Create | SkillOperation.Modify,
             Tags = new[] { "timeline", "clip", "track", "add" },
             Outputs = new[] { "trackName", "clipStart", "clipDuration" },
-            RequiresInput = new[] { "director", "track" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "gameObject", "trackName" },
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object TimelineAddClip(string name = null, int instanceId = 0, string path = null, string trackName = null, double start = 0, double duration = 1)
         {
             var (timeline, director, err) = GetTimeline(name, instanceId, path);
@@ -231,8 +232,8 @@ namespace UnitySkills
             Category = SkillCategory.Timeline, Operation = SkillOperation.Modify,
             Tags = new[] { "timeline", "duration", "wrapMode", "length" },
             Outputs = new[] { "success", "duration", "wrapMode" },
-            RequiresInput = new[] { "director" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "gameObject" },
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object TimelineSetDuration(string name = null, int instanceId = 0, string path = null, double duration = 0, string wrapMode = null)
         {
             var (timeline, director, err) = GetTimeline(name, instanceId, path);
@@ -254,7 +255,7 @@ namespace UnitySkills
             Category = SkillCategory.Timeline, Operation = SkillOperation.Execute,
             Tags = new[] { "timeline", "play", "pause", "stop", "preview" },
             Outputs = new[] { "success", "action", "time" },
-            RequiresInput = new[] { "director" })]
+            RequiresInput = new[] { "gameObject" })]
         public static object TimelinePlay(string name = null, int instanceId = 0, string path = null, string action = "play")
         {
             var (go, findErr) = GameObjectFinder.FindOrError(name: name, instanceId: instanceId, path: path);
@@ -275,7 +276,10 @@ namespace UnitySkills
             Category = SkillCategory.Timeline, Operation = SkillOperation.Modify,
             Tags = new[] { "timeline", "binding", "track", "assign" },
             Outputs = new[] { "success", "trackName", "boundTo" },
-            RequiresInput = new[] { "director", "track", "gameObject" },
+            // "director" dropped as redundant: "gameObject" already covers the same name/instanceId/path locator.
+            // bindingObjectName is added too: it's genuinely required (the body resolves it via GameObjectFinder
+            // with no fallback) but had no CLR default-less signal and no token at all before this fix.
+            RequiresInput = new[] { "gameObject", "trackName", "bindingObjectName" },
             TracksWorkflow = true)]
         public static object TimelineSetBinding(string name = null, int instanceId = 0, string path = null, string trackName = null, string bindingObjectName = null)
         {

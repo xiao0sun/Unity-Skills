@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using UnityEngine;
 using UnityEditor;
 using UnityEngine.UIElements;
@@ -193,7 +193,7 @@ namespace UnitySkills
                 {
                     _narrowWarningDismissed = true;
                     if (_narrowWarningBanner != null)
-                        _narrowWarningBanner.style.display = DisplayStyle.None;
+                        _narrowWarningBanner.SetVisible(false);
                 };
             }
             rootVisualElement.RegisterCallback<GeometryChangedEvent>(OnRootGeometryChanged);
@@ -231,12 +231,12 @@ namespace UnitySkills
             {
                 _narrowWarningDismissed = false;
                 if (_narrowWarningBanner != null)
-                    _narrowWarningBanner.style.display = DisplayStyle.None;
+                    _narrowWarningBanner.SetVisible(false);
             }
             else if (!_narrowWarningDismissed)
             {
                 if (_narrowWarningBanner != null)
-                    _narrowWarningBanner.style.display = DisplayStyle.Flex;
+                    _narrowWarningBanner.SetVisible(true);
             }
         }
 
@@ -345,7 +345,7 @@ namespace UnitySkills
             int visibleCount = 0;
             for (int i = 0; i < MainTabs.Length; i++)
             {
-                if (_tabWraps != null && i < _tabWraps.Length && _tabWraps[i] != null && _tabWraps[i].style.display != DisplayStyle.None)
+                if (_tabWraps != null && i < _tabWraps.Length && _tabWraps[i] != null && _tabWraps[i].IsVisible())
                     visibleCount++;
             }
             if (visibleCount == 0) visibleCount = 1;
@@ -362,13 +362,13 @@ namespace UnitySkills
             bool isScrollable = maxScroll > 2f;
             if (_tabScrollPrevBtn != null)
             {
-                _tabScrollPrevBtn.style.display = isScrollable ? DisplayStyle.Flex : DisplayStyle.None;
+                _tabScrollPrevBtn.SetVisible(isScrollable);
                 _tabScrollPrevBtn.SetEnabled(_tabBarScroll != null && _tabBarScroll.scrollOffset.x > 1f);
                 _tabScrollPrevIcon?.MarkDirtyRepaint();
             }
             if (_tabScrollNextBtn != null)
             {
-                _tabScrollNextBtn.style.display = isScrollable ? DisplayStyle.Flex : DisplayStyle.None;
+                _tabScrollNextBtn.SetVisible(isScrollable);
                 _tabScrollNextBtn.SetEnabled(_tabBarScroll != null && _tabBarScroll.scrollOffset.x < maxScroll - 1f);
                 _tabScrollNextIcon?.MarkDirtyRepaint();
             }
@@ -382,7 +382,7 @@ namespace UnitySkills
             for (int i = 0; i < _tabContents.Length; i++)
             {
                 if (_tabContents[i] != null)
-                    _tabContents[i].style.display = (i == index) ? DisplayStyle.Flex : DisplayStyle.None;
+                    _tabContents[i].SetVisible(i == index);
 
                 if (_tabButtons[i] != null)
                 {
@@ -434,7 +434,7 @@ namespace UnitySkills
                 string key = tab.Id.ToString().ToLowerInvariant();
                 bool isVisible = TabVisibilitySettings.IsTabVisible(key);
                 if (_tabWraps[i] != null)
-                    _tabWraps[i].style.display = isVisible ? DisplayStyle.Flex : DisplayStyle.None;
+                    _tabWraps[i].SetVisible(isVisible);
 
                 if (isVisible)
                 {
@@ -467,7 +467,7 @@ namespace UnitySkills
             int visibleCount = 0;
             for (int i = 0; i < MainTabs.Length; i++)
             {
-                if (_tabWraps[i] != null && _tabWraps[i].style.display != DisplayStyle.None)
+                if (_tabWraps[i] != null && _tabWraps[i].IsVisible())
                     visibleCount++;
             }
             if (visibleCount == 0) visibleCount = 1;
@@ -559,9 +559,7 @@ namespace UnitySkills
             _pendingBanner?.RefreshLocalization();
             _versionUpdateBanner?.RefreshLocalization();
             if (_narrowWarningText != null)
-                _narrowWarningText.text = (SkillsLocalization.Get("narrow_screen_tip") ?? string.Empty)
-                    .Replace("\U0001F4A1", string.Empty)
-                    .TrimStart();
+                _narrowWarningText.text = SkillsLocalization.Get("narrow_screen_tip") ?? string.Empty;
             _skillsController?.RefreshLocalization();
             _configController?.RefreshLocalization();
             _cliController?.RefreshLocalization();

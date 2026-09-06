@@ -31,7 +31,8 @@ namespace UnitySkills
         [UnitySkill("bookmark_set", "Save current selection and scene view position as a bookmark",
             Category = SkillCategory.Workflow, Operation = SkillOperation.Create,
             Tags = new[] { "bookmark", "selection", "scene-view", "save" },
-            Outputs = new[] { "bookmark", "selectedCount", "hasSceneView" })]
+            Outputs = new[] { "bookmark", "selectedCount", "hasSceneView" },
+            RequiresInput = new[] { "bookmarkName" })]
         public static object BookmarkSet(string bookmarkName, string note = null)
         {
             if (string.IsNullOrEmpty(bookmarkName))
@@ -212,7 +213,8 @@ namespace UnitySkills
         [UnitySkill("workflow_task_start", "Start a new persistent workflow task to track changes for undo. Call workflow_task_end when done.",
             Category = SkillCategory.Workflow, Operation = SkillOperation.Execute,
             Tags = new[] { "task", "undo", "tracking", "transaction" },
-            Outputs = new[] { "taskId", "message" })]
+            Outputs = new[] { "taskId", "message" },
+            RequiresInput = new[] { "tag" })]
         public static object WorkflowTaskStart(string tag, string description = "")
         {
             var task = WorkflowManager.BeginTask(tag, description);

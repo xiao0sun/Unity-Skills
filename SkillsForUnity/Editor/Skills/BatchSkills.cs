@@ -634,7 +634,8 @@ namespace UnitySkills
             // Hands the recorded entries to the same executor as batch_execute to rerun them,
             // so it must carry the same declarations as that one (same reasoning as above).
             MutatesScene = true,
-            MutatesAssets = true)]
+            MutatesAssets = true,
+            RequiresInput = new[] { "reportId" })]
         public static object BatchRetryFailed(string reportId, bool runAsync = true, int chunkSize = 100)
         {
             chunkSize = Mathf.Clamp(chunkSize, 1, 200);

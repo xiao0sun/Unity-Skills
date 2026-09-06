@@ -243,6 +243,7 @@ namespace UnitySkills
             Category = SkillCategory.YooAsset, Operation = SkillOperation.Execute,
             Tags = new[] { "yooasset", "build", "bundles", "pipeline" },
             Outputs = new[] { "success", "outputDirectory", "packageVersion", "errorInfo", "failedTask", "error", "errorCode", "details", "reportPath" },
+            RequiresInput = new[] { "packageName" },
             MutatesAssets = true, RiskLevel = "medium", SupportsDryRun = false,
             LongRunning = true,
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
@@ -411,6 +412,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "simulate", "editor", "pipeline" },
             Outputs = new[] { "success", "packageRootDirectory" },
             RiskLevel = "low",
+            RequiresInput = new[] { "packageName" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
         public static object SimulateBuild(string packageName)
         {
@@ -506,6 +508,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "build", "settings", "modify" },
             Outputs = new[] { "success", "packageName", "pipeline" },
             MutatesAssets = false, RiskLevel = "low",
+            RequiresInput = new[] { "packageName" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
         public static object SetBuildSettings(
             string packageName,
@@ -668,6 +671,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "assetart", "scanner", "run" },
             Outputs = new[] { "success", "scannerGUID", "reportSaved" },
             MutatesAssets = true, RiskLevel = "medium",
+            RequiresInput = new[] { "scannerGUID" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
         public static object RunAssetArtScanner(string scannerGUID, string saveDirectory = null)
         {
@@ -727,6 +731,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "assetart", "scanner", "config", "import" },
             Outputs = new[] { "success", "configPath" },
             MutatesAssets = true, RiskLevel = "medium",
+            RequiresInput = new[] { "configPath" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
         public static object ImportAssetArtScannerConfig(string configPath)
         {
@@ -753,6 +758,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "assetart", "scanner", "config", "export" },
             Outputs = new[] { "success", "configPath" },
             MutatesAssets = false, RiskLevel = "low",
+            RequiresInput = new[] { "configPath" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
         public static object ExportAssetArtScannerConfig(string configPath)
         {
@@ -778,6 +784,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "runtime", "playmode", "validate", "load" },
             Outputs = new[] { "jobId", "status", "packageName" },
             MayEnterPlayMode = true, SupportsDryRun = false, RiskLevel = "medium",
+            RequiresInput = new[] { "packageName" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
         public static object RuntimeValidatePackage(
             string packageName,
@@ -1089,6 +1096,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "collector", "package", "create" },
             Outputs = new[] { "success", "packageName" },
             MutatesAssets = true, RiskLevel = "low",
+            RequiresInput = new[] { "packageName" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
         public static object CreateCollectorPackage(string packageName, bool allowDuplicate = false)
         {
@@ -1120,6 +1128,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "collector", "group", "create" },
             Outputs = new[] { "success", "packageName", "groupName" },
             MutatesAssets = true, RiskLevel = "low",
+            RequiresInput = new[] { "packageName", "groupName" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
         public static object CreateCollectorGroup(
             string packageName,
@@ -1167,6 +1176,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "collector", "create", "add" },
             Outputs = new[] { "success", "packageName", "groupName", "collectPath" },
             MutatesAssets = true, RiskLevel = "low",
+            RequiresInput = new[] { "packageName", "groupName", "collectPath" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
         public static object AddCollector(
             string packageName,
@@ -1290,6 +1300,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "collector", "package", "modify" },
             Outputs = new[] { "success", "packageName" },
             MutatesAssets = true, RiskLevel = "low", TracksWorkflow = true,
+            RequiresInput = new[] { "packageName" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
         public static object ModifyCollectorPackage(
             string packageName,
@@ -1348,6 +1359,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "collector", "package", "remove", "delete" },
             Outputs = new[] { "success", "packageName" },
             MutatesAssets = true, RiskLevel = "medium", TracksWorkflow = true,
+            RequiresInput = new[] { "packageName" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
         public static object RemoveCollectorPackage(string packageName, bool save = true)
         {
@@ -1369,6 +1381,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "collector", "group", "modify" },
             Outputs = new[] { "success", "packageName", "groupName" },
             MutatesAssets = true, RiskLevel = "low", TracksWorkflow = true,
+            RequiresInput = new[] { "packageName", "groupName" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
         public static object ModifyCollectorGroup(
             string packageName,
@@ -1410,6 +1423,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "collector", "group", "remove", "delete" },
             Outputs = new[] { "success", "packageName", "groupName" },
             MutatesAssets = true, RiskLevel = "medium", TracksWorkflow = true,
+            RequiresInput = new[] { "packageName", "groupName" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
         public static object RemoveCollectorGroup(string packageName, string groupName, bool save = true)
         {
@@ -1433,6 +1447,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "collector", "modify" },
             Outputs = new[] { "success", "packageName", "groupName", "collectPath" },
             MutatesAssets = true, RiskLevel = "low", TracksWorkflow = true,
+            RequiresInput = new[] { "packageName", "groupName", "collectPath" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
         public static object ModifyCollector(
             string packageName,
@@ -1478,6 +1493,7 @@ namespace UnitySkills
             Tags = new[] { "yooasset", "collector", "remove", "delete" },
             Outputs = new[] { "success", "packageName", "groupName", "collectPath" },
             MutatesAssets = true, RiskLevel = "medium", TracksWorkflow = true,
+            RequiresInput = new[] { "packageName", "groupName", "collectPath" },
             RequiresPackages = new[] { "com.tuyoogame.yooasset" })]
         public static object RemoveCollector(string packageName, string groupName, string collectPath, bool save = true)
         {

@@ -72,6 +72,7 @@ namespace UnitySkills
             Category = SkillCategory.Script, Operation = SkillOperation.Create,
             Tags = new[] { "script", "batch", "create", "bulk" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
+            RequiresInput = new[] { "items" },
             MayTriggerReload = true, MutatesAssets = true,
             RiskLevel = "high")]
         public static object ScriptCreateBatch(string items)
@@ -315,7 +316,7 @@ namespace UnitySkills
             Tags = new[] { "script", "rename", "refactor", "file" },
             Outputs = new[] { "path", "oldPath", "newName", "jobId" },
             RequiresInput = new[] { "scriptPath" },
-            MayTriggerReload = true, RiskLevel = "high")]
+            MayTriggerReload = true, RiskLevel = "high", MutatesAssets = true)]
         public static object ScriptRename(string scriptPath, string newName, bool checkCompile = true, int diagnosticLimit = DefaultDiagnosticLimit)
         {
             if (Validate.SafePath(scriptPath, "scriptPath") is object pathErr) return pathErr;
@@ -342,7 +343,7 @@ namespace UnitySkills
             Tags = new[] { "script", "move", "reorganize", "file" },
             Outputs = new[] { "oldPath", "newPath", "jobId" },
             RequiresInput = new[] { "scriptPath", "newFolder" },
-            MayTriggerReload = true, RiskLevel = "high")]
+            MayTriggerReload = true, RiskLevel = "high", MutatesAssets = true)]
         public static object ScriptMove(string scriptPath, string newFolder, bool checkCompile = true, int diagnosticLimit = DefaultDiagnosticLimit)
         {
             if (Validate.SafePath(scriptPath, "scriptPath") is object pathErr) return pathErr;

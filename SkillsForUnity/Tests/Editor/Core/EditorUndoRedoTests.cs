@@ -8,11 +8,24 @@ namespace UnitySkills.Tests.Core
     [TestFixture]
     public class EditorUndoRedoTests
     {
+        private SurfaceProfileKind _savedProfile;
+
         [SetUp]
         public void SetUp()
         {
+            // gameobject_create is withdrawn under the Guide / NoSceneAuthoring profiles, and the
+            // profile pref is global to the machine. Pin Full so the probe exercises undo/redo
+            // rather than the surface gate; restore afterward.
+            _savedProfile = SkillsSurfaceProfile.Current;
+            SkillsSurfaceProfile.Current = SurfaceProfileKind.Full;
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             GameObjectFinder.InvalidateCache();
+        }
+
+        [TearDown]
+        public void TearDown()
+        {
+            SkillsSurfaceProfile.Current = _savedProfile;
         }
 
         [Test]

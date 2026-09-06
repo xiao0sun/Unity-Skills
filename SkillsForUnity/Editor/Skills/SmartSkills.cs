@@ -109,7 +109,7 @@ namespace UnitySkills
             Category = SkillCategory.Smart, Operation = SkillOperation.Modify,
             Tags = new[] { "layout", "arrange", "grid", "circle", "linear" },
             Outputs = new[] { "layout", "count", "spacing" },
-            RequiresInput = new[] { "selection" })]
+            RequiresInput = new[] { "selection" }, MutatesScene = true)]
         public static object SmartSceneLayout(
             string layoutType = "Linear",   // values: Linear, Grid, Circle, Arc
             string axis = "X",              // Linear uses X/Y/Z; ignored under Circle
@@ -192,7 +192,7 @@ namespace UnitySkills
             Category = SkillCategory.Smart, Operation = SkillOperation.Modify,
             Tags = new[] { "bind", "reference", "auto-wire", "list", "field" },
             Outputs = new[] { "boundCount", "field", "appendMode" },
-            RequiresInput = new[] { "gameObject", "component" })]
+            RequiresInput = new[] { "gameObject", "component" }, MutatesScene = true)]
         public static object SmartReferenceBind(
             string targetName,          // name of the target GameObject
             string componentName,       // component on the target
@@ -450,7 +450,7 @@ namespace UnitySkills
             Category = SkillCategory.Smart, Operation = SkillOperation.Modify,
             Tags = new[] { "align", "ground", "raycast", "snap" },
             Outputs = new[] { "aligned", "total" },
-            RequiresInput = new[] { "selection" })]
+            RequiresInput = new[] { "selection" }, MutatesScene = true)]
         public static object SmartAlignToGround(float maxDistance = 100f, bool alignRotation = false)
         {
             var selected = Selection.gameObjects;
@@ -474,7 +474,7 @@ namespace UnitySkills
             Category = SkillCategory.Smart, Operation = SkillOperation.Modify,
             Tags = new[] { "distribute", "spacing", "even", "arrange" },
             Outputs = new[] { "distributed", "axis" },
-            RequiresInput = new[] { "selection" })]
+            RequiresInput = new[] { "selection" }, MutatesScene = true)]
         public static object SmartDistribute(string axis = "X")
         {
             var selected = Selection.gameObjects.OrderBy(g => g.transform.GetSiblingIndex()).ToList();
@@ -502,7 +502,7 @@ namespace UnitySkills
             Category = SkillCategory.Smart, Operation = SkillOperation.Modify,
             Tags = new[] { "snap", "grid", "align", "position" },
             Outputs = new[] { "snapped", "gridSize" },
-            RequiresInput = new[] { "selection" })]
+            RequiresInput = new[] { "selection" }, MutatesScene = true)]
         public static object SmartSnapToGrid(float gridSize = 1f)
         {
             var selected = Selection.gameObjects;
@@ -524,7 +524,7 @@ namespace UnitySkills
             Category = SkillCategory.Smart, Operation = SkillOperation.Modify,
             Tags = new[] { "randomize", "transform", "scatter", "variation" },
             Outputs = new[] { "randomized" },
-            RequiresInput = new[] { "selection" })]
+            RequiresInput = new[] { "selection" }, MutatesScene = true)]
         public static object SmartRandomizeTransform(
             float posRange = 0f, float rotRange = 0f, float scaleMin = 1f, float scaleMax = 1f)
         {
@@ -546,7 +546,7 @@ namespace UnitySkills
             Tags = new[] { "replace", "prefab", "swap", "substitute" },
             Outputs = new[] { "replaced", "prefab" },
             RequiresInput = new[] { "selection", "prefabPath" },
-            RiskLevel = "high")]
+            RiskLevel = "high", MutatesScene = true)]
         public static object SmartReplaceObjects(string prefabPath)
         {
             var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath);

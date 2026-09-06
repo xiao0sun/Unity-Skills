@@ -156,7 +156,7 @@ namespace UnitySkills
         [UnitySkill("physics_set_gravity", "Set global gravity setting", TracksWorkflow = true,
             Category = SkillCategory.Physics, Operation = SkillOperation.Modify,
             Tags = new[] { "gravity", "global", "setting" },
-            Outputs = new[] { "success", "gravity" })]
+            Outputs = new[] { "success", "gravity" }, MutatesAssets = true)]
         public static object PhysicsSetGravity(float x, float y, float z)
         {
             if (WorkflowManager.IsRecording)
@@ -308,7 +308,7 @@ namespace UnitySkills
         [UnitySkill("physics_create_material", "Create a PhysicMaterial asset. Automatically uses `PhysicsMaterial` on Unity 6+, `PhysicMaterial` on earlier versions.", TracksWorkflow = true,
             Category = SkillCategory.Physics, Operation = SkillOperation.Create,
             Tags = new[] { "material", "friction", "bounciness", "asset" },
-            Outputs = new[] { "success", "path" })]
+            Outputs = new[] { "success", "path" }, MutatesAssets = true)]
         public static object PhysicsCreateMaterial(
             string name = "New PhysicMaterial", string savePath = "Assets",
             float dynamicFriction = 0.6f, float staticFriction = 0.6f, float bounciness = 0f)
@@ -347,7 +347,7 @@ namespace UnitySkills
             Category = SkillCategory.Physics, Operation = SkillOperation.Modify,
             Tags = new[] { "material", "collider", "friction", "bounciness" },
             Outputs = new[] { "success", "gameObject", "material" },
-            RequiresInput = new[] { "gameObject", "physicMaterial" })]
+            RequiresInput = new[] { "gameObject", "materialPath" }, MutatesScene = true)]
         public static object PhysicsSetMaterial(
             string materialPath, string name = null, int instanceId = 0, string path = null)
         {
@@ -384,7 +384,7 @@ namespace UnitySkills
         [UnitySkill("physics_set_layer_collision", "Set whether two layers collide", TracksWorkflow = true,
             Category = SkillCategory.Physics, Operation = SkillOperation.Modify,
             Tags = new[] { "layer", "collision", "matrix" },
-            Outputs = new[] { "success", "layer1", "layer2", "collisionEnabled" })]
+            Outputs = new[] { "success", "layer1", "layer2", "collisionEnabled" }, MutatesAssets = true)]
         public static object PhysicsSetLayerCollision(int layer1, int layer2, bool enableCollision = true)
         {
             if (layer1 < 0 || layer1 > 31) return InvalidLayerIndexError(layer1, "layer1");

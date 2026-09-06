@@ -242,6 +242,7 @@ namespace UnitySkills
             Category = SkillCategory.Material, Operation = SkillOperation.Create,
             Tags = new[] { "material", "batch", "shader", "pipeline" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
+            RequiresInput = new[] { "items" },
             TracksWorkflow = true, MutatesAssets = true)]
         public static object MaterialCreateBatch(string items)
         {
@@ -260,7 +261,7 @@ namespace UnitySkills
             Category = SkillCategory.Material, Operation = SkillOperation.Modify,
             Tags = new[] { "material", "assign", "batch", "renderer" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "gameObject", "materialPath" },
+            RequiresInput = new[] { "items" },
             TracksWorkflow = true, MutatesScene = true)]
         public static object MaterialAssignBatch(string items)
         {
@@ -279,7 +280,10 @@ namespace UnitySkills
             Category = SkillCategory.Material, Operation = SkillOperation.Create,
             Tags = new[] { "material", "duplicate", "copy", "asset" },
             Outputs = new[] { "name", "path", "sourcePath", "shader" },
-            RequiresInput = new[] { "materialPath" },
+            // Real accepted params are sourcePath/newName - "materialPath" (the token) doesn't exist on this
+            // skill at all. Both sourcePath and newName have no CLR default and the body already Validate.Requires
+            // both, so declaring them here just brings the schema in line with what execution already enforces.
+            RequiresInput = new[] { "sourcePath", "newName" },
             // CreateAsset + SaveAssets: creates a new .mat on disk, same as material_create
             MutatesAssets = true)]
         public static object MaterialDuplicate(string sourcePath, string newName, string savePath = null)
@@ -399,7 +403,7 @@ namespace UnitySkills
             Category = SkillCategory.Material, Operation = SkillOperation.Modify,
             Tags = new[] { "color", "batch", "rendering" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "gameObject|path" },
+            RequiresInput = new[] { "items" },
             TracksWorkflow = true, MutatesAssets = true)]
         public static object MaterialSetColorsBatch(string items = null, string propertyName = null)
         {
@@ -514,7 +518,7 @@ namespace UnitySkills
             Category = SkillCategory.Material, Operation = SkillOperation.Modify,
             Tags = new[] { "emission", "hdr", "batch", "lighting" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "gameObject|path" },
+            RequiresInput = new[] { "items" },
             TracksWorkflow = true, MutatesAssets = true)]
         public static object MaterialSetEmissionBatch(string items)
         {

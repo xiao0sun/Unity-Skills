@@ -16,7 +16,8 @@ namespace UnitySkills
             Category = SkillCategory.ScriptableObject, Operation = SkillOperation.Create,
             Tags = new[] { "scriptableobject", "create", "asset", "data" },
             Outputs = new[] { "type", "path" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "typeName", "savePath" },
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object ScriptableObjectCreate(string typeName, string savePath)
         {
             if (Validate.SafePath(savePath, "savePath") is object pathErr) return pathErr;
@@ -81,7 +82,7 @@ namespace UnitySkills
             Tags = new[] { "scriptableobject", "set", "field", "property" },
             Outputs = new[] { "field", "value" },
             RequiresInput = new[] { "assetPath" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object ScriptableObjectSet(string assetPath, string fieldName, string value)
         {
             var asset = AssetDatabase.LoadAssetAtPath<ScriptableObject>(assetPath);
@@ -144,7 +145,7 @@ namespace UnitySkills
             Category = SkillCategory.ScriptableObject, Operation = SkillOperation.Create,
             Tags = new[] { "scriptableobject", "duplicate", "copy", "clone" },
             Outputs = new[] { "original", "copy" },
-            RequiresInput = new[] { "assetPath" })]
+            RequiresInput = new[] { "assetPath" }, MutatesAssets = true)]
         public static object ScriptableObjectDuplicate(string assetPath)
         {
             if (Validate.SafePath(assetPath, "assetPath") is object pathErr) return pathErr;
@@ -168,7 +169,7 @@ namespace UnitySkills
             Tags = new[] { "scriptableobject", "set", "batch", "fields" },
             Outputs = new[] { "fieldsSet", "failed", "results" },
             RequiresInput = new[] { "assetPath" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object ScriptableObjectSetBatch(string assetPath, string fields)
         {
             var asset = AssetDatabase.LoadAssetAtPath<ScriptableObject>(assetPath);
@@ -230,6 +231,7 @@ namespace UnitySkills
             Category = SkillCategory.ScriptableObject, Operation = SkillOperation.Query,
             Tags = new[] { "scriptableobject", "find", "search", "asset" },
             Outputs = new[] { "count", "assets" },
+            RequiresInput = new[] { "typeName" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object ScriptableObjectFind(string typeName, string searchPath = "Assets", int limit = 50)
@@ -271,7 +273,7 @@ namespace UnitySkills
             Tags = new[] { "scriptableobject", "import", "json", "deserialize" },
             Outputs = new[] { "assetPath", "warning" },
             RequiresInput = new[] { "assetPath" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object ScriptableObjectImportJson(string assetPath, string json = null, string jsonFilePath = null)
         {
             var asset = AssetDatabase.LoadAssetAtPath<ScriptableObject>(assetPath);
