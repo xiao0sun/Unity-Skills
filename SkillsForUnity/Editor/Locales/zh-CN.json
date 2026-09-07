@@ -991,6 +991,7 @@
   "pending_banner_overflow_fmt": "还有 {0} 条 — 打开权限设置查看",
   "pending_banner_title_fmt": "{0} 个待批权限请求",
   "version_update_message_fmt": "UnitySkills {1} 已发布（当前 {0}）",
+  "version_update_now": "直接更新",
   "version_update_view_release": "查看更新",
   "version_update_dismiss_tip": "忽略本次版本提醒",
   "perm_add_skill_btn": "+ 添加 Skill",

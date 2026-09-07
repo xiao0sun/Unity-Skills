@@ -1905,6 +1905,11 @@
     color: rgb(25, 64, 97);
 }
 
+.version-update-banner__now {
+    flex-shrink: 0;
+    margin-right: 4px;
+}
+
 .version-update-banner__view {
     flex-shrink: 0;
     margin-right: 4px;

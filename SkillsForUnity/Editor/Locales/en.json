@@ -991,6 +991,7 @@
   "pending_banner_overflow_fmt": "+{0} more — open Permissions",
   "pending_banner_title_fmt": "{0} pending approval(s)",
   "version_update_message_fmt": "UnitySkills {1} is available (current {0})",
+  "version_update_now": "Update Now",
   "version_update_view_release": "View release",
   "version_update_dismiss_tip": "Dismiss this release",
   "perm_add_skill_btn": "+ Add Skill",

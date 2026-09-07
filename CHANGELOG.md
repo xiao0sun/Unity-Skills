@@ -8,7 +8,7 @@ All notable changes to **UnitySkills** will be documented in this file.
 
 ### Added
 
-- **设置页"检查更新"按钮（两步交互）** — 设置抽屉 Runtime 区新增"包更新"行：点击后强制检查更新（跳过 24 小时成功缓存、失败冷却与"忽略此版本"标记）；发现新版本时按钮变为"更新到 vX.Y.Z"，再点一次即通过 `UnityEditor.PackageManager.Client.Add` 切到对应 git 引用并自动重编译生效。更新目标跟随安装来源分支：读工程 `Packages/manifest.json` 的原始依赖 URL 判定——稳定版安装更新到 GitHub 最新稳定 Release 的 tag，`#beta` 安装通过 `commits/beta` 的最新 SHA 与安装 revision 比对后更新到 beta 分支最新；本地（`file:` / embedded）安装提示不支持自动更新。三语文案齐备且未引入字库外汉字。
+- **设置页"检查更新"按钮（两步交互）** — 设置抽屉 Runtime 区新增"包更新"行：点击后强制检查更新（跳过 24 小时成功缓存、失败冷却与"忽略此版本"标记）；发现新版本时按钮变为"更新到 vX.Y.Z"，再点一次即通过 `UnityEditor.PackageManager.Client.Add` 切到对应 git 引用并自动重编译生效。更新目标跟随安装来源分支：读工程 `Packages/manifest.json` 的原始依赖 URL 判定——稳定版安装更新到 GitHub 最新稳定 Release 的 tag，`#beta` 安装通过 `commits/beta` 的最新 SHA 与安装 revision 比对后更新到 beta 分支最新；本地（`file:` / embedded）安装提示不支持自动更新。三语文案齐备且未引入字库外汉字。更新横幅同步新增"直接更新"按钮，一键更到横幅所示稳定版，无需进入二级页面；本地安装下该按钮不显示。
 - **DontDestroyOnLoad 伪场景全链路可见（Play 模式）** — `GameObjectFinder` 新增 `GetDontDestroyOnLoadRoots()`（`SceneManager.sceneCount`/`GetSceneAt` 从不列出该伪场景，改为 `FindHelper.FindAll` 按场景名过滤无父对象）并接入统一根枚举，按 name/path/tag/component 的查找、建议列表与组件列表/属性读写对 DDOL 对象全部生效；`scene_get_hierarchy` 追加 DDOL 根节点子树且层级节点新增 `scene` 字段标记归属场景；`scene_get_loaded` 追加 `{name:"DontDestroyOnLoad", isPseudoScene:true}` 伪场景条目；`hierarchy_describe` 输出独立 DDOL 区段；`scene_context` / `scene_export_report` 的遍历与 `scene_summarize` 的根对象计数口径对齐（此前计数含 DDOL 但遍历漏掉它们）。`scene_unload` / `scene_set_active` 有意不涉及（该伪场景不可卸载/激活）。
 
 ### Changed

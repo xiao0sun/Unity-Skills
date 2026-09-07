@@ -89,6 +89,7 @@
                               class="version-update-banner is-hidden"
                               style="flex-direction: row; flex-shrink: 0; align-items: center;">
                 <ui:Label name="version-update-message" class="version-update-banner__message flex-grow" text="" />
+                <ui:Button name="version-update-now-btn" class="mini-btn version-update-banner__now" text="Update now" />
                 <ui:Button name="version-update-view-btn" class="mini-btn version-update-banner__view" text="View release" />
                 <ui:Button name="version-update-dismiss-btn" class="icon-btn version-update-banner__dismiss" text="×" />
             </ui:VisualElement>

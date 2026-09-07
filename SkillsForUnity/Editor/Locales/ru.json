@@ -1022,6 +1022,7 @@
   "pending_banner_title_fmt": "{0} ожидают одобрения",
   "pending_banner_overflow_fmt": "+{0} ещё — открыть Разрешения",
   "version_update_message_fmt": "Доступна UnitySkills {1} (текущая {0})",
+  "version_update_now": "Обновить сейчас",
   "version_update_view_release": "Открыть релиз",
   "version_update_dismiss_tip": "Скрыть это обновление",
   "cli_window_title": "Настройка Unity CLI",
