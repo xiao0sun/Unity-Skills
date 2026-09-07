@@ -1,4 +1,4 @@
-﻿using System.IO;
+using System.IO;
 using System.Text;
 using UnityEngine;
 using UnityEditor;
@@ -377,6 +377,34 @@ namespace UnitySkills
                 foreach (var root in scene.GetRootGameObjects())
                     yield return root;
             }
+
+            foreach (var root in GetDontDestroyOnLoadRoots())
+                yield return root;
+        }
+
+        /// <summary>
+        /// Scene name Unity assigns to the DontDestroyOnLoad pseudo-scene (Play mode only).
+        /// SceneManager never lists it, so it cannot be reached through sceneCount/GetSceneAt.
+        /// </summary>
+        internal const string DontDestroyOnLoadSceneName = "DontDestroyOnLoad";
+
+        /// <summary>
+        /// Root GameObjects of the DontDestroyOnLoad pseudo-scene. Empty outside Play mode,
+        /// where that scene does not exist. Assets are excluded by the scene validity check.
+        /// </summary>
+        internal static List<GameObject> GetDontDestroyOnLoadRoots()
+        {
+            var roots = new List<GameObject>();
+            foreach (var go in Internal.FindHelper.FindAll<GameObject>(includeInactive: true))
+            {
+                if (go == null)
+                    continue;
+
+                var scene = go.scene;
+                if (scene.IsValid() && scene.name == DontDestroyOnLoadSceneName && go.transform.parent == null)
+                    roots.Add(go);
+            }
+            return roots;
         }
 
         /// <summary>

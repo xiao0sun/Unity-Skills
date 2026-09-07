@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine.SceneManagement;
@@ -134,11 +134,15 @@ namespace UnitySkills
         {
             var scene = SceneManager.GetActiveScene();
             var roots = scene.GetRootGameObjects();
-            var hierarchy = new object[roots.Length];
+            // SceneManager never lists the DontDestroyOnLoad pseudo-scene; append its roots (Play mode only).
+            var ddolRoots = GameObjectFinder.GetDontDestroyOnLoadRoots();
+            var hierarchy = new object[roots.Length + ddolRoots.Count];
             var componentBuffer = new List<Component>(8);
 
             for (int i = 0; i < roots.Length; i++)
                 hierarchy[i] = GetHierarchyNode(roots[i], 0, maxDepth, componentBuffer);
+            for (int i = 0; i < ddolRoots.Count; i++)
+                hierarchy[roots.Length + i] = GetHierarchyNode(ddolRoots[i], 0, maxDepth, componentBuffer);
 
             return new
             {
@@ -163,6 +167,7 @@ namespace UnitySkills
             var node = new
             {
                 name = go.name,
+                scene = go.scene.name,
                 entityId = UnityObjectIdUtility.GetEntityId(go),
                 instanceId = UnityObjectIdUtility.GetObjectId(go),
                 components = GetComponentTypeNames(go, componentBuffer),
@@ -262,9 +267,27 @@ namespace UnitySkills
                     isLoaded = scene.isLoaded,
                     isDirty = scene.isDirty,
                     isActive = scene == SceneManager.GetActiveScene(),
-                    rootCount = scene.rootCount
+                    rootCount = scene.rootCount,
+                    isPseudoScene = false
                 });
             }
+
+            // SceneManager never lists the DontDestroyOnLoad pseudo-scene; surface it when it has roots (Play mode only).
+            var ddolRoots = GameObjectFinder.GetDontDestroyOnLoadRoots();
+            if (ddolRoots.Count > 0)
+            {
+                scenes.Add(new
+                {
+                    name = GameObjectFinder.DontDestroyOnLoadSceneName,
+                    path = string.Empty,
+                    isLoaded = true,
+                    isDirty = false,
+                    isActive = false,
+                    rootCount = ddolRoots.Count,
+                    isPseudoScene = true
+                });
+            }
+
             return new { success = true, count = scenes.Count, scenes };
         }
 

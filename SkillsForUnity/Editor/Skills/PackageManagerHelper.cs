@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEditor;
 using UnityEditor.PackageManager;
 using UnityEditor.PackageManager.Requests;
@@ -337,6 +337,59 @@ namespace UnitySkills
         }
 
         private const string PackageName = "com.besty.unity-skills";
+
+        internal enum SelfInstallKind { Stable, Beta, Unsupported }
+
+        private const string SelfGitUrl = "https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity";
+
+        /// <summary>
+        /// Detects how this package was installed by reading the raw dependency spec from the
+        /// project manifest -- PackageInfo does not preserve the original branch fragment.
+        /// Git URL with "#beta" => Beta; any other git URL => Stable; local/embedded => Unsupported.
+        /// </summary>
+        internal static SelfInstallKind DetectSelfInstallKind()
+        {
+            try
+            {
+                var manifestPath = Path.Combine(Application.dataPath, "..", "Packages", "manifest.json");
+                if (!File.Exists(manifestPath)) return SelfInstallKind.Unsupported;
+
+                var json = JObject.Parse(File.ReadAllText(manifestPath));
+                var spec = (json["dependencies"] as JObject)?[PackageName]?.Value<string>();
+                if (string.IsNullOrWhiteSpace(spec) ||
+                    !spec.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                    return SelfInstallKind.Unsupported;
+
+                var hashIndex = spec.IndexOf('#');
+                var fragment = hashIndex >= 0 ? spec.Substring(hashIndex + 1).Trim() : string.Empty;
+                return string.Equals(fragment, "beta", StringComparison.OrdinalIgnoreCase)
+                    ? SelfInstallKind.Beta
+                    : SelfInstallKind.Stable;
+            }
+            catch
+            {
+                return SelfInstallKind.Unsupported;
+            }
+        }
+
+        /// <summary>
+        /// Commit SHA of the installed package, only meaningful for git installs (null otherwise).
+        /// </summary>
+        internal static string GetSelfInstalledRevision()
+        {
+            try { return PkgInfo.FindForAssembly(typeof(PackageManagerHelper).Assembly)?.git?.revision; }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Re-adds this package from its git URL pinned to the update target: "#v{latestVersion}"
+        /// for stable installs, "#beta" for beta installs. Triggers a domain reload on success.
+        /// </summary>
+        internal static void UpdateSelf(SelfInstallKind kind, string latestVersion, Action<bool, string> callback)
+        {
+            var fragment = kind == SelfInstallKind.Beta ? "#beta" : "#v" + latestVersion;
+            InstallPackage(SelfGitUrl + fragment, null, callback);
+        }
 
         private static void EnsureTestable()
         {

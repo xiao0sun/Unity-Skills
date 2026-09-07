@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEditor;
 using UnityEditor.Compilation;
 using UnityEditorInternal;
@@ -1010,7 +1010,9 @@ namespace UnitySkills
         {
             var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
             var allObjects = GameObjectFinder.GetSceneObjects();
+            // Count pseudo-scene roots too: allObjects already includes them via GameObjectFinder.
             var rootObjects = scene.GetRootGameObjects();
+            int rootObjectCount = rootObjects.Length + GameObjectFinder.GetDontDestroyOnLoadRoots().Count;
             var componentBuffer = new List<Component>(8);
 
             int totalObjects = allObjects.Count;
@@ -1065,7 +1067,7 @@ namespace UnitySkills
                     totalObjects,
                     activeObjects,
                     inactiveObjects = totalObjects - activeObjects,
-                    rootObjects = rootObjects.Length,
+                    rootObjects = rootObjectCount,
                     maxHierarchyDepth = maxDepth,
                     lights = lightCount,
                     cameras = cameraCount,
@@ -1105,6 +1107,23 @@ namespace UnitySkills
             if (allRoots.Length > maxItemsPerLevel)
             {
                 sb.AppendLine($"... and {allRoots.Length - maxItemsPerLevel} more root objects");
+            }
+
+            // SceneManager never lists the DontDestroyOnLoad pseudo-scene; render it as its own section.
+            var ddolRoots = GameObjectFinder.GetDontDestroyOnLoadRoots()
+                .Where(g => includeInactive || g.activeInHierarchy)
+                .OrderBy(g => g.transform.GetSiblingIndex())
+                .Take(maxItemsPerLevel)
+                .ToArray();
+            if (ddolRoots.Length > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"Scene: {GameObjectFinder.DontDestroyOnLoadSceneName} (pseudo-scene)");
+                sb.AppendLine("─".PadRight(40, '─'));
+                foreach (var root in ddolRoots)
+                {
+                    BuildHierarchyTree(sb, root.transform, 0, maxDepth, includeInactive, maxItemsPerLevel, ref totalShown, componentBuffer);
+                }
             }
 
             return new
@@ -1474,7 +1493,11 @@ namespace UnitySkills
             }
             else
             {
-                roots = scene.GetRootGameObjects().Select(g => g.transform).ToArray();
+                // Include the DontDestroyOnLoad pseudo-scene roots, which SceneManager never lists;
+                // totalObjects already counts them via GameObjectFinder.
+                roots = scene.GetRootGameObjects().Select(g => g.transform)
+                    .Concat(GameObjectFinder.GetDontDestroyOnLoadRoots().Select(g => g.transform))
+                    .ToArray();
                 scopeObjects = totalObjects;
             }
 
@@ -1760,7 +1783,10 @@ namespace UnitySkills
             if (Validate.SafePath(savePath, "savePath") is object pathErr0) return pathErr0;
 
             var scene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
-            var roots = scene.GetRootGameObjects().Select(g => g.transform).ToArray();
+            // Include the DontDestroyOnLoad pseudo-scene roots, which SceneManager never lists.
+            var roots = scene.GetRootGameObjects().Select(g => g.transform)
+                .Concat(GameObjectFinder.GetDontDestroyOnLoadRoots().Select(g => g.transform))
+                .ToArray();
 
             var objList = new List<(GameObject go, int depth)>();
             var queue = new Queue<(Transform t, int depth)>();

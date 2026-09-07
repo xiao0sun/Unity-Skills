@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -109,6 +109,9 @@ namespace UnitySkills
         private VisualElement _updateNotificationsSwitch;
         private Label         _updateNotificationsLabel;
         private Label         _updateNotificationsHint;
+        private Label         _updateCheckLabel;
+        private Button        _updateCheckBtn;
+        private Label         _updateCheckStatus;
         private VisualElement _telemetrySwitch;
         private Label         _telemetryLabel;
         private Label         _telemetryHint;
@@ -165,6 +168,7 @@ namespace UnitySkills
             SkillsModeManager.OnChanged -= RefreshPermissionsUi;
             TabVisibilitySettings.OnChanged -= SyncTabVisibilityUi;
             SkillTelemetryService.OnChanged -= SyncTabVisibilityUi;
+            VersionCheckService.CheckCompleted -= OnStableCheckCompleted;
         }
 
         private void OnRootDetached(DetachFromPanelEvent _)
@@ -246,6 +250,9 @@ namespace UnitySkills
             _updateNotificationsSwitch = _drawerContainer.Q<VisualElement>("update-notifications-switch");
             _updateNotificationsLabel  = _drawerContainer.Q<Label>("update-notifications-label");
             _updateNotificationsHint   = _drawerContainer.Q<Label>("update-notifications-hint");
+            _updateCheckLabel  = _drawerContainer.Q<Label>("update-check-label");
+            _updateCheckBtn    = _drawerContainer.Q<Button>("update-check-btn");
+            _updateCheckStatus = _drawerContainer.Q<Label>("update-check-status");
             _telemetrySwitch   = _drawerContainer.Q<VisualElement>("telemetry-switch");
             _telemetryLabel    = _drawerContainer.Q<Label>("telemetry-label");
             _telemetryHint     = _drawerContainer.Q<Label>("telemetry-hint");
@@ -370,6 +377,9 @@ namespace UnitySkills
                         !VersionCheckService.NotificationsEnabled;
                     SyncSettingSwitches();
                 });
+
+            if (_updateCheckBtn != null)
+                _updateCheckBtn.clicked += OnUpdateCheckClicked;
 
             if (_telemetrySwitch != null)
                 _telemetrySwitch.RegisterCallback<ClickEvent>(_ =>
@@ -582,6 +592,15 @@ namespace UnitySkills
             if (_updateNotificationsHint != null)
                 _updateNotificationsHint.text = SkillsLocalization.Get("drawer_update_notifications_hint");
 
+            if (_updateCheckLabel != null)
+                _updateCheckLabel.text = SkillsLocalization.Get("drawer_update_check_label");
+            // Only re-apply button text in states whose text is static; Checking/Updating keep
+            // their transient status, and a language switch mid-update must not clobber it.
+            if (_updateCheckState == UpdateCheckState.Idle && _updateCheckBtn != null)
+                _updateCheckBtn.text = SkillsLocalization.Get("update_check_btn");
+            else if (_updateCheckState == UpdateCheckState.Ready && _updateCheckBtn != null)
+                _updateCheckBtn.text = SkillsLocalization.Get("update_check_update_now_fmt", _updateCheckTarget);
+
             if (_telemetryLabel != null)
                 _telemetryLabel.text = SkillsLocalization.Get("drawer_telemetry_label");
             if (_telemetryHint != null)
@@ -615,6 +634,153 @@ namespace UnitySkills
             _updateNotificationsSwitch?.EnableInClassList(
                 "on", VersionCheckService.NotificationsEnabled);
             _telemetrySwitch?.EnableInClassList("on", SkillTelemetryService.Enabled);
+        }
+
+        // ===== Package update check (two-step: check first, then update on a second click) =====
+
+        private enum UpdateCheckState { Idle, Checking, Ready, Updating }
+
+        private UpdateCheckState _updateCheckState = UpdateCheckState.Idle;
+        private PackageManagerHelper.SelfInstallKind _updateCheckKind;
+        private string _updateCheckVersion; // raw latest stable version, null for beta targets
+        private string _updateCheckTarget = string.Empty; // display text for the update button
+
+        private void OnUpdateCheckClicked()
+        {
+            switch (_updateCheckState)
+            {
+                case UpdateCheckState.Idle:
+                    BeginUpdateCheck();
+                    break;
+                case UpdateCheckState.Ready:
+                    StartSelfUpdate();
+                    break;
+                // Checking / Updating: the button is disabled, so clicks should not arrive here.
+            }
+        }
+
+        private void BeginUpdateCheck()
+        {
+            _updateCheckKind = PackageManagerHelper.DetectSelfInstallKind();
+            if (_updateCheckKind == PackageManagerHelper.SelfInstallKind.Unsupported)
+            {
+                SetUpdateCheckStatus(SkillsLocalization.Get("update_check_unsupported"));
+                return;
+            }
+
+            _updateCheckState = UpdateCheckState.Checking;
+            _updateCheckBtn?.SetEnabled(false);
+            SetUpdateCheckStatus(SkillsLocalization.Get("update_check_checking"));
+
+            if (_updateCheckKind == PackageManagerHelper.SelfInstallKind.Beta)
+            {
+                VersionCheckService.FetchBetaHeadSha(OnBetaHeadFetched);
+            }
+            else
+            {
+                VersionCheckService.CheckCompleted += OnStableCheckCompleted;
+                VersionCheckService.StartCheck(force: true);
+            }
+        }
+
+        private void OnStableCheckCompleted()
+        {
+            VersionCheckService.CheckCompleted -= OnStableCheckCompleted;
+            if (_updateCheckState != UpdateCheckState.Checking) return;
+
+            var release = VersionCheckService.LatestRelease;
+            if (release != null &&
+                VersionCheckService.TryCompareVersions(release.Version, SkillsLogger.Version, out var comparison) &&
+                comparison > 0)
+            {
+                // Manual checks ignore the dismissed banner version on purpose.
+                _updateCheckVersion = release.Version;
+                EnterReadyState("v" + release.Version);
+            }
+            else
+            {
+                EnterIdleState(SkillsLocalization.Get("update_check_latest"));
+            }
+        }
+
+        private void OnBetaHeadFetched(string sha)
+        {
+            if (_updateCheckState != UpdateCheckState.Checking) return;
+
+            if (sha == null)
+            {
+                EnterIdleState(SkillsLocalization.Get("update_check_failed_fmt",
+                    SkillsLocalization.Get("update_check_reason_network")));
+                return;
+            }
+
+            // PackageManager stores the full SHA; tolerate short revisions via prefix match.
+            var installed = PackageManagerHelper.GetSelfInstalledRevision();
+            var hasUpdate = string.IsNullOrEmpty(installed) ||
+                !sha.StartsWith(installed, StringComparison.OrdinalIgnoreCase);
+            if (hasUpdate)
+            {
+                _updateCheckVersion = null;
+                EnterReadyState(SkillsLocalization.Get("update_check_beta_target"));
+            }
+            else
+            {
+                EnterIdleState(SkillsLocalization.Get("update_check_latest"));
+            }
+        }
+
+        private void StartSelfUpdate()
+        {
+            _updateCheckState = UpdateCheckState.Updating;
+            _updateCheckBtn?.SetEnabled(false);
+            SetUpdateCheckStatus(SkillsLocalization.Get("update_check_updating"));
+
+            PackageManagerHelper.UpdateSelf(_updateCheckKind, _updateCheckVersion, (success, message) =>
+            {
+                if (_updateCheckState != UpdateCheckState.Updating) return;
+                if (success)
+                {
+                    // The package swap triggers a domain reload that tears this UI down anyway.
+                    SetUpdateCheckStatus(SkillsLocalization.Get("update_check_done"));
+                }
+                else
+                {
+                    EnterIdleState(SkillsLocalization.Get("update_check_failed_fmt",
+                        string.IsNullOrEmpty(message)
+                            ? SkillsLocalization.Get("update_check_reason_unknown")
+                            : message));
+                }
+            });
+        }
+
+        private void EnterReadyState(string targetDisplay)
+        {
+            _updateCheckState = UpdateCheckState.Ready;
+            _updateCheckTarget = targetDisplay;
+            SetUpdateCheckStatus(SkillsLocalization.Get("update_check_new_version_fmt", targetDisplay));
+            if (_updateCheckBtn != null)
+            {
+                _updateCheckBtn.text = SkillsLocalization.Get("update_check_update_now_fmt", targetDisplay);
+                _updateCheckBtn.SetEnabled(true);
+            }
+        }
+
+        private void EnterIdleState(string statusText)
+        {
+            _updateCheckState = UpdateCheckState.Idle;
+            _updateCheckTarget = string.Empty;
+            SetUpdateCheckStatus(statusText);
+            if (_updateCheckBtn != null)
+            {
+                _updateCheckBtn.text = SkillsLocalization.Get("update_check_btn");
+                _updateCheckBtn.SetEnabled(true);
+            }
+        }
+
+        private void SetUpdateCheckStatus(string text)
+        {
+            if (_updateCheckStatus != null)
+                _updateCheckStatus.text = text;
         }
 
         private static SkillsLocalization.Language ParseLanguage(string value) =>

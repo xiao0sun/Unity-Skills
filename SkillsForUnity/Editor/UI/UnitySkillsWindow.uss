@@ -399,6 +399,7 @@
     width: 32px;
     height: 18px;
     margin: 0 6px 0 4px;
+    align-items: center;
     background-color: var(--color-button-bg);
     border-width: 1px;
     border-color: var(--color-border-hard);
@@ -410,7 +411,6 @@
 .server-switch__knob {
     width: 14px;
     height: 14px;
-    margin-top: 1px;
     margin-left: 1px;
     background-color: #f0f0f0;
     border-radius: 7px;
@@ -452,6 +452,7 @@
     flex-shrink: 0;
     width: 32px;
     height: 18px;
+    align-items: center;
     background-color: var(--color-button-bg);
     border-width: 1px;
     border-color: var(--color-border-hard);
@@ -470,7 +471,6 @@
 .setting-row > .unity-toggle .unity-toggle__checkmark {
     width: 14px;
     height: 14px;
-    margin-top: 1px;
     margin-left: 1px;
     background-color: #f0f0f0;
     border-radius: 7px;

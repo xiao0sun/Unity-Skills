@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine.Networking;
@@ -27,6 +27,8 @@ namespace UnitySkills
 
         private const string LatestReleaseApi =
             "https://api.github.com/repos/Besty0728/Unity-Skills/releases/latest";
+        private const string BetaHeadApi =
+            "https://api.github.com/repos/Besty0728/Unity-Skills/commits/beta";
         private const string ReleasePageBase =
             "https://github.com/Besty0728/Unity-Skills/releases/tag/";
 
@@ -42,6 +44,8 @@ namespace UnitySkills
         private static readonly TimeSpan FailedAttemptCooldown = TimeSpan.FromHours(1);
 
         private static UnityWebRequest _activeRequest;
+        private static UnityWebRequest _activeBetaRequest;
+        private static Action<string> _betaCallback;
         private static ReleaseInfo _latestRelease;
 
         static VersionCheckService()
@@ -78,15 +82,24 @@ namespace UnitySkills
                 _latestRelease?.Version,
                 EditorPrefs.GetString(PrefDismissedVersion, string.Empty));
 
-        internal static void StartCheck()
+        /// <summary>
+        /// Fired on the main thread when a check started by <see cref="StartCheck"/> finishes,
+        /// regardless of success. Inspect <see cref="LatestRelease"/> for the outcome.
+        /// </summary>
+        internal static event Action CheckCompleted;
+
+        internal static void StartCheck(bool force = false)
         {
-            if (!NotificationsEnabled) return;
+            if (!force && !NotificationsEnabled) return;
             if (_activeRequest != null) return;
 
             var now = DateTime.UtcNow;
-            if (_latestRelease != null &&
-                IsRecent(PrefLastSuccessfulCheckUtc, now, SuccessCacheLifetime)) return;
-            if (IsRecent(PrefLastAttemptUtc, now, FailedAttemptCooldown)) return;
+            if (!force)
+            {
+                if (_latestRelease != null &&
+                    IsRecent(PrefLastSuccessfulCheckUtc, now, SuccessCacheLifetime)) return;
+                if (IsRecent(PrefLastAttemptUtc, now, FailedAttemptCooldown)) return;
+            }
 
             WriteUtc(PrefLastAttemptUtc, now);
 
@@ -186,6 +199,74 @@ namespace UnitySkills
             {
                 _activeRequest = null;
                 request.Dispose();
+                CheckCompleted?.Invoke();
+            }
+        }
+
+        /// <summary>
+        /// Fetches the latest commit SHA of the beta branch (beta installs have no Release to
+        /// compare against, so the commit hash is the only freshness signal). The callback runs
+        /// on the main thread and receives null on any failure.
+        /// </summary>
+        internal static void FetchBetaHeadSha(Action<string> onComplete)
+        {
+            if (_activeBetaRequest != null)
+            {
+                _betaCallback += onComplete;
+                return;
+            }
+
+            _betaCallback = onComplete;
+            UnityWebRequest request = null;
+            try
+            {
+                request = UnityWebRequest.Get(BetaHeadApi);
+                request.timeout = 10;
+                request.SetRequestHeader("Accept", "application/vnd.github+json");
+                request.SetRequestHeader("X-GitHub-Api-Version", "2022-11-28");
+                _activeBetaRequest = request;
+
+                var operation = request.SendWebRequest();
+                operation.completed += _ => CompleteBetaRequest(request);
+            }
+            catch
+            {
+                if (ReferenceEquals(_activeBetaRequest, request))
+                    _activeBetaRequest = null;
+                request?.Dispose();
+                var callback = _betaCallback;
+                _betaCallback = null;
+                callback?.Invoke(null);
+            }
+        }
+
+        private static void CompleteBetaRequest(UnityWebRequest request)
+        {
+            if (!ReferenceEquals(_activeBetaRequest, request))
+                return;
+
+            string sha = null;
+            try
+            {
+                if (request.result == UnityWebRequest.Result.Success)
+                {
+                    var raw = JObject.Parse(request.downloadHandler?.text ?? string.Empty)
+                        .Value<string>("sha");
+                    if (!string.IsNullOrWhiteSpace(raw))
+                        sha = raw.Trim();
+                }
+            }
+            catch
+            {
+                sha = null;
+            }
+            finally
+            {
+                _activeBetaRequest = null;
+                request.Dispose();
+                var callback = _betaCallback;
+                _betaCallback = null;
+                callback?.Invoke(sha);
             }
         }
 
@@ -278,11 +359,21 @@ namespace UnitySkills
         {
             var request = _activeRequest;
             _activeRequest = null;
-            if (request == null) return;
+            if (request != null)
+            {
+                try { request.Abort(); }
+                catch { }
+                request.Dispose();
+            }
 
-            try { request.Abort(); }
+            var betaRequest = _activeBetaRequest;
+            _activeBetaRequest = null;
+            _betaCallback = null;
+            if (betaRequest == null) return;
+
+            try { betaRequest.Abort(); }
             catch { }
-            request.Dispose();
+            betaRequest.Dispose();
         }
 
         private static bool TryParseVersion(string value, out Version version)
