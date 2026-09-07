@@ -2,6 +2,23 @@
 
 All notable changes to **UnitySkills** will be documented in this file.
 
+## [2.8.2] - 2026-09-08
+
+> **面板一键更新 + DontDestroyOnLoad 层级全链路可见** —— 本版两大升级：(1) 设置抽屉新增"检查更新"按钮，两步交互（先查再更），确认后在编辑器内直接完成包更新，无需打开 Package Manager；(2) `DontDestroyOnLoad` 伪场景（Play 模式）的对象此前对所有层级/查找类技能不可见，现统一接入查找器枚举，层级树、文本树、场景上下文导出与组件读写全链路覆盖；(3) 修复设置开关白色圆点垂直偏下的样式问题。
+
+### Added
+
+- **设置页"检查更新"按钮（两步交互）** — 设置抽屉 Runtime 区新增"包更新"行：点击后强制检查更新（跳过 24 小时成功缓存、失败冷却与"忽略此版本"标记）；发现新版本时按钮变为"更新到 vX.Y.Z"，再点一次即通过 `UnityEditor.PackageManager.Client.Add` 切到对应 git 引用并自动重编译生效。更新目标跟随安装来源分支：读工程 `Packages/manifest.json` 的原始依赖 URL 判定——稳定版安装更新到 GitHub 最新稳定 Release 的 tag，`#beta` 安装通过 `commits/beta` 的最新 SHA 与安装 revision 比对后更新到 beta 分支最新；本地（`file:` / embedded）安装提示不支持自动更新。三语文案齐备且未引入字库外汉字。
+- **DontDestroyOnLoad 伪场景全链路可见（Play 模式）** — `GameObjectFinder` 新增 `GetDontDestroyOnLoadRoots()`（`SceneManager.sceneCount`/`GetSceneAt` 从不列出该伪场景，改为 `FindHelper.FindAll` 按场景名过滤无父对象）并接入统一根枚举，按 name/path/tag/component 的查找、建议列表与组件列表/属性读写对 DDOL 对象全部生效；`scene_get_hierarchy` 追加 DDOL 根节点子树且层级节点新增 `scene` 字段标记归属场景；`scene_get_loaded` 追加 `{name:"DontDestroyOnLoad", isPseudoScene:true}` 伪场景条目；`hierarchy_describe` 输出独立 DDOL 区段；`scene_context` / `scene_export_report` 的遍历与 `scene_summarize` 的根对象计数口径对齐（此前计数含 DDOL 但遍历漏掉它们）。`scene_unload` / `scene_set_active` 有意不涉及（该伪场景不可卸载/激活）。
+
+### Changed
+
+- **版本号更新** — `SkillsLogger.Version` / `package.json` / Python helper `__version__` / `agent.md` 同步提升到 `2.8.2`。
+
+### Fixed
+
+- **设置开关白色圆点垂直偏下** — `.server-switch` 与通用蓝色 toggle 组的 knob/checkmark 由手工 `margin-top: 1px` 对齐改为轨道 `align-items: center` flex 居中，消除 18px 轨道内高（16px 可用）手工 margin 取整造成的视觉偏移。
+
 ## [2.8.1] - 2026-09-06
 
 > **元数据真实性 + Token Level 修正 + 客户端与面板小修** —— 本版为补丁级维护：(1) 对全部技能做了一次"实现写了什么、元数据就声明什么"的系统性核对——194 个记录 Undo / Workflow 快照或写盘的技能补齐 `MutatesScene` / `MutatesAssets`，并新增守卫测试防止再漂移；(2) 修复 2.8.0 引入的 Token Level 截断阈值未随档位变化的缺陷，并把当前 Token Level 设置暴露到 `/health`；(3) Python 客户端三处真实 bug（Unity 6 小版本匹配、job_logs 走重路径、`find_skills` 够不到文档默认起点）与两个新封装；(4) `RequiresInput` 声明与真实参数对齐——98 个技能的空 body 从 dryRun 报 `valid:true` 改为前置拒绝，另 32 个批量技能的令牌改为真实参数 `items`；(5) 面板切档清选中、昨日 UI 提交残留清理、内联样式收敛到 USS class，以及 CI 本地化检查的假绿盲区。
