@@ -13,6 +13,21 @@ On session start (or before the first skill call), call `GET /health` and read:
 - `pendingCount` — outstanding grant requests
 - `mainThreadIdleMs` — milliseconds since Unity's main thread last ran the request loop. `/health` is answered off the main thread, so a fast reply with a **large** `mainThreadIdleMs` means *"the server is alive but Unity is busy"* (a long skill, an import, or a modal dialog) — not *"the server is down"*. Single/double digits is a healthy idle editor; seconds means keep waiting rather than restart. `-1` means the loop has not ticked yet. Add `?live=1` to force the request through the main-thread queue when you need strictly live values instead of a snapshot up to ~1s old.
 - `workflowRecoveryMode` — `true` when workflow history failed to load this session: rollback data is degraded and file-store cleanup is suspended until the history is cleared.
+- `summaryAutoTruncate`, `summaryPageSize`, `tokenLevel` — the current token-saving settings; see "Token Level" below.
+
+## Token Level
+
+`tokenLevel` on `/health` is a **derived** view, not a separate persisted setting — it is computed from three source values every time it's read: `surfaceProfile` (see the payload contract doc), `summaryAutoTruncate`, and `summaryPageSize`. Changing any of the three source values immediately changes the reported `tokenLevel`; there is no separate "set token level" call.
+
+| `tokenLevel` | `surfaceProfile` | `summaryAutoTruncate` | `summaryPageSize` |
+|---|---|---|---|
+| `minimal` | `noSceneAuthoring` | `true` | `5` |
+| `standard` | `guide` | `true` | `10` |
+| `full` | `full` | `true` | `20` |
+| `maximum` | `full` | `false` | (ignored — pagination is inactive while truncation is off) |
+| `custom` | any other combination of the three source values | | |
+
+What `summaryAutoTruncate` / `summaryPageSize` actually do: in brief mode (`verbose` not `true`), if a skill's response contains an array (top-level, or nested under `items` / `assets` / `objects` / `groups` / `entries`) longer than `summaryPageSize`, the response is wrapped with `isTruncated: true`, `totalCount`, `showing`, and only the first `summaryPageSize` items. Page through the rest with `pageOffset` / `pageLimit` (or pass `verbose=true` to skip pagination and get everything at once). Explicit `pageOffset`/`pageLimit` always page the response, even when `summaryAutoTruncate` is `false`.
 
 ## Three Modes (aligned with Claude Code permission modes)
 

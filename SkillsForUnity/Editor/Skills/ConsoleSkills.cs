@@ -164,7 +164,8 @@ namespace UnitySkills
         [UnitySkill("console_log", "Write a message to the console",
             Category = SkillCategory.Console, Operation = SkillOperation.Execute,
             Tags = new[] { "console", "log", "debug", "message" },
-            Outputs = new[] { "logged", "warning" })]
+            Outputs = new[] { "logged", "warning" },
+            RequiresInput = new[] { "message" })]
         public static object ConsoleLog(string message, string type = "log")
         {
             string normalized = type?.ToLower() ?? "log";

@@ -278,6 +278,7 @@ namespace UnitySkills
             Category = SkillCategory.Model, Operation = SkillOperation.Modify,
             Tags = new[] { "model", "import", "batch", "settings" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
+            RequiresInput = new[] { "items" },
             MutatesAssets = true)]
         public static object ModelSetSettingsBatch(string items)
         {

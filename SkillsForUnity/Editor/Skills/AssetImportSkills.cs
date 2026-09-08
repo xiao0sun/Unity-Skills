@@ -113,7 +113,7 @@ namespace UnitySkills
             Category = SkillCategory.AssetImport, Operation = SkillOperation.Modify,
             Tags = new[] { "texture", "import", "settings", "compression", "mipmap" },
             Outputs = new[] { "assetPath", "maxSize", "compression", "readable", "mipmaps" },
-            RequiresInput = new[] { "textureAsset" },
+            RequiresInput = new[] { "assetPath" },
             TracksWorkflow = true,
             MutatesAssets = true)]
         public static object TextureSetImportSettings(
@@ -196,7 +196,7 @@ namespace UnitySkills
             Category = SkillCategory.AssetImport, Operation = SkillOperation.Modify,
             Tags = new[] { "model", "fbx", "import", "settings", "mesh" },
             Outputs = new[] { "assetPath", "globalScale", "importAnimation", "meshCompression" },
-            RequiresInput = new[] { "modelAsset" },
+            RequiresInput = new[] { "assetPath" },
             TracksWorkflow = true,
             MutatesAssets = true)]
         public static object ModelSetImportSettings(
@@ -275,7 +275,7 @@ namespace UnitySkills
             Category = SkillCategory.AssetImport, Operation = SkillOperation.Modify,
             Tags = new[] { "audio", "import", "settings", "compression", "clip" },
             Outputs = new[] { "assetPath", "forceToMono", "loadType", "compressionFormat" },
-            RequiresInput = new[] { "audioAsset" },
+            RequiresInput = new[] { "assetPath" },
             TracksWorkflow = true,
             MutatesAssets = true)]
         public static object AudioSetImportSettings(
@@ -322,7 +322,7 @@ namespace UnitySkills
             Category = SkillCategory.AssetImport, Operation = SkillOperation.Modify,
             Tags = new[] { "sprite", "import", "settings", "2d", "texture" },
             Outputs = new[] { "assetPath", "spriteMode", "pixelsPerUnit", "textureType" },
-            RequiresInput = new[] { "textureAsset" },
+            RequiresInput = new[] { "assetPath" },
             TracksWorkflow = true,
             MutatesAssets = true)]
         public static object SpriteSetImportSettings(
@@ -385,7 +385,7 @@ namespace UnitySkills
             Category = SkillCategory.AssetImport, Operation = SkillOperation.Query,
             Tags = new[] { "texture", "import", "settings", "inspect" },
             Outputs = new[] { "assetPath", "textureType", "maxSize", "compression", "readable", "mipmaps" },
-            RequiresInput = new[] { "textureAsset" },
+            RequiresInput = new[] { "assetPath" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object TextureGetImportSettings(string assetPath)
@@ -411,7 +411,7 @@ namespace UnitySkills
             Category = SkillCategory.AssetImport, Operation = SkillOperation.Query,
             Tags = new[] { "model", "fbx", "import", "settings", "inspect" },
             Outputs = new[] { "assetPath", "globalScale", "importAnimation", "meshCompression", "readable", "generateColliders" },
-            RequiresInput = new[] { "modelAsset" },
+            RequiresInput = new[] { "assetPath" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object ModelGetImportSettings(string assetPath)
@@ -436,7 +436,7 @@ namespace UnitySkills
             Category = SkillCategory.AssetImport, Operation = SkillOperation.Query,
             Tags = new[] { "audio", "import", "settings", "inspect", "clip" },
             Outputs = new[] { "assetPath", "forceToMono", "loadInBackground", "loadType", "compressionFormat", "quality" },
-            RequiresInput = new[] { "audioAsset" },
+            RequiresInput = new[] { "assetPath" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object AudioGetImportSettings(string assetPath)

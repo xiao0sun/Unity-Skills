@@ -218,10 +218,10 @@ namespace UnitySkills
             bool enabled = data?["telemetryEnabled"]?.Value<bool>() ?? true;
             int totalCalls = data?["summary"]?["totalCalls"]?.Value<int>() ?? 0;
 
-            SetDisplay(_disabledBanner, !enabled);
+            _disabledBanner.SetVisible(!enabled);
             // "Empty" only when telemetry IS on but nothing landed in the window; when it's off
             // the disabled banner already explains the blank state.
-            SetDisplay(_emptyBanner, enabled && totalCalls == 0);
+            _emptyBanner.SetVisible(enabled && totalCalls == 0);
 
             RebuildSummary(data?["summary"] as JObject);
             RebuildTopSkills(data?["topSkills"] as JArray);
@@ -432,8 +432,7 @@ namespace UnitySkills
             {
                 var none = new Label(SkillsLocalization.Get("analytics_none"));
                 none.AddToClassList("setting-hint");
-                none.style.marginLeft = 4;
-                none.style.marginTop = 2;
+                none.AddToClassList("setting-hint--table-empty");
                 container.Add(none);
                 return;
             }
@@ -461,7 +460,6 @@ namespace UnitySkills
                 // the rest are numeric → right aligned via the num modifier.
                 if (i > 0) cell.AddToClassList("analytics-cell--num");
                 cell.style.flexGrow = (i < weights.Length) ? weights[i] : 1;
-                cell.style.flexBasis = 0;
                 row.Add(cell);
             }
             return row;
@@ -484,12 +482,6 @@ namespace UnitySkills
                 System.Globalization.DateTimeStyles.RoundtripKind, out var dt))
                 return dt.ToLocalTime().ToString("HH:mm:ss");
             return isoTs.Length >= 19 ? isoTs.Substring(11, 8) : isoTs;
-        }
-
-        private static void SetDisplay(VisualElement el, bool visible)
-        {
-            if (el == null) return;
-            el.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
         }
     }
 }

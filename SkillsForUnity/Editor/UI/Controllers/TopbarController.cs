@@ -52,7 +52,6 @@ namespace UnitySkills
             _settingsBtn  = _root.Q<Button>("open-settings-btn");
 
             BuildPermBadgeContent();
-            ApplySettingsIcon();
             BindEvents();
             UpdateLiveData(); // initial paint
 
@@ -113,16 +112,6 @@ namespace UnitySkills
                 _topbarElement.AddToClassList("topbar--compact");
             else if (nextState == TopbarLayoutState.Narrow)
                 _topbarElement.AddToClassList("topbar--narrow");
-        }
-
-        /// <summary>
-        /// Apply Unity's built-in Settings icon.
-        /// Tried in order: d_SettingsIcon, SettingsIcon, _Popup. The last one
-        /// always exists as a final fallback.
-        /// </summary>
-        private void ApplySettingsIcon()
-        {
-            UISkillsEditorIcons.Apply(_settingsBtn, "d_SettingsIcon", "SettingsIcon", "_Popup");
         }
 
         private void BuildPermBadgeContent()

@@ -109,13 +109,14 @@ namespace UnitySkills
         private VisualElement BuildCaptureRow(ShortcutCommand cmd)
         {
             // Vertical container: top row + optional red conflict text. The container itself is focusable, serving as the KeyDown focus host and hit-test boundary.
-            var container = new VisualElement { style = { flexDirection = FlexDirection.Column, marginBottom = 6 } };
+            var container = new VisualElement();
+            container.AddToClassList("shortcut-capture-row");
             container.focusable = true;
             _capturingRow = container;
 
             var line = new VisualElement();
             line.AddToClassList("setting-row");
-            line.style.marginBottom = 0;
+            line.AddToClassList("setting-row--flush-bottom");
             container.Add(line);
 
             var name = new Label(SkillsLocalization.Get(cmd.LocKey));

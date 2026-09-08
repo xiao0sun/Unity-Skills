@@ -42,7 +42,7 @@ namespace UnitySkills
             Tags = new[] { "prefab", "instantiate", "scene", "spawn" },
             Outputs = new[] { "name", "instanceId" },
             RequiresInput = new[] { "prefabPath" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object PrefabInstantiate(string prefabPath, float x = 0, float y = 0, float z = 0, string name = null,
             string parentName = null, int parentInstanceId = 0, string parentPath = null, string parentEntityId = null)
         {
@@ -80,8 +80,8 @@ namespace UnitySkills
             Category = SkillCategory.Prefab, Operation = SkillOperation.Create,
             Tags = new[] { "prefab", "instantiate", "batch", "spawn", "scene" },
             Outputs = new[] { "results", "name", "instanceId", "position" },
-            RequiresInput = new[] { "prefabPath" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "items" },
+            TracksWorkflow = true, MutatesScene = true)]
         public static object PrefabInstantiateBatch(string items)
         {
             // Cache loaded prefabs to avoid repeated AssetDatabase round trips
@@ -166,7 +166,7 @@ namespace UnitySkills
             Category = SkillCategory.Prefab, Operation = SkillOperation.Modify,
             Tags = new[] { "prefab", "apply", "overrides", "save" },
             Outputs = new[] { "appliedTo" },
-            RequiresInput = new[] { "prefabInstance" },
+            RequiresInput = new[] { "gameObject" },
             TracksWorkflow = true,
             MutatesScene = true, MutatesAssets = true, RiskLevel = "medium")]
         public static object PrefabApply(string name = null, int instanceId = 0, string path = null)
@@ -190,7 +190,7 @@ namespace UnitySkills
             Category = SkillCategory.Prefab, Operation = SkillOperation.Modify,
             Tags = new[] { "prefab", "unpack", "disconnect", "instance" },
             Outputs = new[] { "unpacked" },
-            RequiresInput = new[] { "prefabInstance" },
+            RequiresInput = new[] { "gameObject" },
             TracksWorkflow = true,
             MutatesScene = true, RiskLevel = "medium")]
         public static object PrefabUnpack(string name = null, int instanceId = 0, string path = null, bool completely = false)
@@ -209,7 +209,7 @@ namespace UnitySkills
             Category = SkillCategory.Prefab, Operation = SkillOperation.Query,
             Tags = new[] { "prefab", "overrides", "inspect", "diff" },
             Outputs = new[] { "prefabPath", "propertyOverrides", "addedComponents", "removedComponents", "addedGameObjects", "hasOverrides" },
-            RequiresInput = new[] { "prefabInstance" },
+            RequiresInput = new[] { "gameObject" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object PrefabGetOverrides(string name = null, int instanceId = 0)
@@ -317,7 +317,7 @@ namespace UnitySkills
             Category = SkillCategory.Prefab, Operation = SkillOperation.Modify,
             Tags = new[] { "prefab", "revert", "overrides", "reset" },
             Outputs = new[] { "reverted" },
-            RequiresInput = new[] { "prefabInstance" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object PrefabRevertOverrides(string name = null, int instanceId = 0)
         {
             var (go, findErr) = GameObjectFinder.FindOrError(name: name, instanceId: instanceId);
@@ -338,7 +338,7 @@ namespace UnitySkills
             Category = SkillCategory.Prefab, Operation = SkillOperation.Modify,
             Tags = new[] { "prefab", "apply", "overrides", "save" },
             Outputs = new[] { "appliedTo" },
-            RequiresInput = new[] { "prefabInstance" })]
+            RequiresInput = new[] { "gameObject" }, MutatesAssets = true)]
         public static object PrefabApplyOverrides(string name = null, int instanceId = 0)
         {
             var (go, goErr) = GameObjectFinder.FindOrError(name: name, instanceId: instanceId);
@@ -359,7 +359,7 @@ namespace UnitySkills
             Tags = new[] { "prefab", "variant", "create", "inheritance" },
             Outputs = new[] { "sourcePath", "variantPath", "name" },
             RequiresInput = new[] { "sourcePrefabPath" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object PrefabCreateVariant(string sourcePrefabPath, string variantPath)
         {
             if (Validate.Required(sourcePrefabPath, "sourcePrefabPath") is object err) return err;
@@ -412,7 +412,7 @@ namespace UnitySkills
             // taking it literally would just get UNKNOWN_PARAM. prefabPath is also prefab_create's
             // return value, so the corrected token also wires both into the Outputs→RequiresInput chain.
             RequiresInput = new[] { "prefabPath", "componentType" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object PrefabSetProperty(
             string prefabPath = null, string componentType = null, string propertyName = null,
             string value = null, string assetReferencePath = null, string gameObjectName = null)

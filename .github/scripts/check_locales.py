@@ -1,10 +1,12 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Locale Check (CI) — 多语言 JSON 资产校验与三语对齐.
 
 检查项：
 1. 校验 SkillsForUnity/Editor/Locales/ 下 en.json, zh-CN.json, ru.json 格式合法。
 2. 校验 EN, CN, RU 三种语言在键名集合上保持 100% 对齐（无缺失键）。
-3. 校验 SkillsForUnity/Editor/ 下所有 C# 代码中调用的 SkillsLocalization.Get("key") 均存在于字典中。
+3. 校验 SkillsForUnity/Editor/ 下所有 C# 代码中调用的 SkillsLocalization.Get/TryGet/Has 键均存在于字典中，
+   覆盖直接字面量、`Get("key", args...)` 格式化重载、以及三元表达式内联字面量（如
+   `Get(cond ? "k1" : "k2")`）；变量/表达式构造的动态键（如 Get(cmd.LocKey)）无法静态解析，跳过。
 
 用法：
     python3 .github/scripts/check_locales.py [仓库根目录，默认当前目录]
@@ -19,7 +21,57 @@ import sys
 
 LOCALES_DIR_REL = os.path.join("SkillsForUnity", "Editor", "Locales")
 REQUIRED_FILES = ("en.json", "zh-CN.json", "ru.json")
-GET_KEY_RE = re.compile(r'SkillsLocalization\.Get\(\s*"([^"]+)"\s*\)')
+
+# Every SkillsLocalization accessor that takes a key as its first argument.
+# TryGet/Has have no call sites today, but are covered so a future call site
+# is checked without needing to touch this script again.
+CALL_RE = re.compile(r"SkillsLocalization\.(?:Get|TryGet|Has)\(")
+# Locale keys are exclusively [a-z0-9_] (verified against en.json); a quoted
+# literal that fully matches this charset inside a call's argument list is
+# treated as a referenced key. This also catches literals in the formatted
+# overload (`Get("key", args...)`) and in ternaries (`Get(cond ? "a" : "b")`),
+# both of which the previous single-shot regex missed because it required the
+# closing `)` immediately after the string.
+KEY_LITERAL_RE = re.compile(r'"([a-z0-9_]+)"')
+
+
+def _extract_call_args(content: str, start: int) -> str:
+    """Return the raw text between the '(' at content[start-1] and its
+    matching ')', tracking paren depth while skipping over the contents of
+    string literals (so a stray '(' / ')' inside a string cannot desync the
+    depth counter).
+    """
+    depth = 1
+    i = start
+    n = len(content)
+    while i < n and depth > 0:
+        ch = content[i]
+        if ch == '"':
+            i += 1
+            while i < n and content[i] != '"':
+                if content[i] == "\\":
+                    i += 1
+                i += 1
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        i += 1
+    return content[start : i - 1]
+
+
+def find_key_references(content: str) -> list[str]:
+    """Collect every locale key literal referenced via SkillsLocalization.
+    Get/TryGet/Has in a C# source string. Keys built from a variable or
+    expression (e.g. Get(cmd.LocKey), Get(skill.Name)) cannot be resolved
+    statically and are silently skipped — those call sites rely on runtime
+    coverage (tests / manual QA), not this check.
+    """
+    keys: list[str] = []
+    for m in CALL_RE.finditer(content):
+        arg_text = _extract_call_args(content, m.end())
+        keys.extend(KEY_LITERAL_RE.findall(arg_text))
+    return keys
 
 
 def main() -> int:
@@ -71,18 +123,22 @@ def main() -> int:
 
     # 2. C# Calls Check
     editor_cs_glob = os.path.join(repo_root, "SkillsForUnity", "Editor", "**", "*.cs")
+    cs_files = glob.glob(editor_cs_glob, recursive=True)
     cs_missing_keys: list[tuple[str, str]] = []
-    for cs_file in glob.glob(editor_cs_glob, recursive=True):
+    total_refs = 0
+    for cs_file in cs_files:
         try:
             with open(cs_file, "r", encoding="utf-8") as f:
                 content = f.read()
-            for m in GET_KEY_RE.finditer(content):
-                key = m.group(1)
+            rel_cs = os.path.relpath(cs_file, repo_root).replace(os.sep, "/")
+            for key in find_key_references(content):
+                total_refs += 1
                 if key not in all_keys:
-                    rel_cs = os.path.relpath(cs_file, repo_root).replace(os.sep, "/")
                     cs_missing_keys.append((key, rel_cs))
         except Exception as ex:
             errors.append(f"读取 C# 文件 {cs_file} 失败: {ex}")
+
+    print(f"  ✓ 扫描 {len(cs_files)} 个 C# 文件（含 Editor/UI/Controllers/），发现 {total_refs} 处 SkillsLocalization.Get/TryGet/Has 键引用")
 
     if cs_missing_keys:
         for k, f in cs_missing_keys:
@@ -101,3 +157,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+# Producer:Betsy

@@ -204,7 +204,7 @@ namespace UnitySkills
             Category = SkillCategory.Camera, Operation = SkillOperation.Create,
             Tags = new[] { "camera", "game-camera", "create", "audio-listener" },
             Outputs = new[] { "name", "instanceId" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object CameraCreate(string name = "New Camera", float x = 0, float y = 1, float z = -10, bool addAudioListener = false)
         {
             var go = new GameObject(name);
@@ -244,7 +244,7 @@ namespace UnitySkills
             Tags = new[] { "camera", "properties", "fov", "background" },
             Outputs = new[] { "name", "applied", "fieldOfView", "nearClipPlane", "farClipPlane", "orthographic", "orthographicSize", "depth", "cullingMask", "clearFlags", "backgroundColor", "rect" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object CameraSetProperties(
             string name = null, int instanceId = 0, string path = null,
             float? fieldOfView = null, float? nearClipPlane = null, float? farClipPlane = null,
@@ -305,7 +305,7 @@ namespace UnitySkills
             Tags = new[] { "camera", "culling-mask", "layer", "visibility" },
             Outputs = new[] { "cullingMask" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object CameraSetCullingMask(string layerNames, string name = null, int instanceId = 0, string path = null)
         {
             if (Validate.Required(layerNames, "layerNames") is object layerNamesErr) return layerNamesErr;
@@ -545,7 +545,7 @@ namespace UnitySkills
             Tags = new[] { "camera", "orthographic", "perspective", "projection" },
             Outputs = new[] { "orthographic", "orthographicSize" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object CameraSetOrthographic(bool orthographic, float? orthographicSize = null, string name = null, int instanceId = 0, string path = null)
         {
             var (cam, err) = GameObjectFinder.FindComponentOrError<Camera>(name, instanceId, path);

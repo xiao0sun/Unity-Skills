@@ -12,7 +12,7 @@ namespace UnitySkills
         [UnitySkill("create_cube", "Create a cube at the specified position",
             Category = SkillCategory.Sample, Operation = SkillOperation.Create,
             Tags = new[] { "cube", "primitive", "3d", "quick" },
-            Outputs = new[] { "name", "instanceId", "position", "message" })]
+            Outputs = new[] { "name", "instanceId", "position", "message" }, MutatesScene = true)]
         public static object CreateCube(float x = 0, float y = 0, float z = 0, string name = "Cube")
         {
             var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
@@ -26,7 +26,7 @@ namespace UnitySkills
         [UnitySkill("create_sphere", "Create a sphere at the specified position",
             Category = SkillCategory.Sample, Operation = SkillOperation.Create,
             Tags = new[] { "sphere", "primitive", "3d", "quick" },
-            Outputs = new[] { "name", "instanceId", "position", "message" })]
+            Outputs = new[] { "name", "instanceId", "position", "message" }, MutatesScene = true)]
         public static object CreateSphere(float x = 0, float y = 0, float z = 0, string name = "Sphere")
         {
             var sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
@@ -41,7 +41,9 @@ namespace UnitySkills
             Category = SkillCategory.Sample, Operation = SkillOperation.Delete,
             Tags = new[] { "delete", "destroy", "remove", "quick" },
             Outputs = new[] { "deleted", "message" },
-            RequiresInput = new[] { "gameObject" },
+            // Sole real parameter is "objectName", not name/path/instanceId - "gameObject" group's
+            // candidates don't include it, so it enforced nothing.
+            RequiresInput = new[] { "objectName" },
             TracksWorkflow = true,
             RiskLevel = "medium")]
         public static object DeleteObject(string objectName)
@@ -75,7 +77,7 @@ namespace UnitySkills
             Category = SkillCategory.Sample, Operation = SkillOperation.Modify,
             Tags = new[] { "position", "transform", "move", "quick" },
             Outputs = new[] { "name", "position", "message" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object SetObjectPosition(string objectName, float x, float y, float z)
         {
             var (obj, err) = GameObjectFinder.FindOrError(objectName);
@@ -89,7 +91,7 @@ namespace UnitySkills
             Category = SkillCategory.Sample, Operation = SkillOperation.Modify,
             Tags = new[] { "rotation", "transform", "euler", "quick" },
             Outputs = new[] { "name", "rotation", "message" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object SetObjectRotation(string objectName, float x, float y, float z)
         {
             var (obj, err) = GameObjectFinder.FindOrError(objectName);
@@ -103,7 +105,7 @@ namespace UnitySkills
             Category = SkillCategory.Sample, Operation = SkillOperation.Modify,
             Tags = new[] { "scale", "transform", "resize", "quick" },
             Outputs = new[] { "name", "scale", "message" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object SetObjectScale(string objectName, float x, float y, float z)
         {
             var (obj, err) = GameObjectFinder.FindOrError(objectName);

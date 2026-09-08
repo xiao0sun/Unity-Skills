@@ -301,7 +301,8 @@ namespace UnitySkills
             // parameter with no default as optional, so the schema would declare required:false, while
             // the method body below rejects both a missing value and an empty string. Declared explicitly here so the schema, dryRun evaluation, and runtime behavior all agree.
             RequiresInput = new[] { "groupName" },
-            TracksWorkflow = false)]
+            TracksWorkflow = false,
+            MutatesAssets = true)]
         public static object AddressablesGroupCreate(string groupName)
         {
             if (!Installed) return NoAddressables();
@@ -374,7 +375,8 @@ namespace UnitySkills
             Tags = new[] { "addressables", "group", "entry", "asset" },
             Outputs = new[] { "assetPath", "groupName", "address" },
             RequiresInput = new[] { "assetPath", "groupName" },
-            TracksWorkflow = false)]
+            TracksWorkflow = false,
+            MutatesAssets = true)]
         public static object AddressablesGroupAddEntry(string assetPath, string groupName, string address = null)
         {
             if (!Installed) return NoAddressables();
@@ -524,7 +526,8 @@ namespace UnitySkills
             Tags = new[] { "addressables", "profile", "config" },
             Outputs = new[] { "activeProfile", "changed" },
             RequiresInput = new[] { "profileName" },
-            TracksWorkflow = false)]
+            TracksWorkflow = false,
+            MutatesAssets = true)]
         public static object AddressablesProfileSet(string profileName)
         {
             if (!Installed) return NoAddressables();
@@ -645,6 +648,7 @@ namespace UnitySkills
             Outputs = new[] { "groupName", "deleted" },
             RequiresInput = new[] { "groupName" },
             TracksWorkflow = false,
+            MutatesAssets = true,
             RiskLevel = "medium")]
         public static object AddressablesGroupDelete(string groupName)
         {

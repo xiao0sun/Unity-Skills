@@ -22,6 +22,7 @@ namespace UnitySkills
             Tags = new[] { "uss", "stylesheet", "ui-toolkit", "style" },
             Outputs = new[] { "path", "lines" },
             TracksWorkflow = true,
+            RequiresInput = new[] { "savePath" },
             MutatesAssets = true)]
         public static object UitkCreateUss(string savePath, string content = null)
         {
@@ -48,6 +49,7 @@ namespace UnitySkills
             Tags = new[] { "uxml", "layout", "ui-toolkit", "visual-tree" },
             Outputs = new[] { "path", "lines" },
             TracksWorkflow = true,
+            RequiresInput = new[] { "savePath" },
             MutatesAssets = true)]
         public static object UitkCreateUxml(string savePath, string content = null, string ussPath = null)
         {
@@ -104,6 +106,7 @@ namespace UnitySkills
             Tags = new[] { "write", "uss", "uxml", "file" },
             Outputs = new[] { "path", "lines" },
             TracksWorkflow = true,
+            RequiresInput = new[] { "filePath", "content" },
             MutatesAssets = true)]
         public static object UitkWriteFile(string filePath, string content)
         {
@@ -221,7 +224,7 @@ namespace UnitySkills
             Category = SkillCategory.UIToolkit, Operation = SkillOperation.Create,
             Tags = new[] { "ui-document", "scene", "ui-toolkit", "visual-tree" },
             Outputs = new[] { "name", "instanceId", "hasUxml", "hasPanelSettings", "sortOrder" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UitkCreateDocument(
             string name = "UIDocument",
             string uxmlPath = null,
@@ -299,7 +302,7 @@ namespace UnitySkills
             Tags = new[] { "ui-document", "configure", "uxml", "panel-settings" },
             Outputs = new[] { "name", "instanceId", "visualTreeAsset", "panelSettings", "sortingOrder" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object UitkSetDocument(
             string name = null,
             int instanceId = 0,
@@ -353,6 +356,7 @@ namespace UnitySkills
             Tags = new[] { "panel-settings", "asset", "scaling", "resolution" },
             Outputs = new[] { "path", "scaleMode", "referenceResolution", "screenMatchMode" },
             TracksWorkflow = true,
+            RequiresInput = new[] { "savePath" },
             MutatesAssets = true)]
         public static object UitkCreatePanelSettings(
             string savePath,
@@ -568,7 +572,7 @@ namespace UnitySkills
             Tags = new[] { "panel-settings", "configure", "scaling", "resolution" },
             Outputs = new[] { "path", "scaleMode", "referenceResolution", "screenMatchMode" },
             RequiresInput = new[] { "assetPath" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object UitkSetPanelSettings(
             string assetPath,
             string scaleMode = null,
@@ -733,6 +737,7 @@ namespace UnitySkills
             Tags = new[] { "template", "uxml", "uss", "scaffold" },
             Outputs = new[] { "template", "ussPath", "uxmlPath", "name" },
             TracksWorkflow = true,
+            RequiresInput = new[] { "template", "savePath" },
             MutatesAssets = true)]
         public static object UitkCreateFromTemplate(string template, string savePath, string name = null)
         {
@@ -774,6 +779,7 @@ namespace UnitySkills
             Category = SkillCategory.UIToolkit, Operation = SkillOperation.Create,
             Tags = new[] { "batch", "uss", "uxml", "bulk" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
+            RequiresInput = new[] { "items" },
             TracksWorkflow = true, MutatesAssets = true)]
         public static object UitkCreateBatch(string items)
         {
@@ -1751,7 +1757,8 @@ $@"<?xml version=""1.0"" encoding=""utf-8""?>
             Outputs = new[] { "path", "className", "windowTitle", "menuPath" },
             TracksWorkflow = true,
             MutatesAssets = true,
-            MayTriggerReload = true)]
+            MayTriggerReload = true,
+            RequiresInput = new[] { "savePath", "className" })]
         public static object UitkCreateEditorWindow(
             string savePath, string className, string windowTitle = null,
             string uxmlPath = null, string ussPath = null,
@@ -1819,7 +1826,8 @@ public class {className} : EditorWindow
             Outputs = new[] { "path", "className" },
             TracksWorkflow = true,
             MutatesAssets = true,
-            MayTriggerReload = true)]
+            MayTriggerReload = true,
+            RequiresInput = new[] { "savePath", "className" })]
         public static object UitkCreateRuntimeUi(
             string savePath, string className,
             string elementQueries = null)

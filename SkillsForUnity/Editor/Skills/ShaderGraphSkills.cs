@@ -45,6 +45,7 @@ namespace UnitySkills
             Outputs = new[] { "path", "templatePath", "graph" },
             TracksWorkflow = true,
             MutatesAssets = true,
+            RequiresInput = new[] { "savePath" },
             RequiresPackages = new[] { "com.unity.shadergraph" })]
         public static object ShaderGraphCreateGraph(string savePath, string templateName = "Unlit Simple", string templatePath = null)
         {
@@ -123,6 +124,7 @@ namespace UnitySkills
             Outputs = new[] { "path", "graph" },
             TracksWorkflow = true,
             MutatesAssets = true,
+            RequiresInput = new[] { "savePath" },
             RequiresPackages = new[] { "com.unity.shadergraph" })]
         public static object ShaderGraphCreateSubGraph(string savePath, string outputType = "Vector4", string graphPath = "Sub Graphs")
         {

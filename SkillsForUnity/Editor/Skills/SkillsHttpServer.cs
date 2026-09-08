@@ -148,11 +148,17 @@ namespace UnitySkills
         private static volatile int _snapRequestTimeoutMinutes = 15;
         private static volatile bool _snapIsCompiling;
         private static volatile bool _snapIsUpdating;
+        // Token-saving settings, exposed on /health so a client can confirm its own summary/paging behavior
+        // without a separate call. These live behind EditorPrefs the same as SurfaceProfile, so they're
+        // refreshed on the same "expensive half" cadence.
+        private static volatile bool _snapSummaryAutoTruncate;
+        private static volatile int _snapSummaryPageSize = SkillRouter.DefaultSummaryPageSize;
+        private static volatile string _snapTokenLevel;
         // Before the first full refresh has landed, the fast path always bails out and /health falls back to the
         // main-thread queue instead of reporting placeholder values.
         private static volatile bool _snapReady;
-        // Set from any thread by the SkillsModeManager.OnChanged / SkillsSurfaceProfile.OnChanged hooks, consumed on
-        // the next main-thread frame. A flag rather than an in-place refresh is used so that every Unity API read
+        // Set from any thread by the SkillsModeManager.OnChanged / SkillsSurfaceProfile.OnChanged / SkillRouter.SummarySettingsChanged
+        // hooks, consumed on the next main-thread frame. A flag rather than an in-place refresh is used so that every Unity API read
         // inside RefreshHealthSnapshot stays on the main thread, regardless of which thread raised the event.
         private static volatile bool _healthSnapshotDirty = true;
         private static bool _modeHookInstalled = false;
@@ -714,6 +720,11 @@ namespace UnitySkills
             public int RequestTimeoutMinutes;
             public bool IsCompiling;
             public bool IsUpdating;
+            // Token-saving settings (see SkillsTokenLevel): whether Summary mode auto-truncates, the page size
+            // it uses, and the derived preset name ("minimal"/"standard"/"full"/"maximum"/"custom").
+            public bool SummaryAutoTruncate;
+            public int SummaryPageSize;
+            public string TokenLevel;
 
             /// <summary>HTTP-thread safe: reads only plain static fields, zero Unity API.</summary>
             public static HealthVitals FromSnapshot() => new HealthVitals
@@ -730,6 +741,9 @@ namespace UnitySkills
                 RequestTimeoutMinutes = _snapRequestTimeoutMinutes,
                 IsCompiling = _snapIsCompiling,
                 IsUpdating = _snapIsUpdating,
+                SummaryAutoTruncate = _snapSummaryAutoTruncate,
+                SummaryPageSize = _snapSummaryPageSize,
+                TokenLevel = _snapTokenLevel,
             };
 
             /// <summary>Main thread only — reads the Unity API, EditorPrefs, and permission sets.</summary>
@@ -750,6 +764,10 @@ namespace UnitySkills
                     RequestTimeoutMinutes = SkillsHttpServer.RequestTimeoutMinutes,
                     IsCompiling = EditorApplication.isCompiling,
                     IsUpdating = EditorApplication.isUpdating,
+                    SummaryAutoTruncate = SkillRouter.SummaryAutoTruncate,
+                    SummaryPageSize = SkillRouter.SummaryPageSize,
+                    // Lowercase wire form, matching ModeToWire/CurrentWire's convention for other enum-backed fields.
+                    TokenLevel = SkillsTokenLevel.Current.ToString().ToLowerInvariant(),
                 };
             }
         }
@@ -784,6 +802,9 @@ namespace UnitySkills
                 _snapRequestTimeoutMinutes = vitals.RequestTimeoutMinutes;
                 _snapIsCompiling = vitals.IsCompiling;
                 _snapIsUpdating = vitals.IsUpdating;
+                _snapSummaryAutoTruncate = vitals.SummaryAutoTruncate;
+                _snapSummaryPageSize = vitals.SummaryPageSize;
+                _snapTokenLevel = vitals.TokenLevel;
                 _snapReady = true;
             }
             catch (Exception ex)
@@ -796,9 +817,9 @@ namespace UnitySkills
 
         /// <summary>
         /// Marks the "expensive half" of the health snapshot as needing a refresh on the next main-thread frame.
-        /// Hooked onto <see cref="SkillsModeManager.OnChanged"/> and <see cref="SkillsSurfaceProfile.OnChanged"/>,
-        /// so changes to mode / grants / allowlist / surface profile are reflected in /health immediately, instead
-        /// of waiting out <see cref="HealthSnapshotInterval"/>.
+        /// Hooked onto <see cref="SkillsModeManager.OnChanged"/>, <see cref="SkillsSurfaceProfile.OnChanged"/>, and
+        /// <see cref="SkillRouter.SummarySettingsChanged"/>, so changes to mode / grants / allowlist / surface profile /
+        /// summary settings are reflected in /health immediately, instead of waiting out <see cref="HealthSnapshotInterval"/>.
         /// Setting a volatile flag (rather than refreshing in place) guarantees that no matter which thread raised
         /// the event, every Unity API read stays on the main thread.
         /// </summary>
@@ -861,6 +882,12 @@ namespace UnitySkills
                 // unconditional "prefer manual steps" hint (which is what this field used to always say) would
                 // push the agent away from automation the user has actually already enabled.
                 surfaceProfileHint = surfaceProfileHint,
+                // Token-saving settings (SkillsTokenLevel): whether Summary mode auto-truncates arrays over
+                // summaryPageSize, the page size itself, and the derived preset name. "custom" means the current
+                // tuple of (surfaceProfile, summaryAutoTruncate, summaryPageSize) doesn't match any of the four presets.
+                summaryAutoTruncate = v.SummaryAutoTruncate,
+                summaryPageSize = v.SummaryPageSize,
+                tokenLevel = v.TokenLevel,
                 threads = new
                 {
                     listenerAlive = _listenerThread?.IsAlive ?? false,
@@ -1352,6 +1379,7 @@ namespace UnitySkills
                 {
                     SkillsModeManager.OnChanged += OnPermissionStateChanged;
                     SkillsSurfaceProfile.OnChanged += OnPermissionStateChanged;
+                    SkillRouter.SummarySettingsChanged += OnPermissionStateChanged;
                     _modeHookInstalled = true;
                 }
 

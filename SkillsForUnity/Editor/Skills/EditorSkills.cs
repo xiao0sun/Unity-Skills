@@ -377,7 +377,8 @@ namespace UnitySkills
             // are both menu items, and the transactional batch preflight relies on this flag to reject
             // calls that would wipe the undo stack via a domain reload, breaking the rollback guarantee.
             MutatesScene = true,
-            MayTriggerReload = true)]
+            MayTriggerReload = true,
+            RequiresInput = new[] { "menuPath" })]
         public static object EditorExecuteMenu(string menuPath)
         {
             var result = EditorApplication.ExecuteMenuItem(menuPath);

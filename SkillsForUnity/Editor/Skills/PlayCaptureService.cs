@@ -23,6 +23,14 @@ namespace UnitySkills
 
         internal static object Start(int durationSeconds, bool captureScreenshot, string screenshotFilename, int maxErrors)
         {
+            // Pure parameter validation runs first, so a malformed request is rejected the same way regardless of
+            // whether the editor happens to be busy: an out-of-range durationSeconds/maxErrors shouldn't have to wait
+            // for Play Mode / compilation / an already-active job to clear before the caller learns the request itself is invalid.
+            if (durationSeconds < 1 || durationSeconds > 300)
+                return new { error = "durationSeconds must be between 1 and 300." };
+            if (maxErrors < 1 || maxErrors > 500)
+                return new { error = "maxErrors must be between 1 and 500." };
+
             if (EditorApplication.isPlayingOrWillChangePlaymode)
                 return new { error = "Play capture can only start from Edit Mode." };
             if (ServerAvailabilityHelper.IsCompilationInProgress())
@@ -34,10 +42,6 @@ namespace UnitySkills
             if (active != null)
                 return new { error = $"Another Play capture is already active: {active.jobId} ({active.currentStage ?? active.status})." };
 
-            if (durationSeconds < 1 || durationSeconds > 300)
-                return new { error = "durationSeconds must be between 1 and 300." };
-            if (maxErrors < 1 || maxErrors > 500)
-                return new { error = "maxErrors must be between 1 and 500." };
             var filename = ResolveScreenshotFilename(screenshotFilename);
             var job = AsyncJobService.CreateJob(
                 "play_capture", "entering_play_mode", $"Entering Play Mode for a {durationSeconds}s runtime observation.", true,

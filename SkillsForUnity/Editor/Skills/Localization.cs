@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using UnityEditor;
@@ -128,7 +128,9 @@ namespace UnitySkills
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[UnitySkills] Failed to parse locale file {fileName}: {ex.Message}");
+                // SkillsLogger.LogError already adds the "[UnitySkills]" prefix; SkillsLogger has no static
+                // dependency back on SkillsLocalization, so this can't cycle with this file's own [InitializeOnLoad].
+                SkillsLogger.LogError($"Failed to parse locale file {fileName}: {ex.Message}");
             }
         }
 

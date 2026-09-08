@@ -112,7 +112,10 @@ namespace UnitySkills
             // Declaring an inner-item key here would make /skills/chain think this skill produces a top-level
             // `component`, so it would be fed as input to a later step — which would never actually see it.
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "gameObject" },
+            // "gameObject" enforced nothing here: the skill's sole real parameter is "items" (the per-item
+            // locators live inside the array), and BatchExecutor.Execute already rejects a null/empty items
+            // string with a structured error - "items" is the truthful, literal-name declaration.
+            RequiresInput = new[] { "items" },
             TracksWorkflow = true, MutatesScene = true)]
         public static object ComponentAddBatch(string items)
         {
@@ -197,7 +200,7 @@ namespace UnitySkills
             Category = SkillCategory.Component, Operation = SkillOperation.Delete,
             Tags = new[] { "remove", "detach", "destroy", "batch" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "gameObject", "component" },
+            RequiresInput = new[] { "items" },
             TracksWorkflow = true, SkipAutoPresnapshot = true,
             MutatesScene = true,
             RiskLevel = "medium")]
@@ -300,7 +303,7 @@ namespace UnitySkills
             Tags = new[] { "property", "field", "value", "reference" },
             Outputs = new[] { "gameObject", "component", "property", "valueSet", "valueType" },
             RequiresInput = new[] { "gameObject", "component" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object ComponentSetProperty(
             string name = null, int instanceId = 0, string path = null,
             string componentType = null, string propertyName = null,
@@ -397,8 +400,8 @@ namespace UnitySkills
             Category = SkillCategory.Component, Operation = SkillOperation.Modify,
             Tags = new[] { "property", "field", "value", "reference", "batch" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "gameObject", "component" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "items" },
+            TracksWorkflow = true, MutatesScene = true)]
         public static object ComponentSetPropertyBatch(string items)
         {
             return BatchExecutor.Execute<BatchSetPropertyItem>(items, item =>
@@ -515,7 +518,7 @@ namespace UnitySkills
             Tags = new[] { "serialized", "inspector", "property", "field", "reference" },
             Outputs = new[] { "gameObject", "component", "propertyPath", "valueSet" },
             RequiresInput = new[] { "gameObject", "component" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object ComponentSetSerializedProperty(
             string name = null, int instanceId = 0, string path = null,
             string componentType = null, string propertyPath = null, string value = null,
@@ -572,8 +575,8 @@ namespace UnitySkills
             Category = SkillCategory.Component, Operation = SkillOperation.Modify,
             Tags = new[] { "serialized", "inspector", "property", "field", "batch" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "gameObject", "component" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "items" },
+            TracksWorkflow = true, MutatesScene = true)]
         public static object ComponentSetSerializedPropertyBatch(string items)
         {
             return BatchExecutor.Execute<BatchSetSerializedPropertyItem>(items, item =>
@@ -1287,7 +1290,7 @@ namespace UnitySkills
             Tags = new[] { "copy", "paste", "duplicate", "serialized", "exact" },
             Outputs = new[] { "source", "target", "componentType", "verified", "mismatchCount" },
             RequiresInput = new[] { "gameObject", "component" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object ComponentCopyExact(string sourceName = null, int sourceInstanceId = 0, string sourcePath = null, string targetName = null, int targetInstanceId = 0, string targetPath = null, string componentType = null)
         {
             if (Validate.Required(componentType, "componentType") is object err) return err;
@@ -1355,7 +1358,7 @@ namespace UnitySkills
             Tags = new[] { "enable", "disable", "toggle", "active" },
             Outputs = new[] { "gameObject", "componentType", "enabled" },
             RequiresInput = new[] { "gameObject", "component" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object ComponentSetEnabled(string name = null, int instanceId = 0, string path = null, string componentType = null, bool enabled = true)
         {
             if (Validate.Required(componentType, "componentType") is object err) return err;

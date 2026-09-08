@@ -226,6 +226,7 @@ namespace UnitySkills
             Category = SkillCategory.Test, Operation = SkillOperation.Execute,
             Tags = new[] { "test", "run", "name", "specific", "job" },
             Outputs = new[] { "jobId", "testName", "testMode" },
+            RequiresInput = new[] { "testName" },
             SupportsDryRun = false, MayEnterPlayMode = true)]
         public static object TestRunByName(string testName, string testMode = "EditMode")
         {
@@ -508,6 +509,7 @@ namespace UnitySkills
             Category = SkillCategory.Test, Operation = SkillOperation.Create,
             Tags = new[] { "test", "create", "editmode", "template", "job" },
             Outputs = new[] { "path", "testName", "jobId", "serverAvailability" },
+            RequiresInput = new[] { "testName" },
             MutatesAssets = true, MayTriggerReload = true)]
         public static object TestCreateEditMode(string testName, string folder = "Assets/Tests/Editor")
         {
@@ -551,6 +553,7 @@ public class {testName}
             Category = SkillCategory.Test, Operation = SkillOperation.Create,
             Tags = new[] { "test", "create", "playmode", "template", "job" },
             Outputs = new[] { "path", "testName", "jobId", "serverAvailability" },
+            RequiresInput = new[] { "testName" },
             MutatesAssets = true, MayTriggerReload = true)]
         public static object TestCreatePlayMode(string testName, string folder = "Assets/Tests/Runtime")
         {

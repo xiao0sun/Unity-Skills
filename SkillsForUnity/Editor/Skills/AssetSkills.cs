@@ -161,6 +161,7 @@ namespace UnitySkills
             Category = SkillCategory.Asset, Operation = SkillOperation.Create,
             Tags = new[] { "import", "copy", "external", "batch" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
+            RequiresInput = new[] { "items" },
             TracksWorkflow = true, MutatesAssets = true,
             RiskLevel = "high")]
         public static object AssetImportBatch(string items)
@@ -216,7 +217,7 @@ namespace UnitySkills
             Category = SkillCategory.Asset, Operation = SkillOperation.Delete,
             Tags = new[] { "delete", "remove", "cleanup", "batch" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "assetPath" },
+            RequiresInput = new[] { "items" },
             TracksWorkflow = true, SkipAutoPresnapshot = true, MutatesAssets = true,
             RiskLevel = "medium")]
         public static object AssetDeleteBatch(string items)
@@ -253,7 +254,7 @@ namespace UnitySkills
             Category = SkillCategory.Asset, Operation = SkillOperation.Modify,
             Tags = new[] { "move", "rename", "reorganize", "batch" },
             Outputs = new[] { "from", "to" },
-            RequiresInput = new[] { "assetPath" },
+            RequiresInput = new[] { "items" },
             TracksWorkflow = true, SkipAutoPresnapshot = true, MutatesAssets = true,
             RiskLevel = "medium")]
         public static object AssetMoveBatch(string items)
@@ -299,7 +300,7 @@ namespace UnitySkills
             Tags = new[] { "duplicate", "copy", "clone" },
             Outputs = new[] { "original", "copy" },
             RequiresInput = new[] { "assetPath" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true)]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, MutatesAssets = true)]
         public static object AssetDuplicate(string assetPath)
         {
             if (Validate.SafePath(assetPath, "assetPath") is object err) return err;
@@ -347,6 +348,7 @@ namespace UnitySkills
             Category = SkillCategory.Asset, Operation = SkillOperation.Query,
             Tags = new[] { "search", "filter", "database" },
             Outputs = new[] { "count", "totalFound", "assets" },
+            RequiresInput = new[] { "searchFilter" },
             ReadOnly = true,
             Mode = SkillMode.SemiAuto)]
         public static object AssetFind(string searchFilter, int limit = 50)
@@ -371,7 +373,8 @@ namespace UnitySkills
             Category = SkillCategory.Asset, Operation = SkillOperation.Create,
             Tags = new[] { "folder", "directory", "organize" },
             Outputs = new[] { "path", "guid" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true)]
+            RequiresInput = new[] { "folderPath" },
+            TracksWorkflow = true, SkipAutoPresnapshot = true, MutatesAssets = true)]
         public static object AssetCreateFolder(string folderPath)
         {
             if (Validate.SafePath(folderPath, "folderPath") is object pathErr) return pathErr;
@@ -396,7 +399,8 @@ namespace UnitySkills
             Category = SkillCategory.Asset, Operation = SkillOperation.Create,
             Tags = new[] { "folder", "directory", "organize", "batch" },
             Outputs = new[] { "path", "guid" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true)]
+            RequiresInput = new[] { "items" },
+            TracksWorkflow = true, SkipAutoPresnapshot = true, MutatesAssets = true)]
         public static object AssetCreateFolderBatch(string items)
         {
             return BatchExecutor.Execute<BatchFolderItem>(items, item =>

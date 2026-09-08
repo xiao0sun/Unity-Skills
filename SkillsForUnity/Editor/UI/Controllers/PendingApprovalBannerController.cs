@@ -83,7 +83,7 @@ namespace UnitySkills
                         && SkillsModeManager.CurrentMode == SkillsOperatingMode.Approval;
 
             if (_banner != null)
-                _banner.style.display = show ? DisplayStyle.Flex : DisplayStyle.None;
+                _banner.SetVisible(show);
 
             if (!show)
             {
@@ -181,7 +181,7 @@ namespace UnitySkills
                 text = SkillsLocalization.Get("perm_approve"),
             };
             approve.AddToClassList("mini-btn");
-            approve.style.marginRight = 4;
+            approve.AddToClassList("mini-btn--right-gap");
             approve.SetEnabled(isPanel && !req.ApprovedByPanel);
             actions.Add(approve);
 

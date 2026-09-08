@@ -16,6 +16,13 @@
     flex-shrink: 0;
 }
 
+/* Preset chip row, built programmatically in AllowlistPickerWindow.BuildPresetBar. */
+.picker-preset-bar {
+    flex-direction: row;
+    align-items: center;
+    padding: 4px 8px;
+}
+
 .picker-search {
     flex-grow: 1;
 }

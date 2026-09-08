@@ -1,10 +1,14 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor.PackageManager;
+using UnityEngine;
 
 namespace UnitySkills.Tests.Core
 {
@@ -180,6 +184,114 @@ namespace UnitySkills.Tests.Core
             Assert.That(contradictory, Is.Empty,
                 "Read-only skills that also track workflow (nothing to roll back): " +
                 string.Join(", ", contradictory));
+        }
+
+        /// <summary>
+        /// Any skill whose implementation actually records an undo step, a workflow snapshot, or a
+        /// direct asset/file write must declare <c>MutatesScene</c> or <c>MutatesAssets</c>.
+        ///
+        /// <para>Found by the 2026-09 audit: 194 skills called <c>Undo.Register*</c> /
+        /// <c>WorkflowManager.Snapshot*</c> / <c>AssetDatabase.CreateAsset|SaveAssets</c> / etc. while
+        /// declaring neither flag. That's not just a wire-truthfulness gap — it's exactly the hole in
+        /// <see cref="SkillsSurfaceProfile"/>'s NoSceneAuthoring profile, which hides every write
+        /// declaring <c>MutatesScene</c> regardless of category (see its rule 4): an under-declared
+        /// skill sails straight through that gate while still mutating the scene.</para>
+        ///
+        /// <para>Scans package source directly via <see cref="SourceMask"/> rather than trusting
+        /// reflection, since the bug under test is in the declaration itself, and the two could
+        /// otherwise cross-check nothing. Method bodies are located by name via
+        /// <c>DeclaringType.Name + ".cs"</c> — every *Skills.cs file's class name matches its file
+        /// name in this codebase, and a #if/#else pair under the same name has all of its bodies
+        /// unioned, so a real (non-stub) implementation containing a marker is still caught even when
+        /// the stub branch (returning <c>NoXRI()</c> etc.) doesn't.</para>
+        ///
+        /// <para>The exemption list is for implementations that legitimately write but not to scene or
+        /// asset content: three Console toggles and two QFramework settings that only touch EditorPrefs
+        /// or an internal editor-window field (see each skill's own doc comment), and the two Workflow
+        /// skills whose entire job is *recording* a snapshot of another object's current state into
+        /// workflow history — bookkeeping, not a mutation of the object itself.</para>
+        /// </summary>
+        [Test]
+        public void SkillsRecordingUndoOrSnapshots_DeclareMutatesSceneOrAssets()
+        {
+            var exemptions = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["console_set_pause_on_error"] = "writes ConsoleWindow's s_ConsoleFlags static field (EditorPrefs fallback) - an editor session toggle, not scene/asset content",
+                ["console_set_collapse"] = "same as console_set_pause_on_error",
+                ["console_set_clear_on_play"] = "same as console_set_pause_on_error",
+                ["qframework_set_reskit_build_options"] = "writes EditorPrefs keys ResKitView itself reads, plus ResKitEditorAPI.SimulationMode which is EditorPrefs-backed inside QFramework - no scene/asset write",
+                ["qframework_set_editor_locale"] = "writes QFramework's own EditorPrefs-backed LocaleKitEditor.IsCN - no scene/asset write",
+                ["workflow_snapshot_object"] = "records the target's *current* state into workflow history for a later manual-change rollback; does not itself modify the target",
+                ["workflow_snapshot_created"] = "same as workflow_snapshot_object",
+            };
+
+            var markers = new[]
+            {
+                "Undo.Register", "Undo.RecordObject", "Undo.AddComponent", "Undo.DestroyObject",
+                "Undo.SetTransformParent", "WorkflowManager.Snapshot", "EditorSceneManager.MarkSceneDirty",
+                "EditorUtility.SetDirty", "AssetDatabase.CreateAsset", "AssetDatabase.SaveAssets",
+                "WriteImportSettingsIfDirty", "File.WriteAllText", "PrefabUtility.SaveAsPrefabAsset",
+                ".SaveAndReimport",
+            };
+
+            var root = GetSkillsSourceRoot();
+            Assume.That(Directory.Exists(root), Is.True, $"Skill source directory not found: {root}");
+
+            var maskedByType = new Dictionary<string, string>(StringComparer.Ordinal);
+            string GetMasked(string typeName)
+            {
+                if (maskedByType.TryGetValue(typeName, out var cached))
+                    return cached;
+
+                var path = Path.Combine(root, typeName + ".cs");
+                var masked = File.Exists(path) ? SourceMask.Mask(File.ReadAllText(path)) : null;
+                maskedByType[typeName] = masked;
+                return masked;
+            }
+
+            var issues = new List<string>();
+            var checkedCount = 0;
+
+            foreach (var skill in SkillRouter.GetAllSkillsSnapshotUnfiltered().OrderBy(s => s.Name, StringComparer.Ordinal))
+            {
+                if (skill.MutatesScene || skill.MutatesAssets)
+                    continue;
+                if (exemptions.ContainsKey(skill.Name))
+                    continue;
+
+                var declaringType = skill.Method?.DeclaringType;
+                if (declaringType == null)
+                    continue;
+
+                var masked = GetMasked(declaringType.Name);
+                if (masked == null)
+                    continue;
+
+                var bodies = SourceMask.FindMethodBodies(masked, skill.Method.Name);
+                if (bodies.Count == 0)
+                    continue;
+
+                checkedCount++;
+
+                var hit = markers.FirstOrDefault(marker => bodies.Any(body => body.IndexOf(marker, StringComparison.Ordinal) >= 0));
+                if (hit != null)
+                {
+                    issues.Add($"{skill.Name} ({declaringType.Name}.{skill.Method.Name}): body contains '{hit}' " +
+                               "but declares neither MutatesScene nor MutatesAssets");
+                }
+            }
+
+            // Recalibrated 2026-09-06: the 194-skill fix this test's own doc comment describes (skills that
+            // write but didn't declare Mutates*) shrank the "not yet declaring" candidate pool from >600 down to
+            // ~362 in the same pass that added this assertion - the threshold was checking a pre-fix world
+            // against a post-fix number. 300 stays comfortably below today's real count while still catching a
+            // scan that's actually broken (finds near-zero method bodies).
+            Assert.That(checkedCount, Is.GreaterThan(300),
+                $"Only matched {checkedCount} skill bodies in source - the source scan is likely broken, " +
+                "and a green result here would be meaningless.");
+
+            Assert.That(issues, Is.Empty,
+                $"{issues.Count} skill(s) write to the scene or an asset without declaring it:\n" + string.Join("\n", issues));
         }
 
         /// <summary>
@@ -364,6 +476,82 @@ namespace UnitySkills.Tests.Core
         }
 
         /// <summary>
+        /// The gap between the two RequiresInput checks above: <see cref="RequiredInputGroups_NameOnlyRealParameters"/>
+        /// only walks <c>_requiredInputGroups</c>'s own candidate lists, and
+        /// <see cref="CompoundRequiredInputTokens_NameAKeyTheSkillAccepts"/> only looks at tokens
+        /// containing '|'. A single, non-piped token that names neither a real parameter nor a
+        /// <c>_requiredInputGroups</c> key falls through both - exactly what
+        /// <c>asset_import</c>'s <c>"textureAsset"</c>/<c>"modelAsset"</c>/<c>"audioAsset"</c> tokens
+        /// did: <see cref="SkillRouter"/>'s <c>IsParameterRequired</c> compares by literal parameter
+        /// name, so it never matches these, and <see cref="SkillPlanningService"/>'s
+        /// <c>ApplyRequiredInputGroups</c> looks the token up in <c>_requiredInputGroups</c> and
+        /// silently continues when it's absent. Either way the token enforces nothing: the schema
+        /// says nothing is required, an empty body dry-runs as <c>valid:true</c>, and the caller only
+        /// finds out after execution has already started (fixed for asset_import's four skills in the
+        /// same change that added this test).
+        ///
+        /// <para>The known-semantic-locator set below is this audit's other finding: the identical
+        /// shape of bug recurred roughly 75 more times across Cinemachine / ProBuilder / Terrain /
+        /// Timeline / Smart / Prefab / Animator / Audio / DOTween / Material / Physics / Scene / UI,
+        /// all using a word describing *what kind* of target the skill needs (<c>vcam</c>,
+        /// <c>proBuilderMesh</c>, <c>terrain</c>, <c>director</c>, ...) instead of a literal parameter
+        /// name - the exact convention <c>"gameObject"</c> already gets, just never registered as a
+        /// <c>_requiredInputGroups</c> key. Fixed in the same 2026-09 pass by either registering the
+        /// word in <c>SkillPlanningService._requiredInputGroups</c> (with per-skill compound keys where
+        /// a shared word covered two differently-shaped locators, e.g. Cinemachine's mixing-camera and
+        /// state-driven-camera skills) or renaming the token on the affected skill to the real parameter
+        /// name it always meant.</para>
+        ///
+        /// <para>Two tokens remain and are expected to stay here permanently: <c>"selection"</c>
+        /// (Smart module) and <c>"selectedGameObjects"</c> (UI module) both name "the GameObjects
+        /// currently selected in the Hierarchy" - state read from <c>UnityEditor.Selection</c> at
+        /// request time, not carried by any JSON body parameter at all. No group entry can express this
+        /// (a group's candidates must themselves be real accepted parameter names, per
+        /// <see cref="RequiredInputGroups_NameOnlyRealParameters"/>, and none of these skills has one)
+        /// so it is enforced directly instead, via <c>SkillPlanningService.AnalyzeRequiresEditorSelection</c>
+        /// wired into the semantic-planner switch for each declaring skill - which is exactly why an empty
+        /// body still correctly dry-runs as invalid for all eight of them despite the token itself being
+        /// unenforceable through this mechanism.</para>
+        /// </summary>
+        [Test]
+        public void RequiresInput_SingleTokensNameARealParameterOrGroupKey()
+        {
+            var knownSemanticLocatorTokens = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "selection", "selectedGameObjects",
+            };
+
+            var groups = RequiredInputGroups();
+            var offenders = new List<string>();
+
+            foreach (var skill in SkillRouter.GetAllSkillsSnapshotUnfiltered()
+                         .Where(s => s.RequiresInput != null)
+                         .OrderBy(s => s.Name, StringComparer.Ordinal))
+            {
+                foreach (var token in skill.RequiresInput)
+                {
+                    if (string.IsNullOrEmpty(token) || token.IndexOf('|') >= 0)
+                        continue; // compound tokens are CompoundRequiredInputTokens_NameAKeyTheSkillAccepts's job
+
+                    if (SkillAcceptsParameter(skill, token))
+                        continue;
+                    if (groups.ContainsKey(token))
+                        continue;
+                    if (knownSemanticLocatorTokens.Contains(token))
+                        continue;
+
+                    offenders.Add($"{skill.Name}: token '{token}' names neither a parameter it accepts nor a " +
+                                  "_requiredInputGroups key nor a recognized semantic-locator word");
+                }
+            }
+
+            Assert.That(offenders, Is.Empty,
+                $"{offenders.Count} RequiresInput token(s) enforce nothing - neither IsParameterRequired nor " +
+                "ApplyRequiredInputGroups can ever match them, so an empty body dry-runs as valid and the " +
+                $"caller only finds out after execution starts:\n{string.Join("\n", offenders)}");
+        }
+
+        /// <summary>
         /// Twelve skills caught by the 2026-08-23 live-machine smoke scan: they proceed to execute against an
         /// empty request body, then fail deep inside their own implementation. Each one needs an argument but
         /// doesn't declare <c>RequiresInput</c>, and their parameters are neither value types nor have a CLR
@@ -440,6 +628,185 @@ namespace UnitySkills.Tests.Core
                 "_requiredInputGroups", BindingFlags.NonPublic | BindingFlags.Static);
             Assert.That(field, Is.Not.Null, "SkillPlanningService._requiredInputGroups was renamed.");
             return field.GetValue(null) as Dictionary<string, string[]>;
+        }
+
+        /// <summary>The same dual-path resolution as OutputsReturnContractTests.GetSkillsSourceRoot: in-project first, then the package cache.</summary>
+        private static string GetSkillsSourceRoot()
+        {
+            var projectRoot = Directory.GetParent(Application.dataPath);
+            if (projectRoot != null)
+            {
+                var inProject = Path.Combine(projectRoot.FullName, "SkillsForUnity", "Editor", "Skills");
+                if (Directory.Exists(inProject))
+                    return inProject;
+            }
+
+            var packageInfo = PackageInfo.FindForAssembly(typeof(UnitySkillAttribute).Assembly)
+                              ?? PackageInfo.FindForAssembly(typeof(SkillMetadataGuardTests).Assembly);
+            if (packageInfo != null)
+            {
+                var inPackage = Path.Combine(packageInfo.resolvedPath, "Editor", "Skills");
+                if (Directory.Exists(inPackage))
+                    return inPackage;
+            }
+
+            return projectRoot != null
+                ? Path.Combine(projectRoot.FullName, "SkillsForUnity", "Editor", "Skills")
+                : "SkillsForUnity/Editor/Skills";
+        }
+
+        /// <summary>
+        /// A minimal string/comment-aware C# scanner used only by
+        /// <see cref="SkillsRecordingUndoOrSnapshots_DeclareMutatesSceneOrAssets"/>. Blanks out line
+        /// comments, block comments, and the contents of char/string literals (including
+        /// interpolation holes, which stay live since they're real executable code), so brace/paren
+        /// matching and marker-text search never trip over a comment or a string literal that happens
+        /// to contain one of the marker substrings.
+        /// </summary>
+        private static class SourceMask
+        {
+            public static string Mask(string raw)
+            {
+                var n = raw.Length;
+                var masked = raw.ToCharArray();
+                // Mode stack: 'c' code, 'l' line comment, 'b' block comment, 's' string, 'x' char,
+                // 'v' verbatim string, 'I' interpolated string, 'V' verbatim+interpolated string.
+                // A '{' seen while in code mode pushes another 'c' frame (this doubles as the
+                // interpolation-hole mechanism: a hole opened from 'I'/'V' is just a 'c' frame that
+                // pops back to the string once its own brace nesting returns to zero).
+                var stack = new List<char> { 'c' };
+                var i = 0;
+                while (i < n)
+                {
+                    var mode = stack[stack.Count - 1];
+                    var ch = raw[i];
+
+                    if (mode == 'c')
+                    {
+                        if (ch == '/' && i + 1 < n && raw[i + 1] == '/')
+                        { masked[i] = ' '; masked[i + 1] = ' '; stack.Add('l'); i += 2; continue; }
+                        if (ch == '/' && i + 1 < n && raw[i + 1] == '*')
+                        { masked[i] = ' '; masked[i + 1] = ' '; stack.Add('b'); i += 2; continue; }
+                        if (ch == '"')
+                        {
+                            var interp = i > 0 && raw[i - 1] == '$';
+                            var verbatim = i > 0 && raw[i - 1] == '@';
+                            if (!interp && i > 1 && raw[i - 2] == '$' && raw[i - 1] == '@') interp = true;
+                            if (!verbatim && i > 1 && raw[i - 2] == '@' && raw[i - 1] == '$') verbatim = true;
+                            stack.Add(interp && verbatim ? 'V' : interp ? 'I' : verbatim ? 'v' : 's');
+                            masked[i] = ' '; i++; continue;
+                        }
+                        if (ch == '\'') { stack.Add('x'); masked[i] = ' '; i++; continue; }
+                        if (ch == '{' || ch == '(') { stack.Add('c'); i++; continue; }
+                        if (ch == '}' || ch == ')')
+                        {
+                            if (stack.Count > 1) stack.RemoveAt(stack.Count - 1);
+                            i++; continue;
+                        }
+                        i++; continue;
+                    }
+
+                    if (mode == 'l')
+                    {
+                        if (ch == '\n') { stack.RemoveAt(stack.Count - 1); i++; continue; }
+                        masked[i] = ' '; i++; continue;
+                    }
+
+                    if (mode == 'b')
+                    {
+                        if (ch == '*' && i + 1 < n && raw[i + 1] == '/')
+                        { masked[i] = ' '; masked[i + 1] = ' '; stack.RemoveAt(stack.Count - 1); i += 2; continue; }
+                        masked[i] = ' '; i++; continue;
+                    }
+
+                    if (mode == 's')
+                    {
+                        if (ch == '\\') { masked[i] = ' '; if (i + 1 < n) masked[i + 1] = ' '; i += 2; continue; }
+                        if (ch == '"') { masked[i] = ' '; stack.RemoveAt(stack.Count - 1); i++; continue; }
+                        masked[i] = ' '; i++; continue;
+                    }
+
+                    if (mode == 'x')
+                    {
+                        if (ch == '\\') { masked[i] = ' '; if (i + 1 < n) masked[i + 1] = ' '; i += 2; continue; }
+                        if (ch == '\'') { masked[i] = ' '; stack.RemoveAt(stack.Count - 1); i++; continue; }
+                        masked[i] = ' '; i++; continue;
+                    }
+
+                    if (mode == 'v')
+                    {
+                        if (ch == '"')
+                        {
+                            if (i + 1 < n && raw[i + 1] == '"') { masked[i] = ' '; masked[i + 1] = ' '; i += 2; continue; }
+                            masked[i] = ' '; stack.RemoveAt(stack.Count - 1); i++; continue;
+                        }
+                        masked[i] = ' '; i++; continue;
+                    }
+
+                    // 'I' or 'V': interpolated (optionally verbatim) string
+                    {
+                        var verbatim = mode == 'V';
+                        if (verbatim && ch == '"' && i + 1 < n && raw[i + 1] == '"')
+                        { masked[i] = ' '; masked[i + 1] = ' '; i += 2; continue; }
+                        if (!verbatim && ch == '\\')
+                        { masked[i] = ' '; if (i + 1 < n) masked[i + 1] = ' '; i += 2; continue; }
+                        if (ch == '"') { masked[i] = ' '; stack.RemoveAt(stack.Count - 1); i++; continue; }
+                        if (ch == '{')
+                        {
+                            if (i + 1 < n && raw[i + 1] == '{') { masked[i] = ' '; masked[i + 1] = ' '; i += 2; continue; }
+                            stack.Add('c'); i++; continue; // interpolation hole: real code follows
+                        }
+                        if (ch == '}')
+                        {
+                            if (i + 1 < n && raw[i + 1] == '}') { masked[i] = ' '; masked[i + 1] = ' '; i += 2; continue; }
+                            masked[i] = ' '; i++; continue;
+                        }
+                        masked[i] = ' '; i++; continue;
+                    }
+                }
+
+                return new string(masked);
+            }
+
+            /// <summary>
+            /// Every <c>(public|internal|private) static object &lt;methodName&gt;(...) { ... }</c>
+            /// body found in already-masked text. Usually one match; more than one when a #if/#else
+            /// pair declares the same name twice (both bodies are returned so a caller can check
+            /// either one - e.g. a real implementation alongside a package-missing stub).
+            /// </summary>
+            public static List<string> FindMethodBodies(string masked, string methodName)
+            {
+                var bodies = new List<string>();
+                var pattern = new Regex(@"(?:public|internal|private)\s+static\s+object\s+" + Regex.Escape(methodName) + @"\s*\(");
+                foreach (Match match in pattern.Matches(masked))
+                {
+                    var parenOpen = masked.IndexOf('(', match.Index);
+                    if (parenOpen < 0) continue;
+                    var parenClose = MatchBracketFrom(masked, parenOpen, '(', ')');
+                    if (parenClose < 0) continue;
+                    var braceOpen = masked.IndexOf('{', parenClose);
+                    if (braceOpen < 0) continue;
+                    var braceClose = MatchBracketFrom(masked, braceOpen, '{', '}');
+                    if (braceClose < 0) continue;
+                    bodies.Add(masked.Substring(braceOpen, braceClose - braceOpen));
+                }
+                return bodies;
+            }
+
+            private static int MatchBracketFrom(string text, int openIndex, char open, char close)
+            {
+                var depth = 0;
+                for (var i = openIndex; i < text.Length; i++)
+                {
+                    if (text[i] == open) depth++;
+                    else if (text[i] == close)
+                    {
+                        depth--;
+                        if (depth == 0) return i;
+                    }
+                }
+                return -1;
+            }
         }
     }
 }

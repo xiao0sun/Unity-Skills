@@ -26,14 +26,18 @@ namespace UnitySkills
         [UnitySkill("postprocess_add_effect", "Add a post-processing effect override to a VolumeProfile",
             Category = SkillCategory.PostProcess, Operation = SkillOperation.Create,
             Tags = new[] { "postprocess", "effect", "add", "profile" },
-            Outputs = new[] { "effectType", "profilePath" })]
+            Outputs = new[] { "effectType", "profilePath" },
+            // Mirrors the real (URP) branch so metadata stays identical when the package is absent.
+            MutatesAssets = true)]
         public static object PostProcessAddEffect(string profilePath, string effectType, bool overrides = true) => RenderPipelineSkillsCommon.NoSRP();
 
         [UnitySkill("postprocess_remove_effect", "Remove a post-processing effect override from a VolumeProfile",
             Category = SkillCategory.PostProcess, Operation = SkillOperation.Delete,
             Tags = new[] { "postprocess", "effect", "remove", "profile" },
             Outputs = new[] { "effectType", "profilePath" },
-            RiskLevel = "medium")]
+            RiskLevel = "medium",
+            // Mirrors the real (URP) branch so metadata stays identical when the package is absent.
+            MutatesAssets = true)]
         public static object PostProcessRemoveEffect(string profilePath, string effectType) => RenderPipelineSkillsCommon.NoSRP();
 
         [UnitySkill("postprocess_get_effect", "Inspect a post-processing effect override on a VolumeProfile",
@@ -47,37 +51,49 @@ namespace UnitySkills
         [UnitySkill("postprocess_set_parameter", "Set a parameter on a post-processing effect override",
             Category = SkillCategory.PostProcess, Operation = SkillOperation.Modify,
             Tags = new[] { "postprocess", "effect", "parameter", "set" },
-            Outputs = new[] { "effectType", "parameterName", "value" })]
+            Outputs = new[] { "effectType", "parameterName", "value" },
+            // Mirrors the real (URP) branch so metadata stays identical when the package is absent.
+            MutatesAssets = true)]
         public static object PostProcessSetParameter(string profilePath, string effectType, string parameterName, object value, bool? overrideState = true) => RenderPipelineSkillsCommon.NoSRP();
 
         [UnitySkill("postprocess_set_bloom", "Configure the Bloom post-processing effect",
             Category = SkillCategory.PostProcess, Operation = SkillOperation.Modify,
             Tags = new[] { "postprocess", "bloom", "configure" },
-            Outputs = new[] { "effectType", "parameters" })]
+            Outputs = new[] { "effectType", "parameters" },
+            // Mirrors the real (URP) branch so metadata stays identical when the package is absent.
+            MutatesAssets = true)]
         public static object PostProcessSetBloom(string profilePath, float? intensity = null, float? threshold = null, float? scatter = null, string tint = null) => RenderPipelineSkillsCommon.NoSRP();
 
         [UnitySkill("postprocess_set_depth_of_field", "Configure the Depth Of Field post-processing effect",
             Category = SkillCategory.PostProcess, Operation = SkillOperation.Modify,
             Tags = new[] { "postprocess", "depth of field", "configure" },
-            Outputs = new[] { "effectType", "parameters" })]
+            Outputs = new[] { "effectType", "parameters" },
+            // Mirrors the real (URP) branch so metadata stays identical when the package is absent.
+            MutatesAssets = true)]
         public static object PostProcessSetDepthOfField(string profilePath, string mode = null, float? focusDistance = null, float? gaussianStart = null, float? gaussianEnd = null) => RenderPipelineSkillsCommon.NoSRP();
 
         [UnitySkill("postprocess_set_tonemapping", "Configure the Tonemapping post-processing effect",
             Category = SkillCategory.PostProcess, Operation = SkillOperation.Modify,
             Tags = new[] { "postprocess", "tonemapping", "configure" },
-            Outputs = new[] { "effectType", "parameters" })]
+            Outputs = new[] { "effectType", "parameters" },
+            // Mirrors the real (URP) branch so metadata stays identical when the package is absent.
+            MutatesAssets = true)]
         public static object PostProcessSetTonemapping(string profilePath, string mode = null) => RenderPipelineSkillsCommon.NoSRP();
 
         [UnitySkill("postprocess_set_vignette", "Configure the Vignette post-processing effect",
             Category = SkillCategory.PostProcess, Operation = SkillOperation.Modify,
             Tags = new[] { "postprocess", "vignette", "configure" },
-            Outputs = new[] { "effectType", "parameters" })]
+            Outputs = new[] { "effectType", "parameters" },
+            // Mirrors the real (URP) branch so metadata stays identical when the package is absent.
+            MutatesAssets = true)]
         public static object PostProcessSetVignette(string profilePath, float? intensity = null, float? smoothness = null, string color = null, string center = null, bool? rounded = null) => RenderPipelineSkillsCommon.NoSRP();
 
         [UnitySkill("postprocess_set_color_adjustments", "Configure the Color Adjustments post-processing effect",
             Category = SkillCategory.PostProcess, Operation = SkillOperation.Modify,
             Tags = new[] { "postprocess", "color adjustments", "configure" },
-            Outputs = new[] { "effectType", "parameters" })]
+            Outputs = new[] { "effectType", "parameters" },
+            // Mirrors the real (URP) branch so metadata stays identical when the package is absent.
+            MutatesAssets = true)]
         public static object PostProcessSetColorAdjustments(string profilePath, float? postExposure = null, float? contrast = null, string colorFilter = null, float? hueShift = null, float? saturation = null) => RenderPipelineSkillsCommon.NoSRP();
 #else
         [UnitySkill("postprocess_list_effects", "List post-processing effects supported by the active SRP pipeline",

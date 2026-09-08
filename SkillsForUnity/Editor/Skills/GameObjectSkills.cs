@@ -16,6 +16,7 @@ namespace UnitySkills
             Category = SkillCategory.GameObject, Operation = SkillOperation.Create,
             Tags = new[] { "primitive", "empty", "hierarchy", "batch" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
+            RequiresInput = new[] { "items" },
             TracksWorkflow = true, MutatesScene = true,
             RiskLevel = "medium")]
         public static object GameObjectCreateBatch(string items)
@@ -157,7 +158,7 @@ namespace UnitySkills
             Tags = new[] { "rename", "name", "identity" },
             Outputs = new[] { "oldName", "newName", "instanceId", "path" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object GameObjectRename(string name = null, int instanceId = 0, string path = null, string newName = null, string entityId = null)
         {
             if (Validate.Required(newName, "newName") is object err) return err;
@@ -184,8 +185,8 @@ namespace UnitySkills
             Category = SkillCategory.GameObject, Operation = SkillOperation.Modify,
             Tags = new[] { "rename", "name", "identity", "batch" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "items" },
+            TracksWorkflow = true, MutatesScene = true)]
         public static object GameObjectRenameBatch(string items)
         {
             return BatchExecutor.Execute<BatchRenameItem>(items, item =>
@@ -236,7 +237,7 @@ namespace UnitySkills
             Category = SkillCategory.GameObject, Operation = SkillOperation.Delete,
             Tags = new[] { "destroy", "remove", "hierarchy", "batch" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "gameObject" },
+            RequiresInput = new[] { "items" },
             TracksWorkflow = true, SkipAutoPresnapshot = true,
             MutatesScene = true,
             RiskLevel = "medium")]
@@ -457,7 +458,7 @@ namespace UnitySkills
             // Only list the outer envelope's keys, echoed per item inside results[]. Declaring entityId
             // here would mislead a chaining planner into thinking this skill produces a top-level entityId.
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "gameObject" },
+            RequiresInput = new[] { "items" },
             TracksWorkflow = true, MutatesScene = true)]
         public static object GameObjectSetTransformBatch(string items)
         {
@@ -592,7 +593,7 @@ namespace UnitySkills
             Tags = new[] { "duplicate", "copy", "clone", "hierarchy" },
             Outputs = new[] { "copyName", "copyInstanceId", "copyPath" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object GameObjectDuplicate(string name = null, int instanceId = 0, string path = null, string entityId = null)
         {
             var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path, entityId: entityId);
@@ -617,8 +618,8 @@ namespace UnitySkills
             Category = SkillCategory.GameObject, Operation = SkillOperation.Create,
             Tags = new[] { "duplicate", "copy", "clone", "hierarchy", "batch" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "items" },
+            TracksWorkflow = true, MutatesScene = true)]
         public static object GameObjectDuplicateBatch(string items)
         {
             return BatchExecutor.Execute<BatchDuplicateItem>(items, item =>
@@ -656,7 +657,7 @@ namespace UnitySkills
             Tags = new[] { "parent", "hierarchy", "reparent" },
             Outputs = new[] { "child", "parent", "newPath" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object GameObjectSetParent(string childName = null, int childInstanceId = 0, string childPath = null, 
             string parentName = null, int parentInstanceId = 0, string parentPath = null, string childEntityId = null, string parentEntityId = null)
         {
@@ -775,7 +776,7 @@ namespace UnitySkills
             Tags = new[] { "active", "enable", "disable", "visibility" },
             Outputs = new[] { "name", "active" },
             RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            TracksWorkflow = true, MutatesScene = true)]
         public static object GameObjectSetActive(string name = null, int instanceId = 0, string path = null, bool active = true, string entityId = null)
         {
             var (go, error) = GameObjectFinder.FindOrError(name, instanceId, path, entityId: entityId);
@@ -792,8 +793,8 @@ namespace UnitySkills
             Category = SkillCategory.GameObject, Operation = SkillOperation.Modify,
             Tags = new[] { "active", "enable", "disable", "visibility", "batch" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "items" },
+            TracksWorkflow = true, MutatesScene = true)]
         public static object GameObjectSetActiveBatch(string items)
         {
             return BatchExecutor.Execute<BatchSetActiveItem>(items, item =>
@@ -821,7 +822,7 @@ namespace UnitySkills
             Category = SkillCategory.GameObject, Operation = SkillOperation.Modify,
             Tags = new[] { "layer", "rendering", "physics", "batch" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "gameObject" },
+            RequiresInput = new[] { "items" },
             TracksWorkflow = true, MutatesScene = true)]
         public static object GameObjectSetLayerBatch(string items)
         {
@@ -865,7 +866,7 @@ namespace UnitySkills
             Category = SkillCategory.GameObject, Operation = SkillOperation.Modify,
             Tags = new[] { "tag", "identity", "batch" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "gameObject" },
+            RequiresInput = new[] { "items" },
             TracksWorkflow = true, MutatesScene = true)]
         public static object GameObjectSetTagBatch(string items)
         {
@@ -914,8 +915,8 @@ namespace UnitySkills
             Category = SkillCategory.GameObject, Operation = SkillOperation.Modify,
             Tags = new[] { "parent", "hierarchy", "reparent", "batch" },
             Outputs = new[] { "totalItems", "successCount", "failCount", "results" },
-            RequiresInput = new[] { "gameObject" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "items" },
+            TracksWorkflow = true, MutatesScene = true)]
         public static object GameObjectSetParentBatch(string items)
         {
             return BatchExecutor.Execute<BatchSetParentItem>(items, item =>

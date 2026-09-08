@@ -32,7 +32,8 @@ namespace UnitySkills
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Create,
             Tags = new[] { "camera", "virtual", "cinemachine", "vcam" },
             Outputs = new[] { "gameObjectName", "instanceId" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true,
+            RequiresInput = new[] { "name" })]
         public static object CinemachineCreateVCam(string name, string folder = "Assets/Settings")
         {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
@@ -253,7 +254,7 @@ namespace UnitySkills
             Tags = new[] { "camera", "property", "vcam", "pipeline", "cinemachine" },
             Outputs = new[] { "success", "message" },
             RequiresInput = new[] { "vcam" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineSetVCamProperty(
             string vcamName = null,
             int instanceId = 0,
@@ -350,7 +351,7 @@ namespace UnitySkills
             Tags = new[] { "camera", "follow", "lookAt", "target", "cinemachine" },
             Outputs = new[] { "success" },
             RequiresInput = new[] { "vcam" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineSetTargets(string vcamName = null, int instanceId = 0, string path = null, string followName = null, string lookAtName = null)
         {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
@@ -400,7 +401,7 @@ namespace UnitySkills
             Tags = new[] { "camera", "component", "add", "pipeline", "cinemachine" },
             Outputs = new[] { "success", "message" },
             RequiresInput = new[] { "vcam" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineAddComponent(string vcamName = null, int instanceId = 0, string path = null, string componentType = null)
         {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
@@ -453,7 +454,7 @@ namespace UnitySkills
             Tags = new[] { "camera", "lens", "fov", "clip", "cinemachine" },
             Outputs = new[] { "success", "message" },
             RequiresInput = new[] { "vcam" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineSetLens(string vcamName = null, int instanceId = 0, string path = null, float? fov = null, float? nearClip = null, float? farClip = null, float? orthoSize = null, string mode = null)
         {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
@@ -529,7 +530,7 @@ namespace UnitySkills
             Outputs = new[] { "success", "message" },
             RequiresInput = new[] { "vcam" },
             TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" },
-            RiskLevel = "medium")]
+            RiskLevel = "medium", MutatesScene = true)]
         public static object CinemachineSetComponent(string vcamName = null, int instanceId = 0, string path = null, string stage = null, string componentType = null)
         {
 #if CINEMACHINE_2 || CINEMACHINE_3
@@ -586,7 +587,7 @@ namespace UnitySkills
             Tags = new[] { "camera", "impulse", "shake", "cinemachine" },
             Outputs = new[] { "success", "message", "warning" },
             RequiresPackages = new[] { "com.unity.cinemachine" })]
-        public static object CinemachineImpulseGenerate(string sourceParams)
+        public static object CinemachineImpulseGenerate(string sourceParams = null)
         {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
             return NoCinemachine();
@@ -655,7 +656,7 @@ namespace UnitySkills
             Tags = new[] { "camera", "active", "priority", "solo", "cinemachine" },
             Outputs = new[] { "success", "message" },
             RequiresInput = new[] { "vcam" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineSetActive(string vcamName = null, int instanceId = 0, string path = null)
         {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
@@ -681,7 +682,7 @@ namespace UnitySkills
             Tags = new[] { "camera", "noise", "perlin", "shake", "cinemachine" },
             Outputs = new[] { "success", "message" },
             RequiresInput = new[] { "vcam" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineSetNoise(string vcamName = null, int instanceId = 0, string path = null, float amplitudeGain = 1f, float frequencyGain = 1f)
         {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
@@ -830,7 +831,8 @@ namespace UnitySkills
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Create,
             Tags = new[] { "camera", "targetGroup", "group", "cinemachine" },
             Outputs = new[] { "success", "name" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true,
+            RequiresInput = new[] { "name" })]
         public static object CinemachineCreateTargetGroup(string name)
         {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
@@ -849,8 +851,11 @@ namespace UnitySkills
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Modify,
             Tags = new[] { "camera", "targetGroup", "member", "add", "cinemachine" },
             Outputs = new[] { "success", "message" },
-            RequiresInput = new[] { "targetGroup", "gameObject" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            // Real names: groupName/groupInstanceId/groupPath (the group) and targetName/targetInstanceId/targetPath
+            // (the member) - neither matches the generic "gameObject" group's {name,path,instanceId,entityId}
+            // candidates, which is why the old "targetGroup"/"gameObject" tokens enforced nothing.
+            RequiresInput = new[] { "groupName|groupInstanceId|groupPath", "targetName|targetInstanceId|targetPath" },
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineTargetGroupAddMember(string groupName = null, int groupInstanceId = 0, string groupPath = null, string targetName = null, int targetInstanceId = 0, string targetPath = null, float weight = 1f, float radius = 1f)
         {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
@@ -877,9 +882,9 @@ namespace UnitySkills
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Modify | SkillOperation.Delete,
             Tags = new[] { "camera", "targetGroup", "member", "remove", "cinemachine" },
             Outputs = new[] { "success", "message" },
-            RequiresInput = new[] { "targetGroup", "gameObject" },
+            RequiresInput = new[] { "groupName|groupInstanceId|groupPath", "targetName|targetInstanceId|targetPath" },
             TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" },
-            RiskLevel = "medium")]
+            RiskLevel = "medium", MutatesScene = true)]
         public static object CinemachineTargetGroupRemoveMember(string groupName = null, int groupInstanceId = 0, string groupPath = null, string targetName = null, int targetInstanceId = 0, string targetPath = null)
         {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
@@ -905,8 +910,10 @@ namespace UnitySkills
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Modify,
             Tags = new[] { "camera", "spline", "dolly", "path", "cinemachine" },
             Outputs = new[] { "success", "message" },
-            RequiresInput = new[] { "vcam", "splineContainer" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine", "com.unity.splines" })]
+            // This skill's vcam half uses vcamName/vcamInstanceId/vcamPath (not the generic vcamName/instanceId/path
+            // shape most other Cinemachine skills share), so it needs its own compound rather than the shared "vcam" group.
+            RequiresInput = new[] { "vcamName|vcamInstanceId|vcamPath", "splineContainer" },
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine", "com.unity.splines" }, MutatesScene = true)]
         public static object CinemachineSetSpline(string vcamName = null, int vcamInstanceId = 0, string vcamPath = null, string splineName = null, int splineInstanceId = 0, string splinePath = null)
         {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
@@ -944,7 +951,7 @@ namespace UnitySkills
             Tags = new[] { "camera", "extension", "add", "cinemachine" },
             Outputs = new[] { "success", "message" },
             RequiresInput = new[] { "vcam" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineAddExtension(string vcamName = null, int instanceId = 0, string path = null, string extensionName = null)
         {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
@@ -1000,7 +1007,8 @@ namespace UnitySkills
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Create,
             Tags = new[] { "camera", "mixing", "blend", "cinemachine" },
             Outputs = new[] { "success", "name" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true,
+            RequiresInput = new[] { "name" })]
         public static object CinemachineCreateMixingCamera(string name)
         {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
@@ -1019,8 +1027,11 @@ namespace UnitySkills
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Modify,
             Tags = new[] { "camera", "mixing", "weight", "blend", "cinemachine" },
             Outputs = new[] { "success", "message" },
-            RequiresInput = new[] { "mixingCamera", "vcam" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            // "mixingCamera" targets mixerName/mixerInstanceId/mixerPath/mixerEntityId; "vcam" here actually means
+            // the CHILD camera, which uses an entirely different set of names (childName/...) - neither shape
+            // matches the generic "vcam" or "gameObject" groups, so each needs its own compound key.
+            RequiresInput = new[] { "mixerName|mixerInstanceId|mixerPath|mixerEntityId", "childName|childInstanceId|childPath|childEntityId" },
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineMixingCameraSetWeight(string mixerName = null, int mixerInstanceId = 0, string mixerPath = null, string mixerEntityId = null,
             string childName = null, int childInstanceId = 0, string childPath = null, string childEntityId = null, float weight = 1f)
         {
@@ -1057,7 +1068,8 @@ namespace UnitySkills
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Create,
             Tags = new[] { "camera", "clearShot", "auto", "cinemachine" },
             Outputs = new[] { "success", "name" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true,
+            RequiresInput = new[] { "name" })]
         public static object CinemachineCreateClearShot(string name)
         {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
@@ -1076,7 +1088,8 @@ namespace UnitySkills
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Create,
             Tags = new[] { "camera", "stateDriven", "animator", "cinemachine" },
             Outputs = new[] { "success", "name" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true,
+            RequiresInput = new[] { "name" })]
         public static object CinemachineCreateStateDrivenCamera(string name, string targetAnimatorName = null)
         {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
@@ -1113,8 +1126,11 @@ namespace UnitySkills
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Modify,
             Tags = new[] { "camera", "stateDriven", "instruction", "state", "cinemachine" },
             Outputs = new[] { "success", "message" },
-            RequiresInput = new[] { "stateDrivenCamera", "vcam" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            // "stateDrivenCamera" locates the parent (cameraName/...); "vcam" here means the CHILD camera being
+            // added, a different name shape (childCameraName/...) - each needs its own compound. stateName has a
+            // CLR default (null) but the skill can't do anything without it, so it's added directly (real, literal name).
+            RequiresInput = new[] { "cameraName|cameraInstanceId|cameraPath|cameraEntityId", "childCameraName|childInstanceId|childPath|childEntityId", "stateName" },
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineStateDrivenCameraAddInstruction(string cameraName = null, int cameraInstanceId = 0, string cameraPath = null, string cameraEntityId = null,
             string stateName = null, string childCameraName = null, int childInstanceId = 0, string childPath = null, string childEntityId = null,
             float minDuration = 0, float activateAfter = 0)
@@ -1150,7 +1166,7 @@ namespace UnitySkills
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Modify,
             Tags = new[] { "camera", "brain", "blend", "cinemachine", "update" },
             Outputs = new[] { "success", "settings" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineSetBrain(
             string updateMethod = null,
             string blendUpdateMethod = null,
@@ -1219,7 +1235,7 @@ namespace UnitySkills
             Tags = new[] { "camera", "priority", "cinemachine" },
             Outputs = new[] { "success", "priority" },
             RequiresInput = new[] { "vcam" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineSetPriority(
             string vcamName = null, int instanceId = 0, string path = null,
             int priority = 10)
@@ -1246,7 +1262,7 @@ namespace UnitySkills
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Modify,
             Tags = new[] { "camera", "blend", "transition", "cinemachine" },
             Outputs = new[] { "success", "message" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineSetBlend(
             string style = "EaseInOut",
             float time = 2f,
@@ -1286,7 +1302,8 @@ namespace UnitySkills
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Create,
             Tags = new[] { "camera", "sequencer", "blendlist", "sequence", "cinemachine" },
             Outputs = new[] { "gameObjectName", "instanceId" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true,
+            RequiresInput = new[] { "name" })]
         public static object CinemachineCreateSequencer(string name, bool loop = false)
         {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
@@ -1318,8 +1335,11 @@ namespace UnitySkills
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Modify,
             Tags = new[] { "camera", "sequencer", "instruction", "cinemachine" },
             Outputs = new[] { "success", "message" },
-            RequiresInput = new[] { "sequencer" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            // "sequencer" locates the parent sequencer camera; the child camera being added has no locator token
+            // at all today (a sibling gap to cinemachine_state_driven_camera_add_instruction's "vcam" bug), so one
+            // is added here too, reusing that skill's identically-shaped child-locator group.
+            RequiresInput = new[] { "sequencer", "childCameraName|childInstanceId|childPath|childEntityId" },
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineSequencerAddInstruction(
             string sequencerName = null, int sequencerInstanceId = 0, string sequencerPath = null, string sequencerEntityId = null,
             string childCameraName = null, int childInstanceId = 0, string childPath = null, string childEntityId = null,
@@ -1359,7 +1379,8 @@ namespace UnitySkills
             Category = SkillCategory.Cinemachine, Operation = SkillOperation.Create,
             Tags = new[] { "camera", "freelook", "orbit", "third-person", "cinemachine" },
             Outputs = new[] { "gameObjectName", "instanceId" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true,
+            RequiresInput = new[] { "name" })]
         public static object CinemachineCreateFreeLook(string name, string followName = null, string lookAtName = null)
         {
 #if !CINEMACHINE_2 && !CINEMACHINE_3
@@ -1422,7 +1443,7 @@ namespace UnitySkills
             Tags = new[] { "camera", "clearshot", "statedriven", "sequencer", "configure", "cinemachine" },
             Outputs = new[] { "success", "message" },
             RequiresInput = new[] { "camera" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineConfigureCameraManager(
             string cameraName = null, int cameraInstanceId = 0, string cameraPath = null,
             // ClearShot
@@ -1549,7 +1570,7 @@ namespace UnitySkills
             Tags = new[] { "camera", "body", "follow", "orbital", "thirdperson", "cinemachine" },
             Outputs = new[] { "success", "componentType", "changes", "warnings" },
             RequiresInput = new[] { "vcam" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineConfigureBody(
             string vcamName = null, int instanceId = 0, string path = null,
             // Follow / Transposer offset
@@ -1749,7 +1770,7 @@ namespace UnitySkills
             Tags = new[] { "camera", "aim", "composer", "pantilt", "cinemachine" },
             Outputs = new[] { "success", "componentType", "changes", "warnings" },
             RequiresInput = new[] { "vcam" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineConfigureAim(
             string vcamName = null, int instanceId = 0, string path = null,
             // Composer / RotationComposer
@@ -1884,7 +1905,7 @@ namespace UnitySkills
             Tags = new[] { "camera", "extension", "confiner", "deoccluder", "cinemachine" },
             Outputs = new[] { "success", "extensionType", "changes" },
             RequiresInput = new[] { "vcam" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineConfigureExtension(
             string vcamName = null, int instanceId = 0, string path = null,
             string extensionName = null,
@@ -2024,7 +2045,7 @@ namespace UnitySkills
             Tags = new[] { "camera", "impulse", "shake", "configure", "cinemachine" },
             Outputs = new[] { "success", "changes", "warnings" },
             RequiresInput = new[] { "source" },
-            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" })]
+            TracksWorkflow = true, SkipAutoPresnapshot = true, RequiresPackages = new[] { "com.unity.cinemachine" }, MutatesScene = true)]
         public static object CinemachineConfigureImpulseSource(
             string sourceName = null, int sourceInstanceId = 0, string sourcePath = null,
             float? amplitudeGain = null,

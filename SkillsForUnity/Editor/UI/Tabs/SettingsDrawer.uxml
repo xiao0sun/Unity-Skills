@@ -69,7 +69,7 @@
                     </ui:VisualElement>
                     <ui:Label name="perm-mode-hint" class="setting-hint" style="margin-left: 0; margin-bottom: 6px;" />
 
-                    <ui:VisualElement name="row-panel-approval" style="flex-direction: column; display: none;">
+                    <ui:VisualElement name="row-panel-approval" class="is-hidden" style="flex-direction: column;">
                         <ui:Toggle name="perm-panel-approval-toggle" class="setting-toggle" />
                         <ui:Label name="perm-panel-approval-hint" class="setting-hint" style="margin-left: 18px;" />
                     </ui:VisualElement>
@@ -81,12 +81,12 @@
                     </ui:VisualElement>
                     <ui:Label name="confirm-hint" class="setting-hint" style="margin-left: 0; margin-bottom: 6px;" />
 
-                    <ui:VisualElement name="perm-pending-section" style="flex-direction: column; display: none; margin-top: 4px;">
+                    <ui:VisualElement name="perm-pending-section" class="is-hidden" style="flex-direction: column; margin-top: 4px;">
                         <ui:Label name="perm-pending-title" class="bold-label" style="font-size: 11px; margin-bottom: 4px;" />
                         <ui:VisualElement name="perm-pending-list" style="flex-direction: column;" />
                     </ui:VisualElement>
 
-                    <ui:VisualElement name="perm-allowlist-section" style="flex-direction: column; display: none; margin-top: 6px;">
+                    <ui:VisualElement name="perm-allowlist-section" class="is-hidden" style="flex-direction: column; margin-top: 6px;">
                         <ui:Foldout name="perm-allowlist-foldout" value="false" class="perm-allowlist-foldout">
                             <ui:VisualElement style="flex-direction: row; align-items: center; margin-bottom: 4px;">
                                 <ui:VisualElement style="flex-grow: 1;" />
@@ -166,6 +166,12 @@
                         </ui:VisualElement>
                     </ui:VisualElement>
                     <ui:Label name="update-notifications-hint" class="setting-hint" />
+
+                    <ui:VisualElement name="update-check-row" class="setting-row">
+                        <ui:Label name="update-check-label" class="setting-row__label" />
+                        <ui:Button name="update-check-btn" class="mini-btn" />
+                    </ui:VisualElement>
+                    <ui:Label name="update-check-status" class="setting-hint" />
 
                     <ui:VisualElement name="telemetry-row" class="setting-row">
                         <ui:Label name="telemetry-label" class="setting-row__label" />

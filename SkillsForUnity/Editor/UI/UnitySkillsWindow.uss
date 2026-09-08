@@ -125,6 +125,87 @@
     flex-grow: 1;
 }
 
+/* Single shared show/hide mechanism (see UiVisibility.SetVisible). Toggling this class is the
+ * only sanctioned way to hide an element with plain Flex/None semantics; nothing should write
+ * element.style.display directly for a site that uses it. */
+.is-hidden {
+    display: none;
+}
+
+/* Static, never-varying layout for rows/cards built programmatically in C# (AllowlistPickerWindow,
+ * AIConfigTabController, HistoryTabController, SettingsDrawerController). Kept generic so callers
+ * needing a different constant simply add a modifier class instead of writing style.X in C#.
+ * A flexGrow:1 label/field in one of these rows reuses the existing .flex-grow helper above. */
+.built-row {
+    flex-direction: row;
+    align-items: center;
+}
+
+.built-card {
+    flex-direction: column;
+    margin-bottom: 4px;
+}
+
+/* One-off spacing modifiers for a couple of specific programmatically-built rows -
+ * kept separate from .built-row so a differing constant never has to fork the base rule. */
+.setting-row--gap-top {
+    margin-top: 4px;
+}
+
+.mini-btn--inline-gap {
+    margin-left: 4px;
+}
+
+.mini-btn--right-gap {
+    margin-right: 4px;
+}
+
+/* ShortcutsSettingsController.BuildCaptureRow - the outer capture container and the
+ * .setting-row nested inside it need constants .built-card / .setting-row don't already provide. */
+.shortcut-capture-row {
+    flex-direction: column;
+    margin-bottom: 6px;
+}
+
+.setting-row--flush-bottom {
+    margin-bottom: 0;
+}
+
+/* SettingsDrawerController.BuildPendingRow / BuildAllowlistRow - the two programmatically-built
+ * permission-panel row shapes share this title styling. */
+.card-row__title {
+    flex-grow: 1;
+    font-size: 11px;
+}
+
+.pending-row__expires {
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+.pending-row__note {
+    margin-bottom: 2px;
+}
+
+.pending-row__args {
+    margin-top: 2px;
+    margin-bottom: 4px;
+}
+
+.pending-row__actions {
+    flex-direction: row;
+    justify-content: flex-end;
+    margin-top: 2px;
+}
+
+.allowlist-row {
+    margin-bottom: 2px;
+}
+
+.allowlist-foldout {
+    margin-top: 2px;
+}
+
 /* ===================================================================
  * 1. TOPBAR — persistent server status & quick actions
  * =================================================================== */
@@ -135,6 +216,103 @@
     border-bottom-color: var(--color-border-hard);
     padding: 0 8px;
     min-width: 0;
+    position: relative;
+    /* Space the narrow-layout perm badge must leave clear on its right so it never
+     * overlaps the absolutely positioned settings button (see .topbar--narrow >
+     * .topbar-settings-btn below: right 8px + width 28px = 36px, +4px buffer). */
+    --topbar-settings-reserve: 40px;
+}
+
+.topbar-actions {
+    flex-shrink: 0;
+    margin-left: auto;
+    flex-grow: 0;
+    flex-direction: row;
+    align-items: center;
+}
+
+.topbar-settings-btn {
+    width: 28px;
+    min-width: 28px;
+    max-width: 28px;
+    flex-shrink: 0;
+    margin-left: 4px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+}
+
+.topbar > .topbar-settings-btn {
+    margin-left: 4px;
+}
+
+/* Draw the settings gear from UI Toolkit geometry. Unity 2022's editor icon
+ * texture is a low-resolution bitmap and becomes blurry when scaled. */
+.settings-icon {
+    width: 18px;
+    height: 18px;
+    position: relative;
+    flex-shrink: 0;
+    align-self: center;
+}
+
+.settings-icon__ring {
+    position: absolute;
+    left: 3px;
+    top: 3px;
+    width: 12px;
+    height: 12px;
+    border-radius: 6px;
+    border-width: 3px;
+    border-color: var(--color-text);
+    background-color: transparent;
+}
+
+.settings-icon__hub {
+    position: absolute;
+    left: 7px;
+    top: 7px;
+    width: 4px;
+    height: 4px;
+    border-radius: 2px;
+    border-width: 2px;
+    border-color: var(--color-text);
+    background-color: transparent;
+}
+
+.settings-icon__tooth {
+    position: absolute;
+    width: 4px;
+    height: 6px;
+    background-color: var(--color-text);
+    border-radius: 1px;
+}
+
+.settings-icon__tooth--top { left: 8px; top: 0; }
+.settings-icon__tooth--top-right { left: 12px; top: 1px; rotate: 45deg; }
+.settings-icon__tooth--right { left: 15px; top: 6px; rotate: 90deg; }
+.settings-icon__tooth--bottom-right { left: 12px; top: 11px; rotate: 135deg; }
+.settings-icon__tooth--bottom { left: 8px; top: 12px; rotate: 180deg; }
+.settings-icon__tooth--bottom-left { left: 3px; top: 11px; rotate: 225deg; }
+.settings-icon__tooth--left { left: 0; top: 6px; rotate: 270deg; }
+.settings-icon__tooth--top-left { left: 3px; top: 1px; rotate: 315deg; }
+
+/* Once the URL pill is removed, take the fixed control group out of the
+ * shrinking row and anchor it to the topbar's right edge. */
+.topbar--narrow .topbar-actions {
+    flex-grow: 1;
+    min-width: 0;
+    padding-left: 8px;
+    padding-right: 4px;
+    justify-content: flex-start;
+    background-color: transparent;
+}
+
+.topbar--narrow > .topbar-settings-btn {
+    position: absolute;
+    right: 8px;
+    top: 6px;
+    margin-left: 0;
 }
 
 .status-dot {
@@ -221,6 +399,7 @@
     width: 32px;
     height: 18px;
     margin: 0 6px 0 4px;
+    align-items: center;
     background-color: var(--color-button-bg);
     border-width: 1px;
     border-color: var(--color-border-hard);
@@ -232,7 +411,6 @@
 .server-switch__knob {
     width: 14px;
     height: 14px;
-    margin-top: 1px;
     margin-left: 1px;
     background-color: #f0f0f0;
     border-radius: 7px;
@@ -274,6 +452,7 @@
     flex-shrink: 0;
     width: 32px;
     height: 18px;
+    align-items: center;
     background-color: var(--color-button-bg);
     border-width: 1px;
     border-color: var(--color-border-hard);
@@ -292,7 +471,6 @@
 .setting-row > .unity-toggle .unity-toggle__checkmark {
     width: 14px;
     height: 14px;
-    margin-top: 1px;
     margin-left: 1px;
     background-color: #f0f0f0;
     border-radius: 7px;
@@ -336,11 +514,13 @@
 .server-status-text {
     flex-shrink: 0;
     min-width: 46px;
+    height: 18px;
     margin-right: 4px;
     font-size: 10px;
     color: var(--color-text-secondary);
     -unity-text-align: middle-left;
     white-space: nowrap;
+    overflow: hidden;
 }
 
 .server-status-text.on  { color: var(--color-success); }
@@ -412,10 +592,6 @@
     margin-left: 0;
 }
 
-.topbar--compact .status-dot {
-    display: none;
-}
-
 .topbar--compact .server-switch {
     margin: 0 4px 0 2px;
 }
@@ -437,9 +613,15 @@
     max-width: none;
 }
 
-.topbar--narrow .url-pill,
-.topbar--narrow .status-dot {
+.topbar--narrow .url-pill {
     display: none;
+}
+
+.topbar--narrow #perm-mode-badge {
+    margin-left: auto;
+    /* Must clear the absolutely positioned .topbar-settings-btn (see .topbar's
+     * --topbar-settings-reserve declaration above). */
+    margin-right: var(--topbar-settings-reserve);
 }
 
 .topbar--narrow .server-switch {
@@ -1340,6 +1522,13 @@
     overflow: hidden;
 }
 
+/* AnalyticsTabController's "no rows" placeholder - overrides just the top/left margin
+ * longhands, so margin-right/bottom still fall through from .setting-hint above. */
+.setting-hint--table-empty {
+    margin-top: 2px;
+    margin-left: 4px;
+}
+
 .narrow-warning-banner {
     background-color: rgba(234, 179, 8, 0.16);
     border-bottom-width: 1px;
@@ -1358,6 +1547,38 @@
     white-space: normal;
     flex-grow: 1;
     flex-shrink: 1;
+}
+
+/* Font-independent light-bulb icon for Unity 2022 and Unity 6. */
+.narrow-warning-icon {
+    width: 16px;
+    height: 18px;
+    flex-shrink: 0;
+    margin-right: 6px;
+    position: relative;
+}
+
+.narrow-warning-icon__bulb {
+    position: absolute;
+    left: 4px;
+    top: 1px;
+    width: 9px;
+    height: 10px;
+    border-radius: 50%;
+    background-color: #f5e7b2;
+}
+
+.narrow-warning-icon__base {
+    position: absolute;
+    left: 6px;
+    top: 11px;
+    width: 5px;
+    height: 4px;
+    border-left-width: 1px;
+    border-right-width: 1px;
+    border-bottom-width: 1px;
+    border-color: #f5e7b2;
+    background-color: transparent;
 }
 
 /* ---------- Permissions / token level ---------- */
@@ -1590,6 +1811,15 @@
     white-space: normal;
 }
 
+/* Task-history-specific one-off modifiers for .muted-label (see HistoryTabController). */
+.muted-label--indent {
+    margin-left: 6px;
+}
+
+.muted-label--small {
+    font-size: 10px;
+}
+
 .accent-title { color: var(--color-accent); }
 .muted-title  { color: var(--color-muted); }
 
@@ -1673,6 +1903,11 @@
 
 .unity-theme-light .version-update-banner__message {
     color: rgb(25, 64, 97);
+}
+
+.version-update-banner__now {
+    flex-shrink: 0;
+    margin-right: 4px;
 }
 
 .version-update-banner__view {
@@ -1825,6 +2060,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
     padding-right: 6px;
+    /* Always 0 - only flex-grow varies per cell (column weight), which stays inline in
+     * AnalyticsTabController since it's computed from data at build time. */
+    flex-basis: 0;
 }
 
 .analytics-cell--num {

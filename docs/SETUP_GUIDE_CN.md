@@ -28,7 +28,7 @@ Window → Package Manager → + → Add package from git URL
 |------|-----|
 | **稳定版** (main) | `https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity` |
 | **开发测试版** (beta) | `https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#beta` |
-| **指定版本** | `https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#v1.6.8` |
+| **指定版本** | `https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#v2.8.1` |
 
 也可以从 [Releases 页面](https://github.com/Besty0728/Unity-Skills/releases) 下载特定版本。
 
@@ -70,7 +70,7 @@ Window → UnitySkills → AI Config 标签页
 
 ```
 SKILL.md                    # 主 Skill 定义（AI 读取）
-skills/                     # 按模块分类的 Skill 文档（49 功能 + 20 顾问）
+skills/                     # 按模块分类的 Skill 文档（54 个 REST 模块文档 + 28 个顾问 = 82；共 805 个 Skills）
 scripts/unity_skills.py     # Python 客户端库
 scripts/agent_config.json   # Agent 配置
 references/                 # Unity 开发参考文档

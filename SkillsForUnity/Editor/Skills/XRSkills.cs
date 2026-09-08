@@ -451,7 +451,7 @@ namespace UnitySkills
             Category = SkillCategory.XR, Operation = SkillOperation.Create | SkillOperation.Modify,
             Tags = new[] { "xr", "ray", "interactor", "controller" },
             Outputs = new[] { "name", "instanceId", "interactorType", "maxRaycastDistance", "hasLineVisual" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object XRAddRayInteractor(
             string name = null, int instanceId = 0, string path = null,
             float maxDistance = 30f,
@@ -514,7 +514,7 @@ namespace UnitySkills
             Category = SkillCategory.XR, Operation = SkillOperation.Create | SkillOperation.Modify,
             Tags = new[] { "xr", "direct", "interactor", "grab" },
             Outputs = new[] { "name", "instanceId", "interactorType", "triggerRadius" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object XRAddDirectInteractor(
             string name = null, int instanceId = 0, string path = null,
             float radius = 0.1f)
@@ -559,7 +559,7 @@ namespace UnitySkills
             Category = SkillCategory.XR, Operation = SkillOperation.Create | SkillOperation.Modify,
             Tags = new[] { "xr", "socket", "interactor", "snap" },
             Outputs = new[] { "name", "instanceId", "interactorType", "showHoverMesh", "recycleDelay" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object XRAddSocketInteractor(
             string name = null, int instanceId = 0, string path = null,
             bool showHoverMesh = true,
@@ -658,7 +658,7 @@ namespace UnitySkills
             Category = SkillCategory.XR, Operation = SkillOperation.Create | SkillOperation.Modify,
             Tags = new[] { "xr", "grab", "interactable", "physics" },
             Outputs = new[] { "name", "instanceId", "movementType", "throwOnDetach" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object XRAddGrabInteractable(
             string name = null, int instanceId = 0, string path = null,
             string movementType = "VelocityTracking",
@@ -744,7 +744,7 @@ namespace UnitySkills
             Category = SkillCategory.XR, Operation = SkillOperation.Create | SkillOperation.Modify,
             Tags = new[] { "xr", "simple", "interactable", "hover" },
             Outputs = new[] { "name", "instanceId", "interactableType" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object XRAddSimpleInteractable(
             string name = null, int instanceId = 0, string path = null)
         {
@@ -784,7 +784,7 @@ namespace UnitySkills
             Category = SkillCategory.XR, Operation = SkillOperation.Modify,
             Tags = new[] { "xr", "interactable", "configure", "properties" },
             Outputs = new[] { "name", "instanceId", "interactableType", "changedProperties" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object XRConfigureInteractable(
             string name = null, int instanceId = 0, string path = null,
             string selectMode = null,
@@ -921,7 +921,7 @@ namespace UnitySkills
         [UnitySkill("xr_setup_teleportation", "Set up TeleportationProvider on XR Origin for teleport locomotion", TracksWorkflow = true,
             Category = SkillCategory.XR, Operation = SkillOperation.Create,
             Tags = new[] { "xr", "teleportation", "locomotion", "provider" },
-            Outputs = new[] { "name", "instanceId", "providerType" })]
+            Outputs = new[] { "name", "instanceId", "providerType" }, MutatesScene = true)]
         public static object XRSetupTeleportation(
             string name = null, int instanceId = 0, string path = null)
         {
@@ -969,7 +969,7 @@ namespace UnitySkills
             Category = SkillCategory.XR, Operation = SkillOperation.Create | SkillOperation.Modify,
             Tags = new[] { "xr", "teleport", "area", "destination" },
             Outputs = new[] { "name", "instanceId", "teleportType", "matchOrientation" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object XRAddTeleportArea(
             string name = null, int instanceId = 0, string path = null,
             string matchOrientation = "WorldSpaceUp")
@@ -1019,7 +1019,7 @@ namespace UnitySkills
         [UnitySkill("xr_add_teleport_anchor", "Create a teleport anchor at a specific position and rotation", TracksWorkflow = true,
             Category = SkillCategory.XR, Operation = SkillOperation.Create,
             Tags = new[] { "xr", "teleport", "anchor", "waypoint" },
-            Outputs = new[] { "name", "instanceId", "teleportType", "position", "rotationY" })]
+            Outputs = new[] { "name", "instanceId", "teleportType", "position", "rotationY" }, MutatesScene = true)]
         public static object XRAddTeleportAnchor(
             string name = "Teleport Anchor",
             float x = 0, float y = 0, float z = 0,
@@ -1089,7 +1089,7 @@ namespace UnitySkills
         [UnitySkill("xr_setup_continuous_move", "Add continuous movement provider to XR Origin (joystick-based locomotion)", TracksWorkflow = true,
             Category = SkillCategory.XR, Operation = SkillOperation.Create,
             Tags = new[] { "xr", "continuous", "move", "locomotion" },
-            Outputs = new[] { "name", "instanceId", "providerType", "moveSpeed", "enableStrafe", "enableFly" })]
+            Outputs = new[] { "name", "instanceId", "providerType", "moveSpeed", "enableStrafe", "enableFly" }, MutatesScene = true)]
         public static object XRSetupContinuousMove(
             string name = null, int instanceId = 0, string path = null,
             float moveSpeed = 2f,
@@ -1149,7 +1149,7 @@ namespace UnitySkills
         [UnitySkill("xr_setup_turn_provider", "Add snap or continuous turn provider to XR Origin", TracksWorkflow = true,
             Category = SkillCategory.XR, Operation = SkillOperation.Create,
             Tags = new[] { "xr", "turn", "snap", "locomotion" },
-            Outputs = new[] { "name", "instanceId", "providerType", "turnType", "turnAmount", "turnSpeed" })]
+            Outputs = new[] { "name", "instanceId", "providerType", "turnType", "turnAmount", "turnSpeed" }, MutatesScene = true)]
         public static object XRSetupTurnProvider(
             string name = null, int instanceId = 0, string path = null,
             string turnType = "Snap",
@@ -1223,7 +1223,7 @@ namespace UnitySkills
             Category = SkillCategory.XR, Operation = SkillOperation.Modify,
             Tags = new[] { "xr", "ui", "canvas", "raycaster" },
             Outputs = new[] { "name", "instanceId", "removedStandardRaycaster", "addedTrackedDeviceRaycaster", "renderMode" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object XRSetupUICanvas(
             string name = null, int instanceId = 0, string path = null)
         {
@@ -1282,7 +1282,7 @@ namespace UnitySkills
             Category = SkillCategory.XR, Operation = SkillOperation.Modify,
             Tags = new[] { "xr", "haptics", "feedback", "vibration" },
             Outputs = new[] { "name", "instanceId", "interactorType", "changedProperties" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object XRConfigureHaptics(
             string name = null, int instanceId = 0, string path = null,
             float selectIntensity = 0.5f,
@@ -1344,7 +1344,7 @@ namespace UnitySkills
             Category = SkillCategory.XR, Operation = SkillOperation.Modify,
             Tags = new[] { "xr", "interaction", "event", "callback" },
             Outputs = new[] { "name", "instanceId", "eventType", "targetObject", "targetMethod" },
-            RequiresInput = new[] { "gameObject", "targetName", "targetMethod" })]
+            RequiresInput = new[] { "gameObject", "targetName", "targetMethod" }, MutatesScene = true)]
         public static object XRAddInteractionEvent(
             string name = null, int instanceId = 0, string path = null,
             string eventType = "selectEntered",
@@ -1436,7 +1436,7 @@ namespace UnitySkills
             Category = SkillCategory.XR, Operation = SkillOperation.Modify,
             Tags = new[] { "xr", "interaction", "layers", "mask" },
             Outputs = new[] { "name", "instanceId", "componentType", "layers" },
-            RequiresInput = new[] { "gameObject" })]
+            RequiresInput = new[] { "gameObject" }, MutatesScene = true)]
         public static object XRConfigureInteractionLayers(
             string name = null, int instanceId = 0, string path = null,
             string layers = "Default",

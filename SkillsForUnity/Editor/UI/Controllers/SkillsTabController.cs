@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
@@ -138,10 +138,23 @@ namespace UnitySkills
         private void RebuildList()
         {
             if (_container == null) return;
-            _container.Clear();
 
             var dict = _window.SkillsByCategory;
             if (dict == null) return;
+
+            // A surface-profile switch (or a token-level preset that changes it) can drop the
+            // selected skill's whole category from the catalog while the detail pane / Run
+            // button stay live on a skill that no longer exists. FindSkill checks the full
+            // catalog rather than the search-filtered rows, so an ordinary search-filter
+            // refresh where the skill still exists (just hidden by the current query) never
+            // trips this and leaves the selection alone.
+            if (!string.IsNullOrEmpty(_selectedSkillName) && FindSkill(_selectedSkillName) == null)
+            {
+                _selectedSkillName = null;
+                ShowEmpty();
+            }
+
+            _container.Clear();
 
             int totalShown = 0;
             int categoriesShown = 0;
@@ -182,15 +195,14 @@ namespace UnitySkills
 
             var header = new VisualElement();
             header.AddToClassList("category-header");
-            header.style.flexDirection = FlexDirection.Row;
-            header.style.alignItems = Align.Center;
+            // .category-header already declares flex-direction:row + align-items:center in USS.
 
             var chevron = new Label(collapsed ? "▶" : "▼");
             chevron.AddToClassList("chevron");
             header.Add(chevron);
 
             var nameLabel = new Label(categoryName);
-            nameLabel.style.flexGrow = 1;
+            nameLabel.AddToClassList("flex-grow");
             header.Add(nameLabel);
 
             var countLabel = new Label(skills.Count.ToString());
@@ -198,7 +210,7 @@ namespace UnitySkills
             header.Add(countLabel);
 
             var body = new VisualElement();
-            body.style.display = collapsed ? DisplayStyle.None : DisplayStyle.Flex;
+            body.SetVisible(!collapsed);
 
             foreach (var skill in skills)
             {
@@ -207,8 +219,8 @@ namespace UnitySkills
 
             header.RegisterCallback<ClickEvent>(_ =>
             {
-                bool nowCollapsed = body.style.display == DisplayStyle.Flex;
-                body.style.display = nowCollapsed ? DisplayStyle.None : DisplayStyle.Flex;
+                bool nowCollapsed = body.IsVisible();
+                body.SetVisible(!nowCollapsed);
                 chevron.text = nowCollapsed ? "▶" : "▼";
                 EditorPrefs.SetBool(foldKey, !nowCollapsed);
             });
@@ -294,8 +306,8 @@ namespace UnitySkills
 
         private void PopulateDetail(UnitySkillsWindow.SkillInfo skill, string defaultParams)
         {
-            if (_emptyLabel != null)    _emptyLabel.style.display    = DisplayStyle.None;
-            if (_detailContent != null) _detailContent.style.display = DisplayStyle.Flex;
+            _emptyLabel.SetVisible(false);
+            _detailContent.SetVisible(true);
 
             if (_skillTitle != null) _skillTitle.text = skill.Name;
 
@@ -337,8 +349,8 @@ namespace UnitySkills
 
         private void ShowEmpty()
         {
-            if (_emptyLabel != null)    _emptyLabel.style.display    = DisplayStyle.Flex;
-            if (_detailContent != null) _detailContent.style.display = DisplayStyle.None;
+            _emptyLabel.SetVisible(true);
+            _detailContent.SetVisible(false);
         }
 
         private void Execute(bool dryRun)

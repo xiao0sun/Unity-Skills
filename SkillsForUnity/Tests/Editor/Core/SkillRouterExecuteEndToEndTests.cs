@@ -1,4 +1,4 @@
-using Newtonsoft.Json.Linq;
+﻿using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using System.IO;
 using UnityEditor;
@@ -27,6 +27,7 @@ namespace UnitySkills.Tests.Core
         private string _savedMode;
         private bool _hadPanelApproval;
         private bool _savedPanelApproval;
+        private SurfaceProfileKind _savedProfile;
 
         [OneTimeSetUp]
         public void OneTimeSetUp()
@@ -53,6 +54,12 @@ namespace UnitySkills.Tests.Core
             SkillsModeManager.ResetForTests();
             SkillsModeManager.ExistingInstallOverrideForTests = false;
             SkillsAuditLog.ResetForTests();
+            // The mode-gate assertions below drive gameobject_create, which the Guide / NoSceneAuthoring
+            // profiles withdraw before the mode gate is ever consulted (SURFACE_EXCLUDED instead of
+            // MODE_RESTRICTED). Pin Full so the tests see the gate they're written against; the pref is
+            // global to the machine, so restore it in TearDown.
+            _savedProfile = SkillsSurfaceProfile.Current;
+            SkillsSurfaceProfile.Current = SurfaceProfileKind.Full;
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
             GameObjectFinder.InvalidateCache();
         }
@@ -60,6 +67,7 @@ namespace UnitySkills.Tests.Core
         [TearDown]
         public void TearDown()
         {
+            SkillsSurfaceProfile.Current = _savedProfile;
             for (var i = 0; i < 3; i++)
                 AssetDatabase.DeleteAsset($"{PaginationAssetPrefix}{i}.txt");
             SkillsModeManager.ClearOneShotBypass();
@@ -139,6 +147,60 @@ namespace UnitySkills.Tests.Core
                 Assert.That(response["result"]?["totalCount"]?.Value<int>(), Is.EqualTo(15));
                 Assert.That(response["result"]?["showing"]?.Value<int>(), Is.EqualTo(5));
                 Assert.That(response["result"]?["hint"]?.ToString(), Does.Contain("pageOffset=5"));
+            }
+            finally
+            {
+                SkillRouter.SummaryAutoTruncate = saved;
+                SkillRouter.SummaryPageSize = savedPage;
+            }
+        }
+
+        [Test]
+        public void Execute_SummaryAutoTruncateOn_ArrayOverPageSizeIsTruncated()
+        {
+            // The truncation trigger follows the configurable SummaryPageSize rather than a hardcoded 10:
+            // with PageSize=5, a 7-item array must already be over the threshold.
+            SkillsModeManager.CurrentMode = SkillsOperatingMode.Bypass;
+            bool saved = SkillRouter.SummaryAutoTruncate;
+            int savedPage = SkillRouter.SummaryPageSize;
+            try
+            {
+                SkillRouter.SummaryAutoTruncate = true;
+                SkillRouter.SummaryPageSize = 5;
+
+                var response = JObject.Parse(SkillRouter.Execute("asset_find",
+                    "{\"searchFilter\":\"\",\"limit\":7,\"verbose\":false}"));
+
+                Assert.That(response["status"]?.ToString(), Is.EqualTo("success"));
+                Assert.That(response["result"]?["isTruncated"]?.Value<bool>(), Is.True);
+                Assert.That(response["result"]?["assets"], Has.Count.EqualTo(5));
+                Assert.That(response["result"]?["totalCount"]?.Value<int>(), Is.EqualTo(7));
+            }
+            finally
+            {
+                SkillRouter.SummaryAutoTruncate = saved;
+                SkillRouter.SummaryPageSize = savedPage;
+            }
+        }
+
+        [Test]
+        public void Execute_SummaryAutoTruncateOn_ArrayUnderLargerPageSizePassesThrough()
+        {
+            // With PageSize=20, a 12-item array is below the threshold and must not be truncated at all.
+            SkillsModeManager.CurrentMode = SkillsOperatingMode.Bypass;
+            bool saved = SkillRouter.SummaryAutoTruncate;
+            int savedPage = SkillRouter.SummaryPageSize;
+            try
+            {
+                SkillRouter.SummaryAutoTruncate = true;
+                SkillRouter.SummaryPageSize = 20;
+
+                var response = JObject.Parse(SkillRouter.Execute("asset_find",
+                    "{\"searchFilter\":\"\",\"limit\":12,\"verbose\":false}"));
+
+                Assert.That(response["status"]?.ToString(), Is.EqualTo("success"));
+                Assert.That(response["result"]?["assets"], Has.Count.EqualTo(12));
+                Assert.That(response["result"]?["isTruncated"], Is.Null);
             }
             finally
             {

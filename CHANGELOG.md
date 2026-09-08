@@ -2,6 +2,56 @@
 
 All notable changes to **UnitySkills** will be documented in this file.
 
+## [2.8.2] - 2026-09-08
+
+> **面板一键更新 + DontDestroyOnLoad 层级全链路可见** —— 本版两大升级：(1) 设置抽屉新增"检查更新"按钮，两步交互（先查再更），确认后在编辑器内直接完成包更新，无需打开 Package Manager；(2) `DontDestroyOnLoad` 伪场景（Play 模式）的对象此前对所有层级/查找类技能不可见，现统一接入查找器枚举，层级树、文本树、场景上下文导出与组件读写全链路覆盖；(3) 修复设置开关白色圆点垂直偏下的样式问题。
+
+### Added
+
+- **设置页"检查更新"按钮（两步交互）** — 设置抽屉 Runtime 区新增"包更新"行：点击后强制检查更新（跳过 24 小时成功缓存、失败冷却与"忽略此版本"标记）；发现新版本时按钮变为"更新到 vX.Y.Z"，再点一次即通过 `UnityEditor.PackageManager.Client.Add` 切到对应 git 引用并自动重编译生效。更新目标跟随安装来源分支：读工程 `Packages/manifest.json` 的原始依赖 URL 判定——稳定版安装更新到 GitHub 最新稳定 Release 的 tag，`#beta` 安装通过 `commits/beta` 的最新 SHA 与安装 revision 比对后更新到 beta 分支最新；本地（`file:` / embedded）安装提示不支持自动更新。三语文案齐备且未引入字库外汉字。更新横幅同步新增"直接更新"按钮，一键更到横幅所示稳定版，无需进入二级页面；本地安装下该按钮不显示。
+- **DontDestroyOnLoad 伪场景全链路可见（Play 模式）** — `GameObjectFinder` 新增 `GetDontDestroyOnLoadRoots()`（`SceneManager.sceneCount`/`GetSceneAt` 从不列出该伪场景，改为 `FindHelper.FindAll` 按场景名过滤无父对象）并接入统一根枚举，按 name/path/tag/component 的查找、建议列表与组件列表/属性读写对 DDOL 对象全部生效；`scene_get_hierarchy` 追加 DDOL 根节点子树且层级节点新增 `scene` 字段标记归属场景；`scene_get_loaded` 追加 `{name:"DontDestroyOnLoad", isPseudoScene:true}` 伪场景条目；`hierarchy_describe` 输出独立 DDOL 区段；`scene_context` / `scene_export_report` 的遍历与 `scene_summarize` 的根对象计数口径对齐（此前计数含 DDOL 但遍历漏掉它们）。`scene_unload` / `scene_set_active` 有意不涉及（该伪场景不可卸载/激活）。
+
+### Changed
+
+- **版本号更新** — `SkillsLogger.Version` / `package.json` / Python helper `__version__` / `agent.md` 同步提升到 `2.8.2`。
+
+### Fixed
+
+- **设置开关白色圆点垂直偏下** — `.server-switch` 与通用蓝色 toggle 组的 knob/checkmark 由手工 `margin-top: 1px` 对齐改为轨道 `align-items: center` flex 居中，消除 18px 轨道内高（16px 可用）手工 margin 取整造成的视觉偏移。
+
+## [2.8.1] - 2026-09-06
+
+> **元数据真实性 + Token Level 修正 + 客户端与面板小修** —— 本版为补丁级维护：(1) 对全部技能做了一次"实现写了什么、元数据就声明什么"的系统性核对——194 个记录 Undo / Workflow 快照或写盘的技能补齐 `MutatesScene` / `MutatesAssets`，并新增守卫测试防止再漂移；(2) 修复 2.8.0 引入的 Token Level 截断阈值未随档位变化的缺陷，并把当前 Token Level 设置暴露到 `/health`；(3) Python 客户端三处真实 bug（Unity 6 小版本匹配、job_logs 走重路径、`find_skills` 够不到文档默认起点）与两个新封装；(4) `RequiresInput` 声明与真实参数对齐——98 个技能的空 body 从 dryRun 报 `valid:true` 改为前置拒绝，另 32 个批量技能的令牌改为真实参数 `items`；(5) 面板切档清选中、昨日 UI 提交残留清理、内联样式收敛到 USS class，以及 CI 本地化检查的假绿盲区。
+
+### Added
+
+- **`/health` 暴露 Token Level 设置** — 新增 `summaryAutoTruncate`、`summaryPageSize`、`tokenLevel`（`minimal` / `standard` / `full` / `maximum` / `custom`）三个字段，紧邻 `surfaceProfile`；此前调用方只能从响应里的 `isTruncated` 事后反推。设置变化即时刷新快照。`references/protocol-operating-mode.md` 新增 Token Level 一节，给出四档预设与 (SurfaceProfile, SummaryAutoTruncate, SummaryPageSize) 的精确映射及分页方式。
+- **Python 客户端新封装** — `get_meta(force_refresh=False)`（`GET /skills/meta`，会话内实例级缓存）与 `execute_batch(steps, dry_run, continue_on_error, diff, mode)`（`POST /skills/batch`，body / query 键严格按服务端接受集合发送，不会触发 `UNKNOWN_PARAM`）；`find_skills` 新增 `include_schema` / `wire` 参数，可直达根 SKILL.md 的默认起点 `recommend?intent=…&includeSchema=true`。CLI 新增 `--meta`、`--batch FILE`、`--batch-mode`、`--diff`。
+- **守卫测试** — `SkillsRecordingUndoOrSnapshots_DeclareMutatesSceneOrAssets`（源码扫描：调用 Undo / WorkflowManager / AssetDatabase 写入的技能必须声明 `MutatesScene` 或 `MutatesAssets`，7 个有据豁免内联注明）、`RequiresInput_SingleTokensNameARealParameterOrGroupKey`（每个单词令牌必须是真实参数名或已登记的组键，仅 `selection` / `selectedGameObjects` 两个 Editor 选中态令牌带注释豁免）、截断阈值两条端到端用例；`SkillsNeedingAnArgument_DeclareItAndRefuseAnEmptyBodyBeforeExecuting` 用例扩充。`EditorUndoRedoTests` / `NewCapabilitiesTests` / `SkillRouterExecuteEndToEndTests` 三个测试类在 SetUp 钉 Full 档并于 TearDown 还原——此前在 guide / noSceneAuthoring 档的机器上跑会因 `gameobject_create` 被档位收回而误红。
+
+### Changed
+
+- **194 个技能补齐 `MutatesScene` / `MutatesAssets` 声明（行为变更）** — 对 838 条 `[UnitySkill]` 声明做字符串/注释感知的源码扫描，201 个候选逐一读实现后修正 194 个（28 个文件）：GameObject / Camera / Cinemachine / Component / Light / NavMesh / ProBuilder / Sample / Smart / UI / XR 等场景对象操作标 `MutatesScene`；Terrain（TerrainData 为磁盘资产）/ Timeline / Animator / Audio / Physics / Prefab / ScriptableObject / Shader / Graphics / Project / Debug 等写 `.asset` / ProjectSettings 的操作标 `MutatesAssets`；`terrain_create`、`timeline_create`、`timeline_add_animation_track` 两者皆标。全部 `_batch` 变体与单体同步。影响：`?wire=v2` 的 `flags` 不再漏报；noSceneAuthoring 档新增隐藏 `validate_fix_missing_scripts`（其余受影响分类原本已整体隐藏）。7 个豁免：`console_set_pause_on_error` / `_collapse` / `_clear_on_play`（只写 Console 窗口标志位）、`qframework_set_reskit_build_options` / `_set_editor_locale`（QFramework 自家 EditorPrefs）、`workflow_snapshot_object` / `_created`（只记录不修改）。
+- **98 个技能改为前置拒绝空 body（行为变更）** — 24 个 `RequiresInput` 语义定位令牌（`vcam` / `terrain` / `director` / `prefabInstance` / `animatorController` / `audioAsset` 等）此前既未登记为组键、字面量也对不上真实参数名，dryRun 空 body 一律回 `valid:true`；另有 66 个技能需要参数却完全未声明 `RequiresInput`（Cinemachine create_* ×7、Shader ×7、UIToolkit ×7、YooAsset ×16、Netcode ×5、Test ×3 等）。现统一在 dryRun / 执行前返回 `MISSING_PARAM` / `SEMANTIC_INVALID`：`vcam` / `prefabInstance` / `terrain` / `director` 复用既有 `gameObject` 组，`camera` / `source` / `sequencer` / `splineContainer` 登记为新组，Cinemachine 双定位符技能改为逐技能复合键（避免误拒只传 `vcamName` 的合法调用），`animatorController→controllerPath`、`audioAsset→assetPath`、`physicMaterial→materialPath`、`scenePath→sceneName`、`track→trackName` 等改为真实参数名；`selection` / `selectedGameObjects`（Editor 当前选中对象，非请求参数）改为专用语义检查。`cinemachine_impulse_generate` 的可空参数补默认值以停止 schema 误报。文档：Timeline 模块 `trackName` / `bindingObjectName` 的 Required 列改为 Yes。
+- **32 个批量技能的 `RequiresInput` 改为真实参数 `items`** — `component_add_batch` 等此前沿用单体的 `gameObject` 令牌，而批量方法唯一参数是 `items`；改后 schema `required` 与 dryRun 对齐，`BatchExecutor` 既有的空 `items` 拒绝行为不变，只传 `items` 的合法调用不受影响。
+- **URP 家族无 URP stub 的 `MutatesScene` / `MutatesAssets` 与真实现对齐** — Decal ×5、PostProcess ×8、URP ×4、Volume ×7 的 stub 声明补齐同名真实现已有的标志，无 URP 工程（含干净 CI）下元数据与有 URP 时逐字一致；否则新守卫测试在 CI 清洁工程必红。
+- **面板：切换 Surface Profile / Token Level 后清除失效选中** — 被新档位隐藏的技能不再残留在详情栏并显示 Run 按钮（服务端本就会拒绝，此处消除误导）；普通搜索过滤不受影响。
+- **面板：C# 内联样式收敛到 USS class** — 新增 `.is-hidden` 工具类与 `UiVisibility.SetVisible/IsVisible` 扩展，约 34 处 `style.display` / 固定布局常量改为 class 切换或共享 class（`.built-row`、`.built-card`、`.pending-row__*`、`.allowlist-row` 等），约 9 处与 USS 重复的死写入直接删除；UXML 中内联 `display:none` 统一迁为 `is-hidden`，避免内联样式压过 class。保留 13 处真正运行时计算的写入（字体资产、Tab 宽度、数据驱动 flexGrow、运行时贴图）与 4 处两阶段滑入动画。
+- **面板：昨日 topbar 提交残留清理** — 删除已成空操作的 `ApplySettingsIcon`（齿轮已是 UXML 矢量几何）；`narrow_screen_tip` 的 💡 运行时剥离死代码移除；窄屏下权限徽章为右上角齿轮让位的 `margin-right` 改为 `--topbar-settings-reserve` USS 变量并双向注释。
+- **删除 27 个无引用本地化键（三语同步，1086 → 1059）** — 旧 CLI 抽屉 / 服务器状态 / 技能测试 UI 的遗物（`execute_skill`、`stop_server`、`tab_permissions`、`skills_tag_async` 等）；`start_server`、`surface_profile`、`surface_profile_hidden_count_fmt` 因测试直接引用而保留。
+- **`PlayCaptureService` 参数校验先于编辑器忙检查** — `durationSeconds` / `maxErrors` 越界现在在 Play Mode / 编译中 / 已有任务检查之前就返回，不再因编辑器繁忙而延迟暴露请求本身的错误。
+- **版本号更新** — `SkillsLogger.Version` / `package.json` / Python helper `__version__` / `agent.md` 同步提升到 `2.8.1`。
+
+### Fixed
+
+- **Token Level 自动截断阈值未随档位变化** — `SkillRouter` 的触发条件硬编码"超过 10 项"，而 2.8.0 已把页大小做成 Minimal=5 / Standard=10 / Full=20：Minimal 档下 6–10 项数组原样全返（最省 token 的档位恰好失效），Full 档下 11–20 项被包上 `isTruncated` 元数据却一项未少。现阈值与 `SummaryPageSize` 同源。
+- **Python `_version_matches` 丢弃 Unity 6 小版本** — `set_unity_version("6.2")` 此前等同于"任意 6000.x"，多实例场景会静默路由到 6000.1 项目；现仅裸 `"6"` 通配，`"6.N"` 精确到 `6000.N.` 前缀。
+- **Python `get_job_logs` 走主线程重路径** — 改为服务端既有的轻量 `GET /jobs/{id}/logs?limit=N`，与 `get_job` / `get_job_progress` 一致；`skills/batch/SKILL.md` 的 `job_logs` 节补上轻路由交叉引用。
+- **7 个导入设置技能的 `RequiresInput` 幽灵令牌** — `texture_/model_/audio_{set,get}_import_settings` 声明的 `textureAsset` / `modelAsset` / `audioAsset` 既非真实参数也非组键，空 body 的 dryRun 报 `valid:true`；统一改为真实参数 `assetPath`。
+- **`check_locales.py` 假绿盲区** — 旧正则只匹配 `Get("k")` 单参字面量，三元表达式 `Get(c ? "a" : "b")`、格式化重载 `Get("k", args)` 与 `TryGet` / `Has` 全部漏检，键被改名后 CI 依旧通过；改为括号平衡的参数提取，现识别 352 处引用并在 CI 日志打印覆盖数。
+- **`Localization.cs` 直调 `Debug.LogError`** — 改走 `SkillsLogger.LogError`，符合日志硬约束。
+- **`docs/SETUP_GUIDE(_CN).md` 过期** — 指定版本安装示例从 `#v1.6.8` 更新到当前版本；模块计数英文 "48 + 23"、中文 "49 + 20" 均改为 54 REST + 28 advisory = 82、805 技能。
+
 ## [2.8.0] - 2026-08-30
 
 > **JSON 本地化解耦 + 多 Tab 窗口与 Tab 可见性配置 + Token 级别过滤** —— 本版三大核心升级：(1) 将原 `Localization.cs` 内庞大的硬编码多语言字典解耦迁移为独立的外部 JSON 资源体系（`Locales/en.json`、`zh-CN.json`、`ru.json`，1086 词条 100% 对齐），显著缩减代码体积与编译内存开销，并新增 CI 本地化检查工具；(2) UnitySkills 窗口全面升级多 Tab 架构，新增 Tab 可见性配置（`TabVisibilitySettings`）与 Unity CLI Tab 集成；(3) 新增 Skills Token Level（Compact / Normal / Verbose）档位与 UI 滑块组件，支持快速调节与过滤技能载荷，优化 AI 上下文消耗；(4) package.json 显式声明 `com.unity.test-framework` 依赖，修复无头 CI 环境测试程序集编译。

@@ -148,8 +148,7 @@ namespace UnitySkills
 
             var head = new VisualElement();
             head.AddToClassList("agent-card-head");
-            head.style.flexDirection = FlexDirection.Row;
-            head.style.alignItems = Align.Center;
+            // .agent-card-head already declares flex-direction:row + align-items:center in USS.
 
             var icon = new VisualElement();
             icon.AddToClassList("agent-icon");
@@ -178,7 +177,7 @@ namespace UnitySkills
 
             var actions = new VisualElement();
             actions.AddToClassList("agent-card-actions");
-            actions.style.flexDirection = FlexDirection.Row;
+            // .agent-card-actions already declares flex-direction:row in USS.
 
             // Project button — install or update depending on state
             var projBtn = new Button(() => OnInstallClick(cfg, isGlobal: false, isUpdate: projInstalled));
@@ -266,8 +265,7 @@ namespace UnitySkills
 
             var head = new VisualElement();
             head.AddToClassList("agent-card-head");
-            head.style.flexDirection = FlexDirection.Row;
-            head.style.alignItems = Align.Center;
+            // .agent-card-head already declares flex-direction:row + align-items:center in USS.
 
             var icon = new Label("+");
             icon.AddToClassList("agent-icon");
@@ -282,13 +280,12 @@ namespace UnitySkills
 
             var pathRow = new VisualElement();
             pathRow.AddToClassList("setting-row");
-            pathRow.style.flexDirection = FlexDirection.Row;
-            pathRow.style.alignItems = Align.Center;
-            pathRow.style.marginTop = 4;
+            pathRow.AddToClassList("setting-row--gap-top");
+            // .setting-row already declares flex-direction:row + align-items:center in USS.
 
             var pathField = new TextField();
             pathField.value = _customPath;
-            pathField.style.flexGrow = 1;
+            pathField.AddToClassList("flex-grow");
             pathField.tooltip = SkillsLocalization.Get("agent_custom_path_placeholder");
             pathField.RegisterValueChangedCallback(e => _customPath = e.newValue ?? "");
             pathRow.Add(pathField);
@@ -304,19 +301,18 @@ namespace UnitySkills
                 }
             });
             browseBtn.AddToClassList("mini-btn");
+            browseBtn.AddToClassList("mini-btn--inline-gap");
             browseBtn.text = SkillsLocalization.Get("agent_custom_browse");
-            browseBtn.style.marginLeft = 4;
             pathRow.Add(browseBtn);
             card.Add(pathRow);
 
             var nameRow = new VisualElement();
             nameRow.AddToClassList("setting-row");
-            nameRow.style.flexDirection = FlexDirection.Row;
-            nameRow.style.alignItems = Align.Center;
+            // .setting-row already declares flex-direction:row + align-items:center in USS.
 
             var nameInput = new TextField();
             nameInput.value = _customName;
-            nameInput.style.flexGrow = 1;
+            nameInput.AddToClassList("flex-grow");
             nameInput.tooltip = SkillsLocalization.Get("agent_custom_name_placeholder");
             nameInput.RegisterValueChangedCallback(e => _customName = e.newValue ?? "");
             nameRow.Add(nameInput);
@@ -324,8 +320,8 @@ namespace UnitySkills
             var installBtn = new Button(() => InstallCustom());
             installBtn.AddToClassList("mini-btn");
             installBtn.AddToClassList("install");
+            installBtn.AddToClassList("mini-btn--inline-gap");
             installBtn.text = SkillsLocalization.Get("agent_custom_install");
-            installBtn.style.marginLeft = 4;
             nameRow.Add(installBtn);
             card.Add(nameRow);
 

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
@@ -407,8 +407,9 @@ namespace UnitySkills
 
             bool maximum = level == TokenLevel.Maximum;
             _tokenLevelSummaryPageSize?.SetEnabled(!maximum);
-            if (_tokenLevelSummaryPageSizeDisabledHint != null)
-                _tokenLevelSummaryPageSizeDisabledHint.style.display = maximum ? DisplayStyle.Flex : DisplayStyle.None;
+            // .token-level-disabled-hint defaults to display:none; the --visible modifier
+            // (already declared in UnitySkillsWindow.uss, previously unused) is the show state.
+            _tokenLevelSummaryPageSizeDisabledHint?.EnableInClassList("token-level-disabled-hint--visible", maximum);
 
             _tokenLevelTrack?.MarkDirtyRepaint();
 

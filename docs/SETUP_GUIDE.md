@@ -28,7 +28,7 @@ Choose one of the following:
 |---------|-----|
 | **Stable** (main) | `https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity` |
 | **Beta** (dev) | `https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#beta` |
-| **Pinned version** | `https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#v1.6.8` |
+| **Pinned version** | `https://github.com/Besty0728/Unity-Skills.git?path=/SkillsForUnity#v2.8.1` |
 
 You can also download a specific release from the [Releases page](https://github.com/Besty0728/Unity-Skills/releases).
 
@@ -70,7 +70,7 @@ Select your AI tool and click **Install**. The installer copies the `unity-skill
 
 ```
 SKILL.md                    # Main skill definition (AI reads this)
-skills/                     # Per-module skill docs (48 REST/module + 23 advisory)
+skills/                     # Per-module skill docs (54 REST module docs + 28 advisory = 82; 805 skills)
 scripts/unity_skills.py     # Python client library
 scripts/agent_config.json   # Agent configuration
 references/                 # Unity development references

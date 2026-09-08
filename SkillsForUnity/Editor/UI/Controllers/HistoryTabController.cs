@@ -85,7 +85,7 @@ namespace UnitySkills
                 {
                     name = "result-help-box"
                 };
-                _resultHelpBox.style.display = DisplayStyle.None;
+                _resultHelpBox.SetVisible(false);
                 _cacheWarning.parent.Insert(_cacheWarning.parent.IndexOf(_cacheWarning) + 1, _resultHelpBox);
             }
 
@@ -228,7 +228,7 @@ namespace UnitySkills
             {
                 var empty = new Label(SkillsLocalization.Get(emptyKey));
                 empty.AddToClassList("muted-label");
-                empty.style.marginLeft = 6;
+                empty.AddToClassList("muted-label--indent");
                 container.Add(empty);
                 return;
             }
@@ -245,8 +245,7 @@ namespace UnitySkills
 
             var head = new VisualElement();
             head.AddToClassList("task-card__head");
-            head.style.flexDirection = FlexDirection.Row;
-            head.style.alignItems = Align.Center;
+            // .task-card__head already declares flex-direction:row + align-items:center in USS.
 
             var nameLabel = new Label(task.tag ?? task.id ?? "(unnamed)");
             nameLabel.AddToClassList("task-card__name");
@@ -258,7 +257,7 @@ namespace UnitySkills
                 var changesLabel = new Label(
                     $"  ({changeCount} {SkillsLocalization.Get("history_changes_suffix")})");
                 changesLabel.AddToClassList("muted-label");
-                changesLabel.style.fontSize = 10;
+                changesLabel.AddToClassList("muted-label--small");
                 head.Add(changesLabel);
             }
 
@@ -277,7 +276,7 @@ namespace UnitySkills
 
             var actions = new VisualElement();
             actions.AddToClassList("task-card__actions");
-            actions.style.flexDirection = FlexDirection.Row;
+            // .task-card__actions already declares flex-direction:row in USS.
 
             if (isActive)
             {
@@ -388,7 +387,7 @@ namespace UnitySkills
             if (_resultHelpBox == null) return;
             _resultHelpBox.text = message;
             _resultHelpBox.messageType = isError ? HelpBoxMessageType.Warning : HelpBoxMessageType.Info;
-            _resultHelpBox.style.display = DisplayStyle.Flex;
+            _resultHelpBox.SetVisible(true);
         }
     }
 }

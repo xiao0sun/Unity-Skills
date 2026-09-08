@@ -92,8 +92,8 @@
                       text="Select a skill to view details and run it." />
 
             <!-- Detail content (hidden until selection) -->
-            <ui:VisualElement name="detail-content"
-                              style="flex-grow: 1; flex-direction: column; min-height: 0; display: none;">
+            <ui:VisualElement name="detail-content" class="is-hidden"
+                              style="flex-grow: 1; flex-direction: column; min-height: 0;">
 
                 <ui:VisualElement name="detail-header" class="detail-header"
                                   style="flex-shrink: 0; flex-direction: column;">

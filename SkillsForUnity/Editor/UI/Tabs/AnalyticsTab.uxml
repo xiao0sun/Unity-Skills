@@ -21,10 +21,10 @@
         </ui:VisualElement>
 
         <!-- State banners (only one shown at a time) -->
-        <ui:HelpBox name="analytics-disabled" message-type="Info"
-                    style="margin: 8px 10px 0 10px; display: none;" />
-        <ui:HelpBox name="analytics-empty" message-type="Info"
-                    style="margin: 8px 10px 0 10px; display: none;" />
+        <ui:HelpBox name="analytics-disabled" message-type="Info" class="is-hidden"
+                    style="margin: 8px 10px 0 10px;" />
+        <ui:HelpBox name="analytics-empty" message-type="Info" class="is-hidden"
+                    style="margin: 8px 10px 0 10px;" />
 
         <!-- Scroll body -->
         <ui:ScrollView name="analytics-scroll" class="scroll-view"

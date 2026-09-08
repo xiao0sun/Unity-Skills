@@ -109,6 +109,9 @@ namespace UnitySkills
         private VisualElement _updateNotificationsSwitch;
         private Label         _updateNotificationsLabel;
         private Label         _updateNotificationsHint;
+        private Label         _updateCheckLabel;
+        private Button        _updateCheckBtn;
+        private Label         _updateCheckStatus;
         private VisualElement _telemetrySwitch;
         private Label         _telemetryLabel;
         private Label         _telemetryHint;
@@ -148,9 +151,6 @@ namespace UnitySkills
             InitializeValues();
             RefreshLocalization();
 
-            if (_drawerContainer != null) _drawerContainer.style.display = DisplayStyle.None;
-            if (_drawerMask != null) _drawerMask.style.display = DisplayStyle.None;
-
             // Shortcuts section: a separate controller owns the capture state machine and
             // conflict detection; the drawer only assembles it and forwards lifecycle events.
             _shortcutsController = new ShortcutsSettingsController(_drawerContainer);
@@ -168,6 +168,7 @@ namespace UnitySkills
             SkillsModeManager.OnChanged -= RefreshPermissionsUi;
             TabVisibilitySettings.OnChanged -= SyncTabVisibilityUi;
             SkillTelemetryService.OnChanged -= SyncTabVisibilityUi;
+            VersionCheckService.CheckCompleted -= OnStableCheckCompleted;
         }
 
         private void OnRootDetached(DetachFromPanelEvent _)
@@ -249,6 +250,9 @@ namespace UnitySkills
             _updateNotificationsSwitch = _drawerContainer.Q<VisualElement>("update-notifications-switch");
             _updateNotificationsLabel  = _drawerContainer.Q<Label>("update-notifications-label");
             _updateNotificationsHint   = _drawerContainer.Q<Label>("update-notifications-hint");
+            _updateCheckLabel  = _drawerContainer.Q<Label>("update-check-label");
+            _updateCheckBtn    = _drawerContainer.Q<Button>("update-check-btn");
+            _updateCheckStatus = _drawerContainer.Q<Label>("update-check-status");
             _telemetrySwitch   = _drawerContainer.Q<VisualElement>("telemetry-switch");
             _telemetryLabel    = _drawerContainer.Q<Label>("telemetry-label");
             _telemetryHint     = _drawerContainer.Q<Label>("telemetry-hint");
@@ -374,6 +378,9 @@ namespace UnitySkills
                     SyncSettingSwitches();
                 });
 
+            if (_updateCheckBtn != null)
+                _updateCheckBtn.clicked += OnUpdateCheckClicked;
+
             if (_telemetrySwitch != null)
                 _telemetrySwitch.RegisterCallback<ClickEvent>(_ =>
                 {
@@ -447,7 +454,7 @@ namespace UnitySkills
 
         private void SyncTabVisibilityUi()
         {
-            SetDisplay(_rowTabVisibleAnalytics, SkillTelemetryService.Enabled);
+            _rowTabVisibleAnalytics.SetVisible(SkillTelemetryService.Enabled);
             _tabVisibleSkillsToggle?.SetValueWithoutNotify(TabVisibilitySettings.GetUserPreference("skills"));
             _tabVisibleAiConfigToggle?.SetValueWithoutNotify(TabVisibilitySettings.GetUserPreference("aiconfig"));
             _tabVisibleUnityCliToggle?.SetValueWithoutNotify(TabVisibilitySettings.GetUserPreference("unitycli"));
@@ -585,6 +592,15 @@ namespace UnitySkills
             if (_updateNotificationsHint != null)
                 _updateNotificationsHint.text = SkillsLocalization.Get("drawer_update_notifications_hint");
 
+            if (_updateCheckLabel != null)
+                _updateCheckLabel.text = SkillsLocalization.Get("drawer_update_check_label");
+            // Only re-apply button text in states whose text is static; Checking/Updating keep
+            // their transient status, and a language switch mid-update must not clobber it.
+            if (_updateCheckState == UpdateCheckState.Idle && _updateCheckBtn != null)
+                _updateCheckBtn.text = SkillsLocalization.Get("update_check_btn");
+            else if (_updateCheckState == UpdateCheckState.Ready && _updateCheckBtn != null)
+                _updateCheckBtn.text = SkillsLocalization.Get("update_check_update_now_fmt", _updateCheckTarget);
+
             if (_telemetryLabel != null)
                 _telemetryLabel.text = SkillsLocalization.Get("drawer_telemetry_label");
             if (_telemetryHint != null)
@@ -618,6 +634,153 @@ namespace UnitySkills
             _updateNotificationsSwitch?.EnableInClassList(
                 "on", VersionCheckService.NotificationsEnabled);
             _telemetrySwitch?.EnableInClassList("on", SkillTelemetryService.Enabled);
+        }
+
+        // ===== Package update check (two-step: check first, then update on a second click) =====
+
+        private enum UpdateCheckState { Idle, Checking, Ready, Updating }
+
+        private UpdateCheckState _updateCheckState = UpdateCheckState.Idle;
+        private PackageManagerHelper.SelfInstallKind _updateCheckKind;
+        private string _updateCheckVersion; // raw latest stable version, null for beta targets
+        private string _updateCheckTarget = string.Empty; // display text for the update button
+
+        private void OnUpdateCheckClicked()
+        {
+            switch (_updateCheckState)
+            {
+                case UpdateCheckState.Idle:
+                    BeginUpdateCheck();
+                    break;
+                case UpdateCheckState.Ready:
+                    StartSelfUpdate();
+                    break;
+                // Checking / Updating: the button is disabled, so clicks should not arrive here.
+            }
+        }
+
+        private void BeginUpdateCheck()
+        {
+            _updateCheckKind = PackageManagerHelper.DetectSelfInstallKind();
+            if (_updateCheckKind == PackageManagerHelper.SelfInstallKind.Unsupported)
+            {
+                SetUpdateCheckStatus(SkillsLocalization.Get("update_check_unsupported"));
+                return;
+            }
+
+            _updateCheckState = UpdateCheckState.Checking;
+            _updateCheckBtn?.SetEnabled(false);
+            SetUpdateCheckStatus(SkillsLocalization.Get("update_check_checking"));
+
+            if (_updateCheckKind == PackageManagerHelper.SelfInstallKind.Beta)
+            {
+                VersionCheckService.FetchBetaHeadSha(OnBetaHeadFetched);
+            }
+            else
+            {
+                VersionCheckService.CheckCompleted += OnStableCheckCompleted;
+                VersionCheckService.StartCheck(force: true);
+            }
+        }
+
+        private void OnStableCheckCompleted()
+        {
+            VersionCheckService.CheckCompleted -= OnStableCheckCompleted;
+            if (_updateCheckState != UpdateCheckState.Checking) return;
+
+            var release = VersionCheckService.LatestRelease;
+            if (release != null &&
+                VersionCheckService.TryCompareVersions(release.Version, SkillsLogger.Version, out var comparison) &&
+                comparison > 0)
+            {
+                // Manual checks ignore the dismissed banner version on purpose.
+                _updateCheckVersion = release.Version;
+                EnterReadyState("v" + release.Version);
+            }
+            else
+            {
+                EnterIdleState(SkillsLocalization.Get("update_check_latest"));
+            }
+        }
+
+        private void OnBetaHeadFetched(string sha)
+        {
+            if (_updateCheckState != UpdateCheckState.Checking) return;
+
+            if (sha == null)
+            {
+                EnterIdleState(SkillsLocalization.Get("update_check_failed_fmt",
+                    SkillsLocalization.Get("update_check_reason_network")));
+                return;
+            }
+
+            // PackageManager stores the full SHA; tolerate short revisions via prefix match.
+            var installed = PackageManagerHelper.GetSelfInstalledRevision();
+            var hasUpdate = string.IsNullOrEmpty(installed) ||
+                !sha.StartsWith(installed, StringComparison.OrdinalIgnoreCase);
+            if (hasUpdate)
+            {
+                _updateCheckVersion = null;
+                EnterReadyState(SkillsLocalization.Get("update_check_beta_target"));
+            }
+            else
+            {
+                EnterIdleState(SkillsLocalization.Get("update_check_latest"));
+            }
+        }
+
+        private void StartSelfUpdate()
+        {
+            _updateCheckState = UpdateCheckState.Updating;
+            _updateCheckBtn?.SetEnabled(false);
+            SetUpdateCheckStatus(SkillsLocalization.Get("update_check_updating"));
+
+            PackageManagerHelper.UpdateSelf(_updateCheckKind, _updateCheckVersion, (success, message) =>
+            {
+                if (_updateCheckState != UpdateCheckState.Updating) return;
+                if (success)
+                {
+                    // The package swap triggers a domain reload that tears this UI down anyway.
+                    SetUpdateCheckStatus(SkillsLocalization.Get("update_check_done"));
+                }
+                else
+                {
+                    EnterIdleState(SkillsLocalization.Get("update_check_failed_fmt",
+                        string.IsNullOrEmpty(message)
+                            ? SkillsLocalization.Get("update_check_reason_unknown")
+                            : message));
+                }
+            });
+        }
+
+        private void EnterReadyState(string targetDisplay)
+        {
+            _updateCheckState = UpdateCheckState.Ready;
+            _updateCheckTarget = targetDisplay;
+            SetUpdateCheckStatus(SkillsLocalization.Get("update_check_new_version_fmt", targetDisplay));
+            if (_updateCheckBtn != null)
+            {
+                _updateCheckBtn.text = SkillsLocalization.Get("update_check_update_now_fmt", targetDisplay);
+                _updateCheckBtn.SetEnabled(true);
+            }
+        }
+
+        private void EnterIdleState(string statusText)
+        {
+            _updateCheckState = UpdateCheckState.Idle;
+            _updateCheckTarget = string.Empty;
+            SetUpdateCheckStatus(statusText);
+            if (_updateCheckBtn != null)
+            {
+                _updateCheckBtn.text = SkillsLocalization.Get("update_check_btn");
+                _updateCheckBtn.SetEnabled(true);
+            }
+        }
+
+        private void SetUpdateCheckStatus(string text)
+        {
+            if (_updateCheckStatus != null)
+                _updateCheckStatus.text = text;
         }
 
         private static SkillsLocalization.Language ParseLanguage(string value) =>
@@ -673,7 +836,7 @@ namespace UnitySkills
             ApplyModeHintText(mode);
 
             // 2) The Panel Approval row is only visible in Approval mode
-            SetDisplay(_panelApprovalRow, mode == SkillsOperatingMode.Approval);
+            _panelApprovalRow.SetVisible(mode == SkillsOperatingMode.Approval);
             if (_panelApprovalToggle != null)
                 _panelApprovalToggle.SetValueWithoutNotify(SkillsModeManager.PanelApprovalRequired);
             if (_confirmToggle != null)
@@ -688,7 +851,7 @@ namespace UnitySkills
             // 3) The Pending list — shown only in Approval mode + when there are pending items
             var pending = SkillsModeManager.PendingGrantRequests;
             bool showPending = mode == SkillsOperatingMode.Approval && pending.Count > 0;
-            SetDisplay(_pendingSection, showPending);
+            _pendingSection.SetVisible(showPending);
             if (showPending)
             {
                 if (_pendingTitle != null)
@@ -705,7 +868,7 @@ namespace UnitySkills
             // 4) The Allowlist list — shown in Approval/Auto (hidden in Bypass)
             var allowlist = SkillsModeManager.AllowlistSkills;
             bool showAllowlist = mode != SkillsOperatingMode.Bypass;
-            SetDisplay(_allowlistSection, showAllowlist);
+            _allowlistSection.SetVisible(showAllowlist);
             if (showAllowlist)
             {
                 if (_allowlistFoldout != null)
@@ -736,22 +899,20 @@ namespace UnitySkills
         {
             var card = new VisualElement();
             card.AddToClassList("task-card");
-            card.style.flexDirection = FlexDirection.Column;
-            card.style.marginBottom = 4;
+            card.AddToClassList("built-card");
 
-            var head = new VisualElement { style = { flexDirection = FlexDirection.Row, alignItems = Align.Center } };
+            var head = new VisualElement();
+            head.AddToClassList("built-row");
             var title = new Label($"{req.SkillName}  ({req.Channel})  #{PermissionUiHelpers.ShortToken(req.Token)}");
             title.AddToClassList("bold-label");
-            title.style.flexGrow = 1;
-            title.style.fontSize = 11;
+            title.AddToClassList("card-row__title");
             head.Add(title);
 
             var expires = new Label(PermissionUiHelpers.FormatCountdown(req.ExpiresAtUtc));
             expires.AddToClassList("setting-hint");
             expires.AddToClassList(PendingExpiresClass); // marker for RefreshPendingExpiry sweep
+            expires.AddToClassList("pending-row__expires");
             expires.userData = req.ExpiresAtUtc;
-            expires.style.marginTop = 0;
-            expires.style.marginBottom = 0;
             head.Add(expires);
             card.Add(head);
 
@@ -759,9 +920,7 @@ namespace UnitySkills
             {
                 var args = new Label($"args: {req.ArgsSummary}");
                 args.AddToClassList("setting-hint");
-                args.style.whiteSpace = WhiteSpace.Normal;
-                args.style.marginTop = 2;
-                args.style.marginBottom = 4;
+                args.AddToClassList("pending-row__args");
                 card.Add(args);
             }
 
@@ -774,24 +933,25 @@ namespace UnitySkills
             {
                 var status = new Label(SkillsLocalization.Get("perm_approved_waiting"));
                 status.AddToClassList("setting-hint");
-                status.style.marginBottom = 2;
+                status.AddToClassList("pending-row__note");
                 card.Add(status);
             }
             else if (!isPanel)
             {
                 var chatHint = new Label(SkillsLocalization.Get("perm_approve_in_chat"));
                 chatHint.AddToClassList("setting-hint");
-                chatHint.style.marginBottom = 2;
+                chatHint.AddToClassList("pending-row__note");
                 card.Add(chatHint);
             }
 
-            var actions = new VisualElement { style = { flexDirection = FlexDirection.Row, justifyContent = Justify.FlexEnd, marginTop = 2 } };
+            var actions = new VisualElement();
+            actions.AddToClassList("pending-row__actions");
             var approveBtn = new Button(() => SkillsModeManager.Approve(req.Token))
             {
                 text = SkillsLocalization.Get("perm_approve")
             };
             approveBtn.AddToClassList("mini-btn");
-            approveBtn.style.marginRight = 4;
+            approveBtn.AddToClassList("mini-btn--right-gap");
             approveBtn.SetEnabled(isPanel && !req.ApprovedByPanel); // Clickable only when the panel channel hasn't approved yet
             actions.Add(approveBtn);
 
@@ -861,7 +1021,7 @@ namespace UnitySkills
                     text = $"{group.Key}  ({items.Count})",
                     value = false, // Collapsed by default to save space; the user expands it to view
                 };
-                foldout.style.marginTop = 2;
+                foldout.AddToClassList("allowlist-foldout");
 
                 foreach (var name in items)
                     foldout.Add(BuildAllowlistRow(name));
@@ -872,11 +1032,11 @@ namespace UnitySkills
 
         private static VisualElement BuildAllowlistRow(string skillName)
         {
-            var row = new VisualElement
-            {
-                style = { flexDirection = FlexDirection.Row, alignItems = Align.Center, marginBottom = 2 }
-            };
-            var label = new Label(skillName) { style = { flexGrow = 1, fontSize = 11 } };
+            var row = new VisualElement();
+            row.AddToClassList("built-row");
+            row.AddToClassList("allowlist-row");
+            var label = new Label(skillName);
+            label.AddToClassList("card-row__title");
             row.Add(label);
 
             var removeBtn = new Button(() => SkillsModeManager.RemoveFromAllowlist(skillName))
@@ -944,12 +1104,6 @@ namespace UnitySkills
                 if (label.userData is DateTime expiresUtc)
                     label.text = PermissionUiHelpers.FormatCountdown(expiresUtc);
             });
-        }
-
-        private static void SetDisplay(VisualElement el, bool visible)
-        {
-            if (el == null) return;
-            el.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
         }
     }
 }

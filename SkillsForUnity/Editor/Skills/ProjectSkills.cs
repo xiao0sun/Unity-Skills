@@ -377,7 +377,8 @@ namespace UnitySkills
             Category = SkillCategory.Project, Operation = SkillOperation.Create,
             Tags = new[] { "project", "tag", "add", "custom" },
             Outputs = new[] { "tag" },
-            TracksWorkflow = true)]
+            RequiresInput = new[] { "tagName" },
+            TracksWorkflow = true, MutatesAssets = true)]
         public static object ProjectAddTag(string tagName)
         {
             if (Validate.Required(tagName, "tagName") is object err) return err;
